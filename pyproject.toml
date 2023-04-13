@@ -7,9 +7,9 @@ requires = [
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "calicolabs-{python-library-name}" # Replace with your library name
+name = "baskerville" # Replace with your library name
 authors = [
-    {name = "Calico Data Engineering Team", email = "calico-data-eng@calicolabs.com"}
+    {name = "Calico f(DNA)", email = "drk@calicolabs.com"}
 ]
 readme = "README.md"
 requires-python = ">=3.8"

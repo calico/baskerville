@@ -2,12 +2,6 @@
 
 Create internal Python packages using this template. 
 
-## Rename the `package_name` folder
-This folder will be the name of the package import after install
-ex:
-```python
-import package_name
-```
 
 ## Update the following parameters in the `setup.cfg` file.
 Change the package name, and urls to reflect the name of your package.
