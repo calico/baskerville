@@ -13,9 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # =========================================================================
-from __future__ import print_function
-from optparse import OptionParser
-
+import argparse
 import json
 import os
 import shutil
@@ -40,47 +38,45 @@ Train Hound model using given parameters and data.
 # main
 ################################################################################
 def main():
-  usage = 'usage: %prog [options] <params_file> <data1_dir> ...'
-  parser = OptionParser(usage)
-  parser.add_option('-k', dest='keras_fit',
-      default=False, action='store_true',
-      help='Train with Keras fit method [Default: %default]')
-  parser.add_option('-m', dest='mixed_precision',
-      default=False, action='store_true',
-      help='Train with mixed precision [Default: %default]')
-  parser.add_option('-o', dest='out_dir',
-      default='train_out',
-      help='Output directory for test statistics [Default: %default]')
-  parser.add_option('--restore', dest='restore',
-      help='Restore model and continue training [Default: %default]')
-  parser.add_option('--trunk', dest='trunk',
-      default=False, action='store_true',
-      help='Restore only model trunk [Default: %default]')
-  parser.add_option('--tfr_train', dest='tfr_train_pattern',
-      default=None,
-      help='Training TFR pattern string appended to data_dir/tfrecords for subsetting [Default: %default]')
-  parser.add_option('--tfr_eval', dest='tfr_eval_pattern',
-      default=None,
-      help='Evaluation TFR pattern string appended to data_dir/tfrecords for subsetting [Default: %default]')
-  (options, args) = parser.parse_args()
+  parser = argparse.ArgumentParser()
+  parser.add_argument('-k', '--keras_fit',
+                      action='store_true', default=False,
+                      help='Train with Keras fit method [Default: %(default)s]')
+  parser.add_argument('-m', '--mixed_precision', 
+                      action='store_true', default=False,
+                      help='Train with mixed precision [Default: %(default)s]')
+  parser.add_argument('-o', '--out_dir', 
+                      default='train_out',
+                      help='Output directory [Default: %(default)s]')
+  parser.add_argument('--restore', 
+                      default=None,
+                      help='Restore model and continue training [Default: %(default)s]')
+  parser.add_argument('--trunk', 
+                      action='store_true', default=False,
+                      help='Restore only model trunk [Default: %(default)s]')
+  parser.add_argument('--tfr_train',
+                      default=None,
+                      help='Training TFR pattern string appended to data_dir/tfrecords [Default: %(default)s]')
+  parser.add_argument('--tfr_eval',
+                      default=None,
+                      help='Evaluation TFR pattern string appended to data_dir/tfrecords [Default: %(default)s]')
+  parser.add_argument('params_file',
+                      help='JSON file with model parameters')
+  parser.add_argument('data_dirs', nargs='+',
+                      help='Train/valid/test data directorie(s)')
+  args = parser.parse_args()
 
-  if len(args) < 2:
-    parser.error('Must provide parameters and data directory.')
-  else:
-    params_file = args[0]
-    data_dirs = args[1:]
-
-  if options.keras_fit and len(data_dirs) > 1:
+  if args.keras_fit and len(args.data_dirs) > 1:
     print('Cannot use keras fit method with multi-genome training.')
     exit(1)
 
-  if not os.path.isdir(options.out_dir):
-    os.mkdir(options.out_dir)
-  if params_file != '%s/params.json' % options.out_dir:
-    shutil.copy(params_file, '%s/params.json' % options.out_dir)
+  if not os.path.isdir(args.out_dir):
+    os.mkdir(args.out_dir)
+  if args.params_file != '%s/params.json' % args.out_dir:
+    shutil.copy(args.params_file, '%s/params.json' % args.out_dir)
 
   # read model parameters
-  with open(params_file) as params_open:
+  with open(args.params_file) as params_open:
     params = json.load(params_open)
   params_model = params['model']
   params_train = params['train']
@@ -90,7 +86,7 @@ def main():
   eval_data = []
   strand_pairs = []
 
-  for data_dir in data_dirs:
+  for data_dir in args.data_dirs:
     # set strand pairs
     targets_df = pd.read_csv('%s/targets.txt'%data_dir, sep='\t', index_col=0)
     if 'strand_pair' in targets_df.columns:
@@ -102,18 +98,18 @@ def main():
     batch_size=params_train['batch_size'],
     shuffle_buffer=params_train.get('shuffle_buffer', 128),
     mode='train',
-    tfr_pattern=options.tfr_train_pattern))
+    tfr_pattern=args.tfr_train))
 
     # load eval data
     eval_data.append(dataset.SeqDataset(data_dir,
     split_label='valid',
     batch_size=params_train['batch_size'],
     mode='eval',
-    tfr_pattern=options.tfr_eval_pattern))
+    tfr_pattern=args.tfr_eval))
 
   params_model['strand_pair'] = strand_pairs
 
-  if options.mixed_precision:
+  if args.mixed_precision:
     mixed_precision.set_global_policy('mixed_float16')
 
   if params_train.get('num_gpu', 1) == 1:
@@ -124,12 +120,12 @@ def main():
     seqnn_model = seqnn.SeqNN(params_model)
 
     # restore
-    if options.restore:
-      seqnn_model.restore(options.restore, trunk=options.trunk)
+    if args.restore:
+      seqnn_model.restore(args.restore, trunk=args.trunk)
 
     # initialize trainer
     seqnn_trainer = trainer.Trainer(params_train, train_data, 
-                                    eval_data, options.out_dir)
+                                    eval_data, args.out_dir)
 
     # compile model
     seqnn_trainer.compile(seqnn_model)
@@ -142,9 +138,9 @@ def main():
 
     with strategy.scope():
 
-      if not options.keras_fit:
+      if not args.keras_fit:
         # distribute data
-        for di in range(len(data_dirs)):
+        for di in range(len(args.data_dirs)):
           train_data[di].distribute(strategy)
           eval_data[di].distribute(strategy)
 
@@ -152,21 +148,21 @@ def main():
       seqnn_model = seqnn.SeqNN(params_model)
 
       # restore
-      if options.restore:
-        seqnn_model.restore(options.restore, options.trunk)
+      if args.restore:
+        seqnn_model.restore(args.restore, args.trunk)
 
       # initialize trainer
-      seqnn_trainer = trainer.Trainer(params_train, train_data, eval_data, options.out_dir,
-                                      strategy, params_train['num_gpu'], options.keras_fit)
+      seqnn_trainer = trainer.Trainer(params_train, train_data, eval_data, args.out_dir,
+                                      strategy, params_train['num_gpu'], args.keras_fit)
 
       # compile model
       seqnn_trainer.compile(seqnn_model)
 
   # train model
-  if options.keras_fit:
+  if args.keras_fit:
     seqnn_trainer.fit_keras(seqnn_model)
   else:
-    if len(data_dirs) == 1:
+    if len(args.data_dirs) == 1:
       seqnn_trainer.fit_tape(seqnn_model)
     else:
       seqnn_trainer.fit2(seqnn_model)
