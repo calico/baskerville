@@ -27,18 +27,13 @@ from baskerville import dataset
 from baskerville import seqnn
 from baskerville import trainer
 
-
 """
 hound_train.py
 
 Train Hound model using given parameters and data.
 """
-
-################################################################################
-# main
-################################################################################
 def main():
-  parser = argparse.ArgumentParser()
+  parser = argparse.ArgumentParser(description='Train a model.')
   parser.add_argument('-k', '--keras_fit',
                       action='store_true', default=False,
                       help='Train with Keras fit method [Default: %(default)s]')
@@ -60,6 +55,7 @@ def main():
   parser.add_argument('--tfr_eval',
                       default=None,
                       help='Evaluation TFR pattern string appended to data_dir/tfrecords [Default: %(default)s]')
+
   parser.add_argument('params_file',
                       help='JSON file with model parameters')
   parser.add_argument('data_dirs', nargs='+',
@@ -68,10 +64,9 @@ def main():
 
   if args.keras_fit and len(args.data_dirs) > 1:
     print('Cannot use keras fit method with multi-genome training.')
-    exit(1)
+    exit()
 
-  if not os.path.isdir(args.out_dir):
-    os.mkdir(args.out_dir)
+  os.makedirs(args.out_dir, exist_ok=True)
   if args.params_file != '%s/params.json' % args.out_dir:
     shutil.copy(args.params_file, '%s/params.json' % args.out_dir)
 
