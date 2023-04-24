@@ -22,7 +22,7 @@ import pandas as pd
 import pysam
 from tqdm import tqdm
 
-from baskerville import dna_io
+from baskerville import dna
 
 ################################################################################
 # bed.py
@@ -81,7 +81,7 @@ def make_bed_seqs(bed_file, fasta_file, seq_len, stranded=False):
 
     # reverse complement
     if stranded and strand == '-':
-      seq_dna = dna_io.dna_rc(seq_dna)
+      seq_dna = dna.dna_rc(seq_dna)
 
     # append
     seqs_dna.append(seq_dna)
