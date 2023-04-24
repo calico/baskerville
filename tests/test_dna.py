@@ -4,7 +4,50 @@ import numpy as np
 
 from baskerville import dna
 
-def test_delete():
+def test_dna_rc():
+  seq_dna = 'GATTACA'
+  seq_rc = dna.dna_rc(seq_dna)
+  assert(seq_rc == 'TGTAATC')
+
+
+def test_dna_1hot():
+  seq_dna = 'ACGT'
+  seq_1hot = dna.dna_1hot(seq_dna)
+  seq_1hot_hard = np.array([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]], dtype='bool')
+  assert(np.array_equal(seq_1hot_hard, seq_1hot))
+
+  seq_dna = 'ACNGT'
+  seq_1hot = dna.dna_1hot(seq_dna)
+  seq_1hot_hard = np.array([[1,0,0,0],[0,1,0,0],[0,0,0,0], [0,0,1,0],[0,0,0,1]], dtype='bool')
+  assert(np.array_equal(seq_1hot_hard, seq_1hot))
+
+  seq_dna = 'ACNGT'
+  seq_1hot = dna.dna_1hot(seq_dna, n_uniform=True)
+  seq_1hot_hard = np.array([[1,0,0,0],[0,1,0,0],[0.25]*4, [0,0,1,0],[0,0,0,1]])
+  assert(np.array_equal(seq_1hot_hard, seq_1hot))
+
+  seq_dna = 'ACNGT'
+  seq_1hot = dna.dna_1hot(seq_dna, n_sample=True)
+  assert(seq_1hot[2].sum() == 1)
+
+
+def test_dna_1hot_index():
+  seq_dna = 'ACGT'
+  seq_1hot = dna.dna_1hot_index(seq_dna)
+  seq_1hot_hard = np.array([0,1,2,3], dtype='uint8')
+  assert(np.array_equal(seq_1hot_hard, seq_1hot))
+
+  seq_dna = 'ACNGT'
+  seq_1hot = dna.dna_1hot_index(seq_dna)
+  seq_1hot_hard = np.array([0,1,4,2,3], dtype='uint8')
+  assert(np.array_equal(seq_1hot_hard, seq_1hot))
+
+  seq_dna = 'ACNGT'
+  seq_1hot = dna.dna_1hot_index(seq_dna, n_sample=True)
+  assert(seq_1hot[2] in [0,1,2,3])
+
+
+def test_hot1_delete():
   seq_dna = 'GATTACA'
   seq_1hot = dna.dna_1hot(seq_dna)
   dna.hot1_delete(seq_1hot, 3, 2)
@@ -12,15 +55,15 @@ def test_delete():
   assert('GATCANN' == seq_dna_del)
 
 
-def test_insert():
+def test_hot1_insert():
   seq_dna = 'GATTACA'
-  seq_1hot = dna.dna_1hot(seseq_dnaq)
+  seq_1hot = dna.dna_1hot(seq_dna)
   dna.hot1_insert(seq_1hot, 3, 'AG')
   seq_dna_ins = dna.hot1_dna(seq_1hot)
   assert('GATAGTA' == seq_dna_ins)
 
 
-def test_rc():
+def test_hot1_rc():
   #########################################
   # construct sequences
   seq1 = 'GATTACA'
@@ -56,7 +99,7 @@ def test_rc():
   assert(seq2 == seq2_rcrc)
 
 
-def test_augment():
+def test_hot1_augment():
   seq = 'GATTACA'
   seq1 = dna.dna_1hot(seq)
   seqs1 = np.array([seq1])
@@ -90,3 +133,11 @@ def test_augment():
   aseqs1_rc_m1 = dna.hot1_augment(seqs1, False, -1)
   aseq_rc_m1 = dna.hot1_dna(aseqs1_rc_m1)[0]
   assert('NTGTAAT' == aseq_rc_m1)
+
+
+def test_hot1_set():
+  seq_dna = 'GATTACA'
+  seq_1hot = dna.dna_1hot(seq_dna)
+  dna.hot1_set(seq_1hot, 3, 'C')
+  seq_dna_set = dna.hot1_dna(seq_1hot)
+  assert('GATCACA' == seq_dna_set)
