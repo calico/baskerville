@@ -74,7 +74,7 @@ def main():
                       default='0',
                       help='Ensemble prediction shifts [Default: %(default)s]')
   parser.add_argument('-t', '--targets_file',
-                      default=None, type=str,
+                      default=None,
                       help='File specifying target indexes and labels in table format')
   
   parser.add_argument('params_file',

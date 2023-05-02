@@ -489,6 +489,7 @@ class SeqNN():
       head_i: int=None, 
       generator: bool=False, 
       stream: bool=False, 
+      step: int=1,
       dtype: str='float32', 
       **kwargs):
     """Predict targets for SeqDataset, with more options.
@@ -498,6 +499,7 @@ class SeqNN():
       head_i (int): Model head index.
       generator (bool): Use generator to predict on dataset.
       stream (bool): Stream predictions from dataset.
+      step (int): Step size.
       dtype (str): Data type to return.
     """
     # choose model
@@ -512,16 +514,28 @@ class SeqNN():
     if dataset is None:
       dataset = seq_data
 
+    # step slice
+    preds_len = model.outputs[0].shape[1]
+    step_i = np.arange(0, preds_len, step)
+
+    # predict
     if generator:
-      return model.predict_generator(dataset, **kwargs).astype(dtype)
+      preds = model.predict_generator(dataset, **kwargs).astype(dtype)
     elif stream:
       preds = []
       for x, y in seq_data.dataset:
         yh = model.predict(x, **kwargs)
+        if step > 1:
+          yh = yh[:,step_i,:]
         preds.append(yh.astype(dtype))
-      return np.concatenate(preds, axis=0, dtype=dtype)
+      preds = np.concatenate(preds, axis=0, dtype=dtype)
     else:
-      return model.predict(dataset, **kwargs).astype(dtype)
+      preds = model.predict(dataset, **kwargs).astype(dtype)
+    
+    if not stream and step > 1:
+      preds = preds[:,step_i,:]
+
+    return preds
 
 
   def restore(self, model_file, head_i=0, trunk=False):

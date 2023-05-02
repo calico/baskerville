@@ -42,8 +42,8 @@ def main():
                       default=0, type=int,
                       help='Parameters head to evaluate [Default: %(default)s]') 
   parser.add_argument('-o', '--out_dir',
-                      default='test_out',
-                      help='Output directory for test statistics [Default: %(default)s]')
+                      default='eval_out',
+                      help='Output directory for evaluation statistics [Default: %(default)s]')
   parser.add_argument('--rank',
                       default=False, action='store_true',
                       help='Compute Spearman rank correlation [Default: %(default)s]')
@@ -57,10 +57,10 @@ def main():
                       default='0',
                       help='Ensemble prediction shifts [Default: %(default)s]')
   parser.add_argument('--step',
-                      default=1, type='int',
+                      default=1, type=int,
                       help='Step across positions [Default: %(default)s]')
   parser.add_argument('-t', '--targets_file',
-                      default=None, type='str',
+                      default=None,
                       help='File specifying target indexes and labels in table format')
   parser.add_argument('--split', 
                       default='test', choices=['train', 'valid', 'test'],

@@ -7,7 +7,7 @@ import subprocess
 def clean_data():
   # download data
   if not os.path.isfile('tests/data/tiny/nets0.bed'):
-    cmd = ['gsutil', 'cp', '-r', 'gs://westminster2/tiny', 'tests/data/']
+    cmd = ['gsutil', '-m', 'cp', '-r', 'gs://westminster2/tiny', 'tests/data/']
     subprocess.run(cmd, check=True)
 
   # setup folds
@@ -42,7 +42,7 @@ def test_train(clean_data):
 
 
 def test_train2(clean_data):
-  cmd = ['hound_train.py', 
+  cmd = ['scripts/hound_train.py', 
          '-o', 'tests/data/train2',
          'tests/data/params.json',
          'tests/data/train/f0c0/data0',
