@@ -31,7 +31,7 @@ from baskerville import seqnn
 from baskerville import vcf as bvcf
 
 '''
-houn_snp.py
+hound_snp.py
 
 Compute variant effect predictions for SNPs in a VCF file.
 '''
@@ -46,7 +46,7 @@ def main():
       default=None,
       help='Genome FASTA for sequences [Default: %default]')
   parser.add_option('-o',dest='out_dir',
-      default='sad',
+      default='snp_out',
       help='Output directory for tables and plots [Default: %default]')
   parser.add_option('-p', dest='processes',
       default=None, type='int',

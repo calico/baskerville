@@ -40,15 +40,12 @@ def main():
   usage = 'usage: %prog [options] <params_file> <model_file> <vcf_file>'
   parser = OptionParser(usage)
 
-  # sad
+  # snp
   parser.add_option('-f', dest='genome_fasta',
-      default='%s/data/hg38.fa' % os.environ['BASENJIDIR'],
-      help='Genome FASTA for sequences [Default: %default]')
-  parser.add_option('-n', dest='norm_file',
       default=None,
-      help='Normalize SAD scores')
+      help='Genome FASTA for sequences [Default: %default]')
   parser.add_option('-o',dest='out_dir',
-      default='sad',
+      default='snp_out',
       help='Output directory for tables and plots [Default: %default]')
   parser.add_option('--rc', dest='rc',
       default=False, action='store_true',
@@ -62,25 +59,13 @@ def main():
   parser.add_option('-t', dest='targets_file',
       default=None, type='str',
       help='File specifying target indexes and labels in table format')
-  parser.add_option('--ti', dest='track_indexes',
-      default=None, type='str',
-      help='Comma-separated list of target indexes to output BigWig tracks')
-  parser.add_option('--threads', dest='threads',
-      default=False, action='store_true',
-      help='Run CPU math and output in a separate thread [Default: %default]')
-  parser.add_option('-u', dest='penultimate',
-      default=False, action='store_true',
-      help='Compute SED in the penultimate layer [Default: %default]')
 
   # multi
-  parser.add_option('--cpu', dest='cpu',
-      default=False, action='store_true',
-      help='Run without a GPU [Default: %default]')
   parser.add_option('-e', dest='conda_env',
       default='tf210',
       help='Anaconda environment [Default: %default]')
   parser.add_option('--name', dest='name',
-      default='sad', help='SLURM name prefix [Default: %default]')
+      default='snp', help='SLURM name prefix [Default: %default]')
   parser.add_option('--max_proc', dest='max_proc',
       default=None, type='int',
       help='Maximum concurrent processes [Default: %default]')
@@ -123,11 +108,8 @@ def main():
   jobs = []
   for pi in range(options.processes):
     if not options.restart or not job_completed(options, pi):
-      if options.cpu:
-        cmd = ''
-      else:
-        cmd = '. /home/drk/anaconda3/etc/profile.d/conda.sh;'
-        cmd += ' conda activate %s;' % options.conda_env
+      cmd = '. /home/drk/anaconda3/etc/profile.d/conda.sh;'
+      cmd += ' conda activate %s;' % options.conda_env
 
       cmd += ' time hound_snp.py %s %s %d' % (
           options_pkl_file, ' '.join(args), pi)
@@ -136,11 +118,9 @@ def main():
       outf = '%s/job%d.out' % (options.out_dir, pi)
       errf = '%s/job%d.err' % (options.out_dir, pi)
 
-      num_gpu = 1*(not options.cpu)
-
       j = slurm.Job(cmd, name,
           outf, errf,
-          queue=options.queue, gpu=num_gpu,
+          queue=options.queue, gpu=1,
           mem=22000, time='14-0:0:0')
       jobs.append(j)
 
