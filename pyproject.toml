@@ -7,7 +7,7 @@ requires = [
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "baskerville" # Replace with your library name
+name = "baskerville"
 authors = [
     {name = "Calico f(DNA)", email = "drk@calicolabs.com"}
 ]
@@ -23,4 +23,3 @@ dev = [
 ]
 
 [tool.setuptools_scm]
-
