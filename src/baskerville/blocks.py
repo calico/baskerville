@@ -1743,16 +1743,6 @@ def dilated_residual_2d(
 
 
 ############################################################
-# Activations
-############################################################
-
-
-def exp(inputs, base=None, minus=None, **kwargs):
-    current = layers.Exp(base, minus)(inputs)
-    return current
-
-
-############################################################
 # Center ops
 ############################################################
 
@@ -2142,7 +2132,6 @@ name_func = {
     "dilated_residual_nac": dilated_residual_nac,
     "dilated_residual_2d": dilated_residual_2d,
     "dilated_dense": dilated_dense,
-    "exp": exp,
     "factor_inverse": factor_inverse,
     "final": final,
     "global_context": global_context,
