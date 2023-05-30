@@ -2031,81 +2031,6 @@ def final(
     return current
 
 
-# depracated, poorly named
-def dense(
-    inputs,
-    units,
-    activation="linear",
-    kernel_initializer="he_normal",
-    l2_scale=0,
-    l1_scale=0,
-    **kwargs
-):
-
-    # apply dense layer
-    current = tf.keras.layers.Dense(
-        units=units,
-        use_bias=True,
-        activation=activation,
-        kernel_initializer=kernel_initializer,
-        kernel_regularizer=tf.keras.regularizers.l1_l2(l1_scale, l2_scale),
-    )(inputs)
-
-    return current
-
-
-############################################################
-# Depracated
-############################################################
-
-# depracated: use AveragePooling1D
-def average_pooling(inputs, pool_size=2, **kwargs):
-    current = tf.keras.layers.AveragePooling1D(pool_size=pool_size, padding="same")(
-        inputs
-    )
-    return current
-
-
-# depracated: use one_to_two
-def average_to_2d(inputs, **kwargs):
-    current = layers.AverageTo2D()(inputs)
-    return current
-
-
-# depracated: use one_to_two
-def max_to_2d(inputs, **kwargs):
-    current = layers.MaxTo2D()(inputs)
-    return current
-
-
-# depracated: use one_to_two
-def dot_to_2d(inputs, **kwargs):
-    current = layers.DotTo2D()(inputs)
-    return current
-
-
-# depracated: use one_to_two
-def geodot_to_2d(inputs, **kwargs):
-    current = layers.GeoDotTo2D()(inputs)
-    return current
-
-
-# depracated: use one_to_two
-def concat_to_2d(inputs, **kwargs):
-    current = layers.ConcatTo2D()(inputs)
-    return current
-
-
-# depracated: use cropping
-# def slice_center(inputs, center=1, **kwargs):
-#   crop_len = inputs.shape[1] - center
-#   crop_start = crop_len // 2
-#   crop_end = crop_len - crop_start
-#   current = inputs
-#   current = tf.keras.layers.Cropping1D((crop_start,crop_end))(current)
-#   return current
-
-
 ############################################################
 # Dictionary
 ############################################################
@@ -2114,7 +2039,6 @@ name_func = {
     "center_average": center_average,
     "concat_dist_2d": concat_dist_2d,
     "concat_position": concat_position,
-    "concat_to_2d": concat_to_2d,
     "concat_unet": concat_unet,
     "conv_block": conv_block,
     "conv_dna": conv_dna,
@@ -2125,7 +2049,6 @@ name_func = {
     "conv_tower_nac": conv_tower_nac,
     "convnext_tower": convnext_tower,
     "cropping_2d": cropping_2d,
-    "dense": dense,
     "dense_block": dense_block,
     "dense_nac": dense_nac,
     "dilated_residual": dilated_residual,

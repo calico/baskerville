@@ -23,53 +23,13 @@ import tensorflow as tf
 # Basic
 ############################################################
 
-
-class Clip(tf.keras.layers.Layer):
-    def __init__(self, min_value, max_value):
-        super(Clip, self).__init__()
-        self.min_value = min_value
-        self.max_value = max_value
-
-    def call(self, x):
-        return tf.clip_by_value(x, self.min_value, self.max_value)
-
-    def get_config(self):
-        config = super().get_config().copy()
-        config.update({"min_value": self.min_value, "max_value": self.max_value})
-        return config
-
-
-class Exp(tf.keras.layers.Layer):
-    def __init__(self, base=None, minus=None):
-        super(Exp, self).__init__()
-        if base is None:
-            self.base = None
-        else:
-            self.base = tf.constant(base, dtype=tf.float32)
-        if minus is None:
-            self.minus = None
-        else:
-            self.minus = tf.constant(minus, dtype=tf.float32)
-
-    def call(self, x):
-        if self.base is None:
-            y = tf.keras.activations.exponential(x)
-        else:
-            y = tf.math.pow(self.base, x)
-
-        if self.minus is not None:
-            y -= self.minus
-
-        return y
-
-    def get_config(self):
-        config = super().get_config().copy()
-        config["base"] = self.base
-        config["minus"] = self.minus
-        return config
-
-
 class Scale(tf.keras.layers.Layer):
+    """Scale the input by a learned value.
+    
+    Args:
+        axis (int or [int]): Axis/axes along which to scale.
+        initializer: Initializer for the scale weight.
+    """
     def __init__(self, axis=-1, initializer="zeros"):
         super(Scale, self).__init__()
         if isinstance(axis, (list, tuple)):
@@ -115,7 +75,6 @@ class Scale(tf.keras.layers.Layer):
         )
 
     def call(self, x):
-        # return x * math_ops.cast(self.scale, x.dtype)
         return x * self.scale
 
     def get_config(self):
@@ -129,17 +88,8 @@ class Scale(tf.keras.layers.Layer):
         return config
 
 
-class PolyReLU(tf.keras.layers.Layer):
-    def __init__(self, shift=0):
-        super(PolyReLU, self).__init__()
-
-    def call(self, x):
-        x3 = tf.math.pow((x - 2), 3)
-        y = tf.keras.activations.relu(x3)
-        return y
-
-
 class Softplus(tf.keras.layers.Layer):
+    """Safe softplus, clipping large values."""
     def __init__(self, exp_max=10000):
         super(Softplus, self).__init__()
         self.exp_max = exp_max
@@ -160,6 +110,12 @@ class Softplus(tf.keras.layers.Layer):
 
 
 class CenterSlice(tf.keras.layers.Layer):
+    """Scale the input by a learned value.
+
+    Args:
+        axis (int or [int]): Axis/axes along which to scale.
+        initializer: Initializer for the scale weight.
+    """
     def __init__(self, center):
         super(CenterSlice, self).__init__()
         self.center = center
@@ -177,6 +133,11 @@ class CenterSlice(tf.keras.layers.Layer):
 
 
 class CenterAverage(tf.keras.layers.Layer):
+    """Average the center of the input.
+
+    Args:
+        center (int): Length of the center slice.
+    """
     def __init__(self, center):
         super(CenterAverage, self).__init__()
         self.center = center
@@ -192,6 +153,7 @@ class CenterAverage(tf.keras.layers.Layer):
 
 
 class LengthAverage(tf.keras.layers.Layer):
+    """Average across a variable length sequence."""
     def __init__(self):
         super(LengthAverage, self).__init__()
 
@@ -218,34 +180,6 @@ class LengthAverage(tf.keras.layers.Layer):
 ############################################################
 # Attention
 ############################################################
-def rope(x, axis):
-    """RoPE position embedding.
-    From Hua et al. Transformer Quality in Linear Time."""
-    shape = x.shape.as_list()
-    if isinstance(axis, int):
-        axis = [axis]
-
-    spatial_shape = [shape[i] for i in axis]
-    total_len = 1
-    for i in spatial_shape:
-        total_len *= i
-    position = tf.reshape(
-        tf.cast(tf.range(total_len, delta=1.0), tf.float32), spatial_shape
-    )
-
-    for i in range(axis[-1] + 1, len(shape) - 1, 1):
-        position = tf.expand_dims(position, axis=-1)
-
-    half_size = shape[-1] // 2
-    freq_seq = tf.cast(tf.range(half_size), tf.float32) / float(half_size)
-    inv_freq = 10000**-freq_seq
-    sinusoid = tf.einsum("...,d->...d", position, inv_freq)
-    sin = tf.sin(sinusoid)
-    cos = tf.cos(sinusoid)
-    x1, x2 = tf.split(x, 2, axis=-1)
-
-    return tf.concat([x1 * cos - x2 * sin, x2 * cos + x1 * sin], axis=-1)
-
 
 def _prepend_dims(x, num_dims):
     return tf.reshape(x, shape=[1] * num_dims + x.shape)
@@ -264,127 +198,6 @@ def positional_features_central_mask(
         positions.shape + [feature_size]
     )
     return outputs
-
-
-def gamma_pdf(x, concentration, rate):
-    """Gamma probability distribution function: p(x|concentration, rate)."""
-    log_unnormalized_prob = tf.math.xlogy(concentration - 1.0, x) - rate * x
-    log_normalization = tf.math.lgamma(concentration) - concentration * tf.math.log(
-        rate
-    )
-    return tf.exp(log_unnormalized_prob - log_normalization)
-
-
-def positional_features_gamma(
-    positions: tf.Tensor,
-    feature_size: int,
-    seq_length: Optional[int] = None,
-    bin_size: Optional[int] = None,
-    stddev=None,
-    start_mean=None,
-):
-    """Positional features computed using the gamma distributions."""
-    del bin_size  # Unused.
-    if seq_length is None:
-        seq_length = tf.reduce_max(tf.abs(positions)) + 1
-    if stddev is None:
-        stddev = seq_length / (2 * feature_size)
-    if start_mean is None:
-        start_mean = seq_length / feature_size
-    mean = tf.linspace(start_mean, seq_length, num=feature_size)
-    mean = _prepend_dims(mean, positions.shape.rank)
-    concentration = (mean / stddev) ** 2
-    rate = mean / stddev**2
-    probabilities = gamma_pdf(
-        tf.abs(tf.cast(positions, dtype=tf.float32))[..., tf.newaxis],
-        concentration,
-        rate,
-    )
-    probabilities += 1e-8  # To ensure numerical stability.
-    outputs = probabilities / tf.reduce_max(probabilities)
-    tf.TensorShape(outputs.shape).assert_is_compatible_with(
-        positions.shape + [feature_size]
-    )
-    return outputs
-
-
-def get_positional_feature_function(name):
-    """Returns positional feature functions."""
-    available = {
-        "positional_features_central_mask": positional_features_central_mask,
-        "positional_features_gamma": positional_features_gamma,
-    }
-    # available = {
-    #     'positional_features_exponential': positional_features_exponential,
-    #     'positional_features_cosine': positional_features_cosine,
-    #     'positional_features_linear_masks': positional_features_linear_masks,
-    #     'positional_features_sin_cos': positional_features_sin_cos,
-    # }
-    if name not in available:
-        raise ValueError(f"Function {name} not available in {available.keys()}")
-    return available[name]
-
-
-def positional_features_all(
-    positions: tf.Tensor,
-    feature_size: int,
-    seq_length: Optional[int] = None,
-    bin_size: Optional[int] = None,
-    feature_functions: Optional[List[str]] = None,
-    symmetric=False,
-):
-    """Compute relative positional encodings/features.
-
-    Each positional feature function will compute/provide the same fraction of
-    features, making up the total of feature_size.
-
-    Args:
-      positions: Tensor of relative positions of arbitrary shape.
-      feature_size: Total number of basis functions.
-      seq_length: Sequence length denoting the characteristic length that
-        the individual positional features can use. This is required since the
-        parametrization of the input features should be independent of `positions`
-        while it could still require to use the total number of features.
-      bin_size: Bin sized used to partition the sequence. This can be used to
-        compute features on the absolute scale relative to the genome.
-      feature_functions: List of different feature functions to use. Each function
-        will take as argument: positions, sequence length and number of features
-        to compute.
-      symmetric: If True, the resulting features will be symmetric across the
-        relative position of 0 (i.e. only absolute value of positions will
-        matter). If false, then both the symmetric and asymmetric version
-        (symmetric multiplied by sign(positions)) of the features will be used.
-
-    Returns:
-      Tensor of shape: `positions.shape + (feature_size,)`.
-    """
-    if feature_functions is None:
-        feature_functions = ["positional_features_central_mask"]
-    num_components = len(feature_functions)  # 1 per each basis function
-    if not symmetric:
-        num_components = 2 * num_components
-
-    # For now, we do not allow odd sized embeddings.
-    if feature_size % num_components != 0:
-        raise ValueError(f"feature_size has to be divisible by {num_components}")
-
-    feature_functions = [get_positional_feature_function(f) for f in feature_functions]
-    num_basis_per_class = feature_size // num_components
-    embeddings = tf.concat(
-        [
-            f(tf.abs(positions), num_basis_per_class, seq_length, bin_size)
-            for f in feature_functions
-        ],
-        axis=-1,
-    )
-    if not symmetric:
-        embeddings = tf.concat(
-            [embeddings, tf.sign(positions)[..., tf.newaxis] * embeddings], axis=-1
-        )
-    tf.TensorShape(embeddings.shape).assert_is_compatible_with(
-        positions.shape + [feature_size]
-    )
-    return embeddings
 
 
 def positional_features(
@@ -610,13 +423,13 @@ class MultiheadAttention(tf.keras.layers.Layer):
             kernel_initializer=self._initializer,
         )
         self._r_w_bias = self.add_weight(
-            "r_w_bias",
+            "%s/r_w_bias" % self.name,
             shape=[1, self._num_heads, 1, self._key_size],
             initializer=self._initializer,
             dtype=tf.float32,
         )
         self._r_r_bias = self.add_weight(
-            "r_r_bias",
+            "%s/r_r_bias" % self.name,
             shape=[1, self._num_heads, 1, self._key_size],
             initializer=self._initializer,
             dtype=tf.float32,
@@ -1025,117 +838,6 @@ class OneToTwo(tf.keras.layers.Layer):
         return config
 
 
-# depracated: use OneToTwo
-class AverageTo2D(tf.keras.layers.Layer):
-    """Transform 1d to 2d with i,j vectors averaged."""
-
-    def __init__(self):
-        super(AverageTo2D, self).__init__()
-
-    def call(self, inputs):
-        input_shape = tf.shape(inputs)
-        assert len(inputs.shape) == 3
-        batch_size, seq_len, output_dim = inputs.shape
-
-        matrix_repr1 = tf.tile(inputs, [1, seq_len, 1])
-        matrix_repr1 = tf.reshape(matrix_repr1, [-1, seq_len, seq_len, output_dim])
-        matrix_repr2 = tf.transpose(matrix_repr1, [0, 2, 1, 3])
-
-        matrix_repr1 = tf.expand_dims(matrix_repr1, axis=-1)
-        matrix_repr2 = tf.expand_dims(matrix_repr2, axis=-1)
-        current = tf.concat([matrix_repr1, matrix_repr2], axis=-1)
-        current = tf.reduce_mean(current, axis=-1)
-
-        return current
-
-
-# depracated: use OneToTwo
-class MaxTo2D(tf.keras.layers.Layer):
-    """Transform 1d to 2d with i,j vectors maxed."""
-
-    def __init__(self):
-        super(MaxTo2D, self).__init__()
-
-    def call(self, inputs):
-        input_shape = tf.shape(inputs)
-        assert len(inputs.shape) == 3
-        batch_size, seq_len, output_dim = inputs.shape
-
-        matrix_repr1 = tf.tile(inputs, [1, seq_len, 1])
-        matrix_repr1 = tf.reshape(matrix_repr1, [-1, seq_len, seq_len, output_dim])
-        matrix_repr2 = tf.transpose(matrix_repr1, [0, 2, 1, 3])
-
-        matrix_repr1 = tf.expand_dims(matrix_repr1, axis=-1)
-        matrix_repr2 = tf.expand_dims(matrix_repr2, axis=-1)
-        current = tf.concat([matrix_repr1, matrix_repr2], axis=-1)
-        current = tf.reduce_max(current, axis=-1)
-
-        return current
-
-
-# depracated: use OneToTwo
-class DotTo2D(tf.keras.layers.Layer):
-    """Transform 1d to 2d with i,j vectors maxed."""
-
-    def __init__(self):
-        super(DotTo2D, self).__init__()
-
-    def call(self, inputs):
-        input_shape = tf.shape(inputs)
-        assert len(inputs.shape) == 3
-        batch_size, seq_len, output_dim = inputs.shape
-
-        matrix_repr1 = tf.tile(inputs, [1, seq_len, 1])
-        matrix_repr1 = tf.reshape(matrix_repr1, [-1, seq_len, seq_len, output_dim])
-        matrix_repr2 = tf.transpose(matrix_repr1, [0, 2, 1, 3])
-
-        current = tf.multiply(matrix_repr1, matrix_repr2)
-
-        return current
-
-
-# depracated: use OneToTwo
-class GeoDotTo2D(tf.keras.layers.Layer):
-    """Transform 1d to 2d with i,j vectors maxed."""
-
-    def __init__(self):
-        super(GeoDotTo2D, self).__init__()
-
-    def call(self, inputs):
-        input_shape = tf.shape(inputs)
-        assert len(inputs.shape) == 3
-        batch_size, seq_len, output_dim = inputs.shape
-
-        matrix_repr1 = tf.tile(inputs, [1, seq_len, 1])
-        matrix_repr1 = tf.reshape(matrix_repr1, [-1, seq_len, seq_len, output_dim])
-        matrix_repr2 = tf.transpose(matrix_repr1, [0, 2, 1, 3])
-
-        current = tf.multiply(matrix_repr1 + 1, matrix_repr2 + 1)
-        current = tf.sqrt(current) - 1
-
-        return current
-
-
-# depracated: use OneToTwo
-class ConcatTo2D(tf.keras.layers.Layer):
-    """Transform 1d to 2d with i,j vectors concatenated."""
-
-    def __init__(self):
-        super(ConcatTo2D, self).__init__()
-
-    def call(self, inputs):
-        input_shape = tf.shape(inputs)
-        assert len(inputs.shape) == 3
-        batch_size, seq_len, output_dim = inputs.shape
-
-        matrix_repr1 = tf.tile(inputs, [1, seq_len, 1])
-        matrix_repr1 = tf.reshape(matrix_repr1, [-1, seq_len, seq_len, output_dim])
-        matrix_repr2 = tf.transpose(matrix_repr1, [0, 2, 1, 3])
-        current = tf.concat([matrix_repr1, matrix_repr2], axis=-1)
-
-        return current
-
-
 class ConcatDist2D(tf.keras.layers.Layer):
     """Concatenate the pairwise distance to 2d feature matrix."""
 
@@ -1397,9 +1099,9 @@ def shift_sequence(seq, shift, pad_value=0):
     """Shift a sequence left or right by shift_amount.
 
     Args:
-    seq: [batch_size, seq_length, seq_depth] sequence
-    shift: signed shift value (tf.int32 or int)
-    pad_value: value to fill the padding (primitive or scalar tf.Tensor)
+        seq: [batch_size, seq_length, seq_depth] sequence
+        shift: signed shift value (tf.int32 or int)
+        pad_value: value to fill the padding (primitive or scalar tf.Tensor)
     """
     if seq.shape.ndims != 3:
         raise ValueError("input sequence should be rank 3")
