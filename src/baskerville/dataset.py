@@ -116,6 +116,7 @@ class SeqDataset:
             sequence = tf.io.decode_raw(parsed_features[TFR_INPUT], tf.uint8)
             if not raw:
                 if self.seq_1hot:
+                    sequence = tf.reshape(sequence, [self.seq_length])
                     sequence = tf.one_hot(sequence, 1 + self.seq_depth, dtype=tf.uint8)
                     sequence = sequence[:, :-1]  # drop N
                 else:
