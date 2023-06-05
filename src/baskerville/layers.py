@@ -23,13 +23,15 @@ import tensorflow as tf
 # Basic
 ############################################################
 
+
 class Scale(tf.keras.layers.Layer):
     """Scale the input by a learned value.
-    
+
     Args:
         axis (int or [int]): Axis/axes along which to scale.
         initializer: Initializer for the scale weight.
     """
+
     def __init__(self, axis=-1, initializer="zeros"):
         super(Scale, self).__init__()
         if isinstance(axis, (list, tuple)):
@@ -90,6 +92,7 @@ class Scale(tf.keras.layers.Layer):
 
 class Softplus(tf.keras.layers.Layer):
     """Safe softplus, clipping large values."""
+
     def __init__(self, exp_max=10000):
         super(Softplus, self).__init__()
         self.exp_max = exp_max
@@ -116,6 +119,7 @@ class CenterSlice(tf.keras.layers.Layer):
         axis (int or [int]): Axis/axes along which to scale.
         initializer: Initializer for the scale weight.
     """
+
     def __init__(self, center):
         super(CenterSlice, self).__init__()
         self.center = center
@@ -138,6 +142,7 @@ class CenterAverage(tf.keras.layers.Layer):
     Args:
         center (int): Length of the center slice.
     """
+
     def __init__(self, center):
         super(CenterAverage, self).__init__()
         self.center = center
@@ -154,6 +159,7 @@ class CenterAverage(tf.keras.layers.Layer):
 
 class LengthAverage(tf.keras.layers.Layer):
     """Average across a variable length sequence."""
+
     def __init__(self):
         super(LengthAverage, self).__init__()
 
@@ -180,6 +186,7 @@ class LengthAverage(tf.keras.layers.Layer):
 ############################################################
 # Attention
 ############################################################
+
 
 def _prepend_dims(x, num_dims):
     return tf.reshape(x, shape=[1] * num_dims + x.shape)
