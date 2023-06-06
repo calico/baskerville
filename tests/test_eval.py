@@ -9,11 +9,6 @@ import pandas as pd
 
 @pytest.fixture
 def clean_data():
-    # download data
-    if not os.path.isfile("tests/data/eval/train/model_best.h5"):
-        cmd = ["gsutil", "-m", "cp", "-r", "gs://westminster2/eval", "tests/data/"]
-        subprocess.run(cmd, check=True)
-
     # clean previous evaluation directories
     out_dirs = ["tests/data/eval/eval_out"]
     for out_dir in out_dirs:
@@ -28,8 +23,8 @@ def test_eval(clean_data):
         "tests/data/eval/eval_out",
         "--rank",
         "tests/data/eval/params.json",
-        "tests/data/eval/train/model_best.h5",
-        "tests/data/eval/data",
+        "tests/data/eval/model.h5",
+        "tests/data/tiny/hg38",
     ]
     print(" ".join(cmd))
     subprocess.run(cmd, check=True)

@@ -1,18 +1,18 @@
 {
     "train": {
         "batch_size": 4,
-	"shuffle_buffer": 64,
+	"shuffle_buffer": 128,
         "optimizer": "adam",
 	"learning_rate": 0.0001,
 	"loss": "poisson_mn",
 	"total_weight": 0.2,
-        "warmup_steps": 10000,
+        "warmup_steps": 8000,
         "global_clipnorm": 0.1,
         "adam_beta1": 0.9,
         "adam_beta2": 0.999,
         "patience": 25,
-	"train_epochs_min": 3,
-	"train_epochs_max": 3
+	"train_epochs_min": 80,
+	"train_epochs_max": 100
     },
     "model": {
         "seq_length": 131072,
@@ -22,25 +22,25 @@
         "norm_type": "batch",
         "bn_momentum": 0.9,
 	"kernel_initializer": "lecun_normal",
-	"l2_scale": 1.0e-7,
+	"l2_scale": 2.0e-7,
         "trunk": [
             {
                 "name": "conv_dna",
-                "filters": 32,
+                "filters": 64,
                 "kernel_size": 7,
 		"norm_type": null,
 		"activation": "linear",
-                "pool_size": 8
+                "pool_size": 2
             },
             {
                 "name": "res_tower",
-                "filters_init": 40,
-		"filters_end": 64,
-		"divisible_by": 4,
+                "filters_init": 80,
+		"filters_end": 128,
+		"divisible_by": 8,
                 "kernel_size": 5,
 		"num_convs": 1,
                 "pool_size": 2,
-                "repeat": 4
+                "repeat": 6
             },
             {
                 "name": "transformer_tower",
@@ -48,10 +48,10 @@
                 "heads": 2,
                 "num_position_features": 32,
                 "dropout": 0.2,
-		"mha_l2_scale": 2.0e-8,
-		"l2_scale": 2.0e-8,
+		"mha_l2_scale": 5.0e-8,
+		"l2_scale": 5.0e-8,
 		"kernel_initializer": "he_normal",
-		"repeat": 1
+		"repeat": 2
             },
 	    {
 		"name": "fpn_unet",

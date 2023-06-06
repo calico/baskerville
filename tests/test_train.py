@@ -6,26 +6,6 @@ import subprocess
 
 @pytest.fixture
 def clean_data():
-    # download data
-    if not os.path.isfile("tests/data/tiny/nets0.bed"):
-        cmd = ["gsutil", "-m", "cp", "-r", "gs://westminster2/tiny", "tests/data/"]
-        subprocess.run(cmd, check=True)
-
-    # setup folds
-    # TODO: update basenji_train_folds.py to baskerville version
-    if not os.path.isdir("tests/data/train"):
-        cmd = [
-            "basenji_train_folds.py",
-            "-o",
-            "tests/data/train",
-            "--setup",
-            "tests/data/params.json",
-            "tests/data/tiny/hg38",
-            "tests/data/tiny/mm10",
-        ]
-        print(" ".join(cmd))
-        subprocess.run(cmd, check=True)
-
     # clean previous training directories
     out_dirs = ["tests/data/train1", "tests/data/train2"]
     for out_dir in out_dirs:
@@ -39,7 +19,7 @@ def test_train(clean_data):
         "-o",
         "tests/data/train1",
         "tests/data/params.json",
-        "tests/data/train/f0c0/data0",
+        "tests/data/tiny/hg38",
     ]
     print(" ".join(cmd))
     subprocess.run(cmd, check=True)
@@ -54,8 +34,8 @@ def test_train2(clean_data):
         "-o",
         "tests/data/train2",
         "tests/data/params.json",
-        "tests/data/train/f0c0/data0",
-        "tests/data/train/f0c0/data1",
+        "tests/data/tiny/hg38",
+        "tests/data/tiny/mm10",
     ]
     subprocess.run(cmd, check=True)
 
