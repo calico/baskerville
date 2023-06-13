@@ -11,29 +11,35 @@ def test_dna_rc():
     assert seq_rc == "TGTAATC"
 
 
+ACGT_ARRAY = np.array(
+    [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], dtype="bool"
+)
+ACNGT_FF_ARRAY = np.array(
+    [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]],
+    dtype="bool",
+)
+ACNGT_TF_ARRAY = np.array(
+    [[1, 0, 0, 0], [0, 1, 0, 0], [0.25, 0.25, 0.25, 0.25], [0, 0, 1, 0], [0, 0, 0, 1]]
+)
+
 dna_1hot_cases = [
     (
         "ACGT",
         False,
         False,
-        np.array(
-            [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], dtype="bool"
-        ),
+        ACGT_ARRAY,
     ),
     (
         "ACNGT",
         False,
         False,
-        np.array(
-            [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]],
-            dtype="bool",
-        ),
+        ACNGT_FF_ARRAY,
     ),
     (
         "ACNGT",
         True,
         False,
-        np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0.25] * 4, [0, 0, 1, 0], [0, 0, 0, 1]]),
+        ACNGT_TF_ARRAY,
     ),
 ]
 
