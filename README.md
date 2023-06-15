@@ -10,6 +10,9 @@ Basenji provides researchers with tools to:
 
 ----------------------------------------------------------------------------------------------
 ### Installation 
+
+**[See docs for setting up Calico Python Registry](https://sweng.calicolabs.com/docs/platform/tech/package-management/installing-internal-packages)**
+
 `pip install calicolabs-baskerville` for internal package installation
 
 ----------------------------------------------------------------------------------------------
