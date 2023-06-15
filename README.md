@@ -1,4 +1,4 @@
-# Baserville
+# Baskerville
 #### Basenji sucessor
 #### Sequential regulatory activity predictions with deep convolutional neural networks.
 
