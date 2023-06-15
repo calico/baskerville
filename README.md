@@ -1,33 +1,20 @@
-# Github Template for Calico's Python Library
+# Baskerville
+#### Basenji sucessor
+#### Sequential regulatory activity predictions with deep convolutional neural networks.
 
-Create internal Python packages using this template. 
+Basenji provides researchers with tools to:
+1. Train deep convolutional neural networks to predict regulatory activity along very long chromosome-scale DNA sequences
+2. Score variants according to their predicted influence on regulatory activity across the sequence and/or for specific genes.
+3. Annotate the distal regulatory elements that influence gene activity.
+4. Annotate the specific nucleotides that drive regulatory element function.
 
+----------------------------------------------------------------------------------------------
+### Installation 
 
-## Update the following parameters in the `setup.cfg` file.
-Change the package name, and urls to reflect the name of your package.
-```
-name = calicolabs-{replace-with-package-name}
-url = https://github.com/calico/replace-with-repo-name
-project_urls =
-    Bug Tracker = https://github.com/calico/replace-with-repo-name/issues
-```
+**[See docs for setting up Calico Python Registry](https://sweng.calicolabs.com/docs/platform/tech/package-management/installing-internal-packages)**
 
-Uncomment the following lines and add your package dependencies.
-Where possible, please add `~=` instead of `==`  
-```
-;install_requires =
-;    package~=3.17.0
-;    package2~=3.15.1
-```
+`pip install calicolabs-baskerville` for internal package installation
 
-## Update the following parameters in the `pyproject.toml` file.
-
-```text
-[project]
-name = "calicolabs-{python-library-name}" # Replace with your library name
-```
-
-## Updating Github permissions for CODEOWNERS  
-
-1. After a new repository is created using this template, go to the Github repository Settings > Collaborators and teams. 
-2. Click on "Add teams" to add "sweng-dev" with <b>Maintain</b> permissions for the repository.
+----------------------------------------------------------------------------------------------
+#### Contacts
+Dave Kelly (codeowner)
