@@ -19,6 +19,7 @@ import sys
 
 from natsort import natsorted
 import numpy as np
+import pandas as pd
 import tensorflow as tf
 
 # TFRecord constants
@@ -35,13 +36,14 @@ class SeqDataset:
     """Labeled sequence dataset for Tensorflow.
 
     Args:
-      data_dir (:obj:`str`): Dataset directory.
-      split_label (:obj:`str`): Dataset split, e.g. train, valid, test.
-      batch_size (:obj:`int`): Batch size.
-      shuffle_buffer (:obj:`int`): Shuffle buffer size. Defaults to 128.
-      seq_length_crop (:obj:`int`): Sequence length to crop from sides. Defaults to 0.
-      mode (:obj:`str`): Dataset mode, e.g. train/eval. Defaults to 'eval'.
-      tfr_pattern (:obj:`str`): TFRecord pattern to glob. Defaults to split_label.
+      data_dir (str): Dataset directory.
+      split_label (str): Dataset split, e.g. train, valid, test.
+      batch_size (int): Batch size.
+      shuffle_buffer (int): Shuffle buffer size. Defaults to 128.
+      seq_length_crop (int): Sequence length to crop from sides. Defaults to 0.
+      mode (str): Dataset mode, e.g. train/eval. Defaults to 'eval'.
+      tfr_pattern (str): TFRecord pattern to glob. Defaults to split_label.
+      targets_slice_file (str): Targets table from which to slice a target subset.
     """
 
     def __init__(
@@ -53,6 +55,7 @@ class SeqDataset:
         seq_length_crop: int = 0,
         mode: str = "eval",
         tfr_pattern: str = None,
+        targets_slice_file: str = None,
     ):
 
         self.data_dir = data_dir
@@ -75,6 +78,13 @@ class SeqDataset:
         self.target_length = data_stats["target_length"]
         self.num_targets = data_stats["num_targets"]
         self.pool_width = data_stats["pool_width"]
+
+        # slice targets
+        if targets_slice_file is None:
+            self.targets_slice = None
+        else:
+            targets_df = pd.read_csv(targets_slice_file, index_col=0, sep="\t")
+            self.targets_slice = np.array(targets_df.index)
 
         # extract or compute sequence statistics
         if self.tfr_pattern is None:
@@ -131,6 +141,8 @@ class SeqDataset:
             if not raw:
                 targets = tf.reshape(targets, [self.target_length, self.num_targets])
                 targets = tf.cast(targets, tf.float32)
+                if self.targets_slice is not None:
+                    targets = targets[:, self.targets_slice]
 
             return sequence, targets
 
@@ -195,7 +207,6 @@ class SeqDataset:
         if self.num_targets is not None:
             targets_nonzero = np.zeros(self.num_targets, dtype="bool")
 
-        # for (seq_raw, genome), targets_raw in dataset:
         for seq_raw, targets_raw in dataset:
             # infer seq_depth
             seq_1hot = seq_raw.numpy().reshape((self.seq_length, -1))
