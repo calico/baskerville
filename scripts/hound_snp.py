@@ -168,21 +168,27 @@ def main():
             # prep strand
             targets_strand_df = targets_prep_strand(targets_df)
 
-            # set strand pairs
-            params_model["strand_pair"] = [np.array(targets_df.strand_pair)]
+            # set strand pairs (using new indexing)
+            orig_new_index = dict(zip(targets_df.index, np.arange(targets_df.shape[0])))
+            targets_strand_pair = np.array(
+                [orig_new_index[ti] for ti in targets_df.strand_pair]
+            )
+            params_model["strand_pair"] = [targets_strand_pair]
 
             # construct strand sum transform
             strand_transform = dok_matrix(
                 (targets_df.shape[0], targets_strand_df.shape[0])
             )
+            ti = 0
             sti = 0
-            for ti, target in targets_df.iterrows():
+            for _, target in targets_df.iterrows():
                 strand_transform[ti, sti] = True
                 if target.strand_pair == target.name:
                     sti += 1
                 else:
                     if target.identifier[-1] == "-":
                         sti += 1
+                ti += 1
             strand_transform = strand_transform.tocsr()
 
         else:
