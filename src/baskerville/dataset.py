@@ -57,7 +57,6 @@ class SeqDataset:
         tfr_pattern: str = None,
         targets_slice_file: str = None,
     ):
-
         self.data_dir = data_dir
         self.split_label = split_label
         self.batch_size = batch_size
@@ -305,3 +304,29 @@ class SeqDataset:
             return seqs_1hot
         else:
             return targets
+
+
+def targets_prep_strand(targets_df):
+    """Adjust targets table for merged stranded datasets.
+
+    Args:
+        targets_df: pandas DataFrame of targets
+
+    Returns:
+        targets_df: pandas DataFrame of targets, with stranded
+            targets collapsed into a single row
+    """
+    # attach strand
+    targets_strand = []
+    for _, target in targets_df.iterrows():
+        if target.strand_pair == target.name:
+            targets_strand.append(".")
+        else:
+            targets_strand.append(target.identifier[-1])
+    targets_df["strand"] = targets_strand
+
+    # collapse stranded
+    strand_mask = targets_df.strand != "-"
+    targets_strand_df = targets_df[strand_mask]
+
+    return targets_strand_df

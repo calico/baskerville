@@ -29,12 +29,14 @@ from tqdm import tqdm
 
 from baskerville import seqnn
 from baskerville import vcf as bvcf
+from baskerville.dataset import targets_prep_strand
 
 """
 hound_snp.py
 
 Compute variant effect predictions for SNPs in a VCF file.
 """
+
 
 ################################################################################
 # main
@@ -345,24 +347,6 @@ def initialize_output_h5(out_dir, sad_stats, snps, targets_length, targets_df):
             )
 
     return sad_out
-
-
-def targets_prep_strand(targets_df):
-    """Adjust targets table for merged stranded datasets."""
-    # attach strand
-    targets_strand = []
-    for _, target in targets_df.iterrows():
-        if target.strand_pair == target.name:
-            targets_strand.append(".")
-        else:
-            targets_strand.append(target.identifier[-1])
-    targets_df["strand"] = targets_strand
-
-    # collapse stranded
-    strand_mask = targets_df.strand != "-"
-    targets_strand_df = targets_df[strand_mask]
-
-    return targets_strand_df
 
 
 def untransform_preds(preds, targets_df, unscale=False):
