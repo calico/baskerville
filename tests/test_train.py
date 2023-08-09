@@ -15,7 +15,7 @@ def clean_data():
 
 def test_train(clean_data):
     cmd = [
-        "scripts/hound_train.py",
+        "src/baskerville/scripts/hound_train.py",
         "-o",
         "tests/data/train1",
         "tests/data/params.json",
@@ -30,7 +30,7 @@ def test_train(clean_data):
 
 def test_train2(clean_data):
     cmd = [
-        "scripts/hound_train.py",
+        "src/baskerville/scripts/hound_train.py",
         "-o",
         "tests/data/train2",
         "tests/data/params.json",
