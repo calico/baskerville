@@ -18,7 +18,7 @@ def clean_data():
 
 def test_eval(clean_data):
     cmd = [
-        "scripts/hound_eval.py",
+        "src/baskerville/scripts/hound_eval.py",
         "-o",
         "tests/data/eval/eval_out",
         "--rank",
