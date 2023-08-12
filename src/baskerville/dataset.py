@@ -330,3 +330,60 @@ def targets_prep_strand(targets_df):
     targets_strand_df = targets_df[strand_mask]
 
     return targets_strand_df
+
+
+def untransform_preds(preds, targets_df, unscale=False):
+    """Undo the squashing transformations performed for the tasks.
+
+    Args:
+      preds (np.array): Predictions LxT.
+      targets_df (pd.DataFrame): Targets information table.
+
+    Returns:
+      preds (np.array): Untransformed predictions LxT.
+    """
+    # clip soft
+    cs = np.expand_dims(np.array(targets_df.clip_soft), axis=0)
+    preds_unclip = cs - 1 + (preds - cs + 1) ** 2
+    preds = np.where(preds > cs, preds_unclip, preds)
+
+    # ** 0.75
+    sqrt_mask = np.array([ss.find("_sqrt") != -1 for ss in targets_df.sum_stat])
+    preds[:, sqrt_mask] = -1 + (preds[:, sqrt_mask] + 1) ** (4 / 3)
+
+    # scale
+    if unscale:
+        scale = np.expand_dims(np.array(targets_df.scale), axis=0)
+        preds = preds / scale
+
+    return preds
+
+
+def untransform_preds1(preds, targets_df, unscale=False):
+    """Undo the squashing transformations performed for the tasks.
+
+    Args:
+      preds (np.array): Predictions LxT.
+      targets_df (pd.DataFrame): Targets information table.
+
+    Returns:
+      preds (np.array): Untransformed predictions LxT.
+    """
+    # scale
+    scale = np.expand_dims(np.array(targets_df.scale), axis=0)
+    preds = preds / scale
+
+    # clip soft
+    cs = np.expand_dims(np.array(targets_df.clip_soft), axis=0)
+    preds_unclip = cs + (preds - cs) ** 2
+    preds = np.where(preds > cs, preds_unclip, preds)
+
+    # ** 0.75
+    sqrt_mask = np.array([ss.find("_sqrt") != -1 for ss in targets_df.sum_stat])
+    preds[:, sqrt_mask] = (preds[:, sqrt_mask]) ** (4 / 3)
+
+    # unscale
+    if not unscale:
+        preds = preds * scale
+
+    return preds

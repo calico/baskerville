@@ -27,9 +27,9 @@ from scipy.sparse import dok_matrix
 from scipy.special import rel_entr
 from tqdm import tqdm
 
+from baskerville import dataset
 from baskerville import seqnn
 from baskerville import vcf as bvcf
-from baskerville.dataset import targets_prep_strand
 
 """
 hound_snp.py
@@ -168,7 +168,7 @@ def main():
             sum_strand = True
 
             # prep strand
-            targets_strand_df = targets_prep_strand(targets_df)
+            targets_strand_df = dataset.targets_prep_strand(targets_df)
 
             # set strand pairs (using new indexing)
             orig_new_index = dict(zip(targets_df.index, np.arange(targets_df.shape[0])))
@@ -266,11 +266,11 @@ def main():
         # untransform predictions
         if options.targets_file is not None:
             if options.untransform_old:
-                ref_preds = untransform_preds1(ref_preds, targets_df)
-                alt_preds = untransform_preds1(alt_preds, targets_df)
+                ref_preds = dataset.untransform_preds1(ref_preds, targets_df)
+                alt_preds = dataset.untransform_preds1(alt_preds, targets_df)
             else:
-                ref_preds = untransform_preds(ref_preds, targets_df)
-                alt_preds = untransform_preds(alt_preds, targets_df)
+                ref_preds = dataset.untransform_preds(ref_preds, targets_df)
+                alt_preds = dataset.untransform_preds(alt_preds, targets_df)
 
         # sum strand pairs
         if sum_strand:
@@ -347,63 +347,6 @@ def initialize_output_h5(out_dir, sad_stats, snps, targets_length, targets_df):
             )
 
     return sad_out
-
-
-def untransform_preds(preds, targets_df, unscale=False):
-    """Undo the squashing transformations performed for the tasks.
-
-    Args:
-      preds (np.array): Predictions LxT.
-      targets_df (pd.DataFrame): Targets information table.
-
-    Returns:
-      preds (np.array): Untransformed predictions LxT.
-    """
-    # clip soft
-    cs = np.expand_dims(np.array(targets_df.clip_soft), axis=0)
-    preds_unclip = cs - 1 + (preds - cs + 1) ** 2
-    preds = np.where(preds > cs, preds_unclip, preds)
-
-    # ** 0.75
-    sqrt_mask = np.array([ss.find("_sqrt") != -1 for ss in targets_df.sum_stat])
-    preds[:, sqrt_mask] = -1 + (preds[:, sqrt_mask] + 1) ** (4 / 3)
-
-    # scale
-    if unscale:
-        scale = np.expand_dims(np.array(targets_df.scale), axis=0)
-        preds = preds / scale
-
-    return preds
-
-
-def untransform_preds1(preds, targets_df, unscale=False):
-    """Undo the squashing transformations performed for the tasks.
-
-    Args:
-      preds (np.array): Predictions LxT.
-      targets_df (pd.DataFrame): Targets information table.
-
-    Returns:
-      preds (np.array): Untransformed predictions LxT.
-    """
-    # scale
-    scale = np.expand_dims(np.array(targets_df.scale), axis=0)
-    preds = preds / scale
-
-    # clip soft
-    cs = np.expand_dims(np.array(targets_df.clip_soft), axis=0)
-    preds_unclip = cs + (preds - cs) ** 2
-    preds = np.where(preds > cs, preds_unclip, preds)
-
-    # ** 0.75
-    sqrt_mask = np.array([ss.find("_sqrt") != -1 for ss in targets_df.sum_stat])
-    preds[:, sqrt_mask] = (preds[:, sqrt_mask]) ** (4 / 3)
-
-    # unscale
-    if not unscale:
-        preds = preds * scale
-
-    return preds
 
 
 def write_pct(sad_out, sad_stats):
