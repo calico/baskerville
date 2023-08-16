@@ -134,7 +134,7 @@ def main():
 
     options.shifts = [int(shift) for shift in options.shifts.split(",")]
     options.sad_stats = options.sad_stats.split(",")
-    
+
     # calculate SAD scores:
     if options.processes is not None:
         calculate_sad(params_file, model_file, vcf_file, worker_index, options)
