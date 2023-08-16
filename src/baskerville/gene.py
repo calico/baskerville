@@ -49,7 +49,7 @@ class GenomicInterval:
 
 class Gene:
     """Class for managing genes in an isoform-agnostic way, taking
-  the union of exons across isoforms."""
+    the union of exons across isoforms."""
 
     def __init__(self, chrom, strand, kv):
         self.chrom = chrom

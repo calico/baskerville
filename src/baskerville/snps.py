@@ -11,6 +11,7 @@ from baskerville import dataset
 from baskerville import seqnn
 from baskerville import vcf as bvcf
 
+
 def calculate_sad(params_file, model_file, vcf_file, worker_index, options):
     """
     write SAD output
