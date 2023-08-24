@@ -9,10 +9,10 @@ Baskerville provides researchers with tools to:
 ----------------------------------------------------------------------------------------------
 ### Installation 
 
-**[See docs for setting up Calico Python Registry](https://sweng.calicolabs.com/docs/platform/tech/package-management/installing-internal-packages)**
-
-`pip install baskerville` for internal package installation
+`git clone git@github.com:calico/baskerville.git`
+`cd baskerville`
+`pip install .`
 
 ----------------------------------------------------------------------------------------------
 #### Contacts
-Dave Kelly (codeowner)
+Dave Kelley (codeowner)
