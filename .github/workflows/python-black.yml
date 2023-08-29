@@ -1,12 +1,6 @@
 name: Validate Black Formatting
 
 on:
-  workflow_call:
-    inputs:
-      black-version:
-        required: false
-        type: string
-        default: "22.3.0"
   workflow_dispatch:
   push:
     paths:
@@ -26,7 +20,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: python3 -m pip install black~=${{ inputs.black-version }}
+        run: python3 -m pip install black~=22.3.0
 
       - name: Check Black formatting
         run: black --check .
