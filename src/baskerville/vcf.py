@@ -604,6 +604,7 @@ def vcf_snps(
                 ref_n = len(snps[-1].ref_allele)
                 snp_pos = snps[-1].pos - 1
                 ref_snp = genome_open.fetch(snps[-1].chr, snp_pos, snp_pos + ref_n)
+
                 if snps[-1].ref_allele != ref_snp:
                     if not flip_ref:
                         # bail

@@ -42,6 +42,13 @@ def main():
 
     # snp
     parser.add_option(
+        "-c",
+        dest="cluster_snps_pct",
+        default=0,
+        type="float",
+        help="Cluster SNPs within a %% of the seq length to make a single ref pred [Default: %default]",
+    )
+    parser.add_option(
         "-f",
         dest="genome_fasta",
         default=None,
@@ -69,8 +76,8 @@ def main():
     )
     parser.add_option(
         "--stats",
-        dest="sad_stats",
-        default="SAD",
+        dest="snp_stats",
+        default="logSAD",
         help="Comma-separated list of stats to save. [Default: %default]",
     )
     parser.add_option(
@@ -80,12 +87,19 @@ def main():
         type="str",
         help="File specifying target indexes and labels in table format",
     )
+    parser.add_option(
+        "-u",
+        dest="untransform_old",
+        default=False,
+        action="store_true",
+        help="Untransform old models [Default: %default]",
+    )
 
     # multi
     parser.add_option(
         "-e",
         dest="conda_env",
-        default="tf210",
+        default="tf12",
         help="Anaconda environment [Default: %default]",
     )
     parser.add_option(
