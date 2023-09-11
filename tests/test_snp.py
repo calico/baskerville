@@ -10,13 +10,13 @@ from baskerville.dataset import targets_prep_strand
 params_file = "tests/data/eval/params.json"
 model_file = "tests/data/eval/model.h5"
 targets_file = "tests/data/tiny/hg38/targets.txt"
-out_dir = "tests/data/snp"
-vcf_file = "/home/drk/seqnn/data/gtex_fine/susie_pip90/Kidney_Cortex_pos.vcf"
+snp_dir = "tests/data/snp"
+vcf_file = f"{snp_dir}/kidney_eqtl.vcf"
 fasta_file = "%s/assembly/ucsc/hg38.fa" % os.environ["HG38"]
 stat_keys = ["logSAD", "logD2"]
 
 def test_snp():
-    test_out_dir = f"{out_dir}/full"
+    test_out_dir = f"{snp_dir}/full"
     scores_file = f"{test_out_dir}/scores.h5"
     if os.path.isfile(scores_file):
         os.remove(scores_file)
@@ -47,8 +47,8 @@ def test_snp():
 
 
 def test_slice():
-    test_full_dir = f"{out_dir}/full"
-    test_slice_dir = f"{out_dir}/sub"
+    test_full_dir = f"{snp_dir}/full"
+    test_slice_dir = f"{snp_dir}/sub"
     os.makedirs(test_slice_dir, exist_ok=True)
     scores_file = f"{test_slice_dir}/scores.h5"
     if os.path.isfile(scores_file):
