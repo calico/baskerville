@@ -524,7 +524,7 @@ class SeqNN:
         stream: bool = False,
         step: int = 1,
         dtype: str = "float32",
-        **kwargs
+        **kwargs,
     ):
         """Predict targets for SeqDataset, with more options.
 

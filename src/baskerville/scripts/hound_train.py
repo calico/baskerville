@@ -163,7 +163,6 @@ def main():
         strategy = tf.distribute.MirroredStrategy()
 
         with strategy.scope():
-
             if not args.keras_fit:
                 # distribute data
                 for di in range(len(args.data_dirs)):

@@ -17,7 +17,7 @@ from optparse import OptionParser
 import pdb
 import pickle
 import os
-from baskerville.snps import calculate_sad
+from baskerville.snps import score_snps
 
 """
 hound_snp.py
@@ -25,12 +25,20 @@ hound_snp.py
 Compute variant effect predictions for SNPs in a VCF file.
 """
 
+
 ################################################################################
 # main
 ################################################################################
 def main():
     usage = "usage: %prog [options] <params_file> <model_file> <vcf_file>"
     parser = OptionParser(usage)
+    parser.add_option(
+        "-c",
+        dest="cluster_snps_pct",
+        default=0,
+        type="float",
+        help="Cluster SNPs within a %% of the seq length to make a single ref pred [Default: %default]",
+    )
     parser.add_option(
         "-f",
         dest="genome_fasta",
@@ -66,8 +74,8 @@ def main():
     )
     parser.add_option(
         "--stats",
-        dest="sad_stats",
-        default="SAD",
+        dest="snp_stats",
+        default="logSAD",
         help="Comma-separated list of stats to save. [Default: %default]",
     )
     parser.add_option(
@@ -129,17 +137,20 @@ def main():
     else:
         parser.error("Must provide parameters and model files and QTL VCF file")
 
+    if options.targets_file is None:
+        parser.error("Must provide targets file")
+
     if not os.path.isdir(options.out_dir):
         os.mkdir(options.out_dir)
 
     options.shifts = [int(shift) for shift in options.shifts.split(",")]
-    options.sad_stats = options.sad_stats.split(",")
+    options.snp_stats = options.snp_stats.split(",")
 
     # calculate SAD scores:
     if options.processes is not None:
-        calculate_sad(params_file, model_file, vcf_file, worker_index, options)
+        score_snps(params_file, model_file, vcf_file, worker_index, options)
     else:
-        calculate_sad(params_file, model_file, vcf_file, 0, options)
+        score_snps(params_file, model_file, vcf_file, 0, options)
 
 
 ################################################################################

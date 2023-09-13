@@ -219,13 +219,11 @@ def snp_seq1(snp, seq_len, genome_open):
     seq_ref = seq[left_len : left_len + len(snp.ref_allele)]
     ref_found = True
     if seq_ref != snp.ref_allele:
-
         # search for reference allele in alternatives
         ref_found = False
 
         # for each alternative allele
         for alt_al in snp.alt_alleles:
-
             # grab reference sequence matching alt length
             seq_ref_alt = seq[left_len : left_len + len(alt_al)]
             if seq_ref_alt == alt_al:
@@ -314,13 +312,11 @@ def snps_seq1(snps, seq_len, genome_fasta, return_seqs=False):
         # verify that ref allele matches ref sequence
         seq_ref = seq[left_len : left_len + len(snp.ref_allele)]
         if seq_ref != snp.ref_allele:
-
             # search for reference allele in alternatives
             ref_found = False
 
             # for each alternative allele
             for alt_al in snp.alt_alleles:
-
                 # grab reference sequence matching alt length
                 seq_ref_alt = seq[left_len : left_len + len(alt_al)]
                 if seq_ref_alt == alt_al:
@@ -604,6 +600,7 @@ def vcf_snps(
                 ref_n = len(snps[-1].ref_allele)
                 snp_pos = snps[-1].pos - 1
                 ref_snp = genome_open.fetch(snps[-1].chr, snp_pos, snp_pos + ref_n)
+
                 if snps[-1].ref_allele != ref_snp:
                     if not flip_ref:
                         # bail

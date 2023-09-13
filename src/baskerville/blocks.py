@@ -18,6 +18,7 @@ import tensorflow as tf
 
 from baskerville import layers
 
+
 ############################################################
 # Convolution
 ############################################################
@@ -892,7 +893,7 @@ def conv_tower(
     divisible_by=1,
     repeat=1,
     reprs=[],
-    **kwargs
+    **kwargs,
 ):
     """Construct a reducing convolution block.
 
@@ -943,7 +944,7 @@ def conv_tower_nac(
     divisible_by=1,
     repeat=1,
     reprs=[],
-    **kwargs
+    **kwargs,
 ):
     """Construct a reducing convolution block.
 
@@ -1000,7 +1001,7 @@ def res_tower(
     repeat=1,
     num_convs=2,
     reprs=[],
-    **kwargs
+    **kwargs,
 ):
     """Construct a reducing convolution block.
 
@@ -1087,7 +1088,7 @@ def convnext_tower(
     repeat=1,
     num_convs=2,
     reprs=[],
-    **kwargs
+    **kwargs,
 ):
     """Abc.
 
@@ -1129,7 +1130,7 @@ def convnext_tower(
             filters=rep_filters_int,
             kernel_size=kernel_size,
             dropout=dropout,
-            **kwargs
+            **kwargs,
         )
         current0 = current
 
@@ -1141,7 +1142,7 @@ def convnext_tower(
                 filters=rep_filters_int,
                 kernel_size=kernel_size,
                 dropout=dropout,
-                **kwargs
+                **kwargs,
             )
 
         # residual add
@@ -1187,7 +1188,7 @@ def transformer(
     qkv_width=1,
     mha_initializer="he_normal",
     kernel_initializer="he_normal",
-    **kwargs
+    **kwargs,
 ):
     """Construct a transformer block.
 
@@ -1255,7 +1256,7 @@ def transformer_split(
     qkv_width=1,
     mha_initializer="he_normal",
     kernel_initializer="he_normal",
-    **kwargs
+    **kwargs,
 ):
     """Construct a transformer block.
 
@@ -1393,7 +1394,7 @@ def transformer2(
     dropout=0.25,
     dense_expansion=2.0,
     qkv_width=1,
-    **kwargs
+    **kwargs,
 ):
     """Construct a transformer block, with length-wise pooling before
        returning to full length.
@@ -1416,7 +1417,7 @@ def transformer2(
         filters=min(4 * key_size, inputs.shape[-1]),
         kernel_size=3,
         pool_size=2,
-        **kwargs
+        **kwargs,
     )
 
     # layer norm
@@ -1517,7 +1518,7 @@ def squeeze_excite(
     additive=False,
     norm_type=None,
     bn_momentum=0.9,
-    **kwargs
+    **kwargs,
 ):
     return layers.SqueezeExcite(
         activation, additive, bottleneck_ratio, norm_type, bn_momentum
@@ -1545,7 +1546,7 @@ def dilated_dense(
     conv_type="standard",
     dropout=0,
     repeat=1,
-    **kwargs
+    **kwargs,
 ):
     """Construct a residual dilated dense block.
 
@@ -1570,7 +1571,7 @@ def dilated_dense(
             kernel_size=kernel_size,
             dilation_rate=int(np.round(dilation_rate)),
             conv_type=conv_type,
-            **kwargs
+            **kwargs,
         )
 
         # dense concat
@@ -1592,7 +1593,7 @@ def dilated_residual(
     conv_type="standard",
     norm_type=None,
     round=False,
-    **kwargs
+    **kwargs,
 ):
     """Construct a residual dilated convolution block.
 
@@ -1619,7 +1620,7 @@ def dilated_residual(
             conv_type=conv_type,
             norm_type=norm_type,
             norm_gamma="ones",
-            **kwargs
+            **kwargs,
         )
 
         # return
@@ -1629,7 +1630,7 @@ def dilated_residual(
             dropout=dropout,
             norm_type=norm_type,
             norm_gamma="zeros",
-            **kwargs
+            **kwargs,
         )
 
         # InitZero
@@ -1672,7 +1673,7 @@ def dilated_residual_nac(
             filters=filters,
             kernel_size=kernel_size,
             dilation_rate=int(np.round(dilation_rate)),
-            **kwargs
+            **kwargs,
         )
 
         # return
@@ -1697,7 +1698,7 @@ def dilated_residual_2d(
     dropout=0,
     repeat=1,
     symmetric=True,
-    **kwargs
+    **kwargs,
 ):
     """Construct a residual dilated convolution block."""
 
@@ -1717,7 +1718,7 @@ def dilated_residual_2d(
             kernel_size=kernel_size,
             dilation_rate=int(np.round(dilation_rate)),
             norm_gamma="ones",
-            **kwargs
+            **kwargs,
         )
 
         # return
@@ -1726,7 +1727,7 @@ def dilated_residual_2d(
             filters=rep_input.shape[-1],
             dropout=dropout,
             norm_gamma="zeros",
-            **kwargs
+            **kwargs,
         )
 
         # residual add
@@ -1818,7 +1819,7 @@ def dense_block(
     bn_momentum=0.99,
     norm_gamma=None,
     kernel_initializer="he_normal",
-    **kwargs
+    **kwargs,
 ):
     """Construct a single convolution block.
 
@@ -1909,7 +1910,7 @@ def dense_nac(
     bn_momentum=0.99,
     norm_gamma=None,
     kernel_initializer="he_normal",
-    **kwargs
+    **kwargs,
 ):
     """Construct a single convolution block.
 
@@ -1991,7 +1992,7 @@ def final(
     kernel_initializer="he_normal",
     l2_scale=0,
     l1_scale=0,
-    **kwargs
+    **kwargs,
 ):
     """Final simple transformation before comparison to targets.
 
