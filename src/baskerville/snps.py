@@ -224,7 +224,7 @@ def cluster_snps(snps, seq_len: int, center_pct: float):
 
 def initialize_output_h5(out_dir, snp_stats, snps, targets_length, targets_df):
     """Initialize an output HDF5 file for SAD stats.
-    
+
     Args:
         out_dir (str): Output directory.
         snp_stats [str]: List of SAD stats to compute.
@@ -287,7 +287,7 @@ def initialize_output_h5(out_dir, snp_stats, snps, targets_length, targets_df):
 
 def make_alt_1hot(ref_1hot, snp_seq_pos, ref_allele, alt_allele):
     """Return alternative allele one hot coding.
-    
+
     Args:
         ref_1hot (np.array): Reference allele one hot coding.
         snp_seq_pos (int): SNP position in sequence.
@@ -335,7 +335,7 @@ def make_alt_1hot(ref_1hot, snp_seq_pos, ref_allele, alt_allele):
 
 def make_strand_transform(targets_df, targets_strand_df):
     """Make a sparse matrix to sum strand pairs.
-    
+
     Args:
         targets_df (pd.DataFrame): Targets DataFrame.
         targets_strand_df (pd.DataFrame): Targets DataFrame, with strand pairs collapsed.
@@ -365,7 +365,7 @@ def make_strand_transform(targets_df, targets_strand_df):
 
 def write_pct(scores_out, snp_stats):
     """Compute percentile values for each target and write to HDF5.
-    
+
     Args:
         scores_out (h5py.File): Output HDF5 file.
         snp_stats [str]: List of SAD stats to compute.
@@ -395,7 +395,7 @@ def write_pct(scores_out, snp_stats):
 def write_snp(ref_preds_sum, alt_preds_sum, scores_out, si, snp_stats):
     """Write SNP predictions to HDF, assuming the length dimension has
     been collapsed.
-    
+
     Args:
         ref_preds_sum (np.array): Reference allele predictions.
         alt_preds_sum (np.array): Alternative allele predictions.
@@ -413,7 +413,7 @@ def write_snp(ref_preds_sum, alt_preds_sum, scores_out, si, snp_stats):
 def write_snp_len(ref_preds, alt_preds, scores_out, si, snp_stats):
     """Write SNP predictions to HDF, assuming the length dimension has
     been maintained.
-    
+
     Args:
         ref_preds (np.array): Reference allele predictions.
         alt_preds (np.array): Alternative allele predictions.

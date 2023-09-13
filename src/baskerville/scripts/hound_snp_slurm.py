@@ -33,6 +33,7 @@ Compute variant effect predictions for SNPs in a VCF file,
 parallelized across a slurm cluster.
 """
 
+
 ################################################################################
 # main
 ################################################################################
