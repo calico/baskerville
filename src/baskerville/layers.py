@@ -23,6 +23,55 @@ gpu_devices = tf.config.experimental.list_physical_devices("GPU")
 for device in gpu_devices:
     tf.config.experimental.set_memory_growth(device, True)
 
+#####################
+# transfer learning #
+#####################
+class AdapterHoulsby(tf.keras.layers.Layer):
+    ### Houlsby et al. 2019 implementation
+    
+    def __init__(
+        self, 
+        latent_size, 
+        activation=tf.keras.layers.ReLU(),
+        **kwargs):
+        super(AdapterHoulsby, self).__init__(**kwargs)
+        self.latent_size = latent_size
+        self.activation = activation
+
+    def build(self, input_shape):
+        self.down_project = tf.keras.layers.Dense(
+            units=self.latent_size, 
+            activation="linear", 
+            kernel_initializer=tf.keras.initializers.TruncatedNormal(stddev=1e-3),
+            bias_initializer="zeros",
+            name='adapter_down'
+        )
+        
+        self.up_project = tf.keras.layers.Dense(
+            units=input_shape[-1], 
+            activation="linear",
+            kernel_initializer=tf.keras.initializers.TruncatedNormal(stddev=1e-3),
+            bias_initializer="zeros",
+            name='adapter_up'
+        )
+
+    def call(self, inputs):
+        projected_down = self.down_project(inputs)
+        activated = self.activation(projected_down)
+        projected_up = self.up_project(activated)
+        output = projected_up + inputs
+        return output
+
+    def get_config(self):
+        config = super().get_config().copy()
+        config.update(
+            {
+                "latent_size": self.latent_size,
+                "activation": self.activation
+            }
+        )
+        return config
+
 ############################################################
 # Basic
 ############################################################

@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # =========================================================================
+# modified fit2 to:
+# show progress bar during training
+# save gpu memory information
+
 import time
 import pdb
 
@@ -19,6 +23,7 @@ import numpy as np
 import tensorflow as tf
 
 from baskerville import metrics
+from tensorflow.keras import mixed_precision
 
 
 def parse_loss(
@@ -52,6 +57,14 @@ def parse_loss(
         elif loss_label == "poisson_mn":
             loss_fn = metrics.PoissonMultinomial(
                 total_weight, reduction=tf.keras.losses.Reduction.NONE
+            )
+        elif loss_label == "poisson_kl":
+            loss_fn = metrics.PoissonKL(
+                spec_weight, reduction=tf.keras.losses.Reduction.NONE
+            )
+        elif loss_label == "mse_udot":
+            loss_fn = metrics.MeanSquaredErrorUDot(
+                spec_weight, reduction=tf.keras.losses.Reduction.NONE
             )
         else:
             loss_fn = tf.keras.losses.Poisson(reduction=tf.keras.losses.Reduction.NONE)
@@ -94,6 +107,7 @@ class Trainer:
         strategy=None,
         num_gpu: int = 1,
         keras_fit: bool = False,
+        loss_scale: bool = False,
     ):
         self.params = params
         self.train_data = train_data
@@ -107,6 +121,7 @@ class Trainer:
         self.num_gpu = num_gpu
         self.batch_size = self.train_data[0].batch_size
         self.compiled = False
+        self.loss_scale = loss_scale
 
         # early stopping
         self.patience = self.params.get("patience", 20)
@@ -133,7 +148,7 @@ class Trainer:
         )
 
         # optimizer
-        self.make_optimizer()
+        self.make_optimizer(loss_scale=loss_scale)
 
     def compile(self, seqnn_model):
         for model in seqnn_model.models:
@@ -396,6 +411,11 @@ class Trainer:
         ################################################################
         # training loop
 
+        gpu_memory_callback = GPUMemoryUsageCallback()
+        file_path='%s/gpu_mem.txt' % self.out_dir
+        with open(file_path, 'w') as file:
+            file.write('epoch\tbatch\tgpu_mem(GB)\n')
+
         first_step = True
         for ei in range(epoch_start, self.train_epochs_max):
             if ei >= self.train_epochs_min and np.min(unimproved) > self.patience:
@@ -406,10 +426,11 @@ class Trainer:
 
                 # get iterators
                 train_data_iters = [iter(td.dataset) for td in self.train_data]
-
+                
                 # train
                 t0 = time.time()
-                for di in self.dataset_indexes:
+                prog_bar = tf.keras.utils.Progbar(len(self.dataset_indexes))  # Create Keras Progbar
+                for didx, di in enumerate(self.dataset_indexes):
                     x, y = safe_next(train_data_iters[di])
                     if self.strategy is None:
                         if di == 0:
@@ -424,7 +445,13 @@ class Trainer:
                     if first_step:
                         print("Successful first step!", flush=True)
                         first_step = False
-
+                    prog_bar.add(1)
+                    
+                    if (ei == epoch_start) and (didx < 1000) and (didx%100 == 1): 
+                        mem=gpu_memory_callback.on_batch_end()
+                        file = open(file_path, 'a')
+                        file.write("%d\t%d\t%.2f\n"%(ei, didx, mem))
+                
                 print("Epoch %d - %ds" % (ei, (time.time() - t0)))
                 for di in range(self.num_datasets):
                     print("  Data %d" % di, end="")
@@ -486,6 +513,7 @@ class Trainer:
                     valid_r[di].reset_states()
                     valid_r2[di].reset_states()
 
+    
     def fit_tape(self, seqnn_model):
         """Train the model using a custom tf.GradientTape loop."""
         if not self.compiled:
@@ -588,6 +616,11 @@ class Trainer:
         unimproved = 0
 
         # training loop
+        gpu_memory_callback = GPUMemoryUsageCallback()
+        file_path='%s/gpu_mem.txt' % self.out_dir
+        with open(file_path, 'w') as file:
+            file.write('epoch\tbatch\tgpu_mem(GB)\n')
+
         for ei in range(epoch_start, self.train_epochs_max):
             if ei >= self.train_epochs_min and unimproved > self.patience:
                 break
@@ -603,6 +636,12 @@ class Trainer:
                         train_step(x, y)
                     if ei == epoch_start and si == 0:
                         print("Successful first step!", flush=True)
+
+                    # print gpu memory usage
+                    if (ei == epoch_start) and (si < 1000) and (si%100 == 1): 
+                        mem=gpu_memory_callback.on_batch_end()
+                        with open(file_path, 'a') as file:
+                            file.write("%d\t%d\t%.2f\n"%(ei, si, mem))
 
                 # evaluate
                 for x, y in self.eval_data[0].dataset:
@@ -660,7 +699,7 @@ class Trainer:
                 valid_r.reset_states()
                 valid_r2.reset_states()
 
-    def make_optimizer(self):
+    def make_optimizer(self, loss_scale=False):
         """Make optimizer object from given parameters."""
         cyclical1 = True
         for lrs_param in [
@@ -715,12 +754,17 @@ class Trainer:
         # optimizer
         optimizer_type = self.params.get("optimizer", "sgd").lower()
         if optimizer_type == "adam":
+            if loss_scale:
+                epsilon_value = 1e-04
+            else:
+                epsilon_value = 1e-07
             self.optimizer = tf.keras.optimizers.Adam(
                 learning_rate=lr_schedule,
                 beta_1=self.params.get("adam_beta1", 0.9),
                 beta_2=self.params.get("adam_beta2", 0.999),
                 clipnorm=clip_norm,
                 global_clipnorm=global_clipnorm,
+                epsilon=epsilon_value,
                 amsgrad=False,
             )  # reduces performance in my experience
 
@@ -746,6 +790,9 @@ class Trainer:
         else:
             print("Cannot recognize optimization algorithm %s" % optimizer_type)
             exit(1)
+
+        if loss_scale:
+            self.optimizer = mixed_precision.LossScaleOptimizer(self.optimizer)
 
 
 ################################################################
@@ -964,3 +1011,25 @@ def safe_next(data_iter, retry=5, sleep=10):
         d = next(data_iter)
 
     return d
+
+
+def CheckGradientNA(gradients):
+    for grad in gradients:
+        if grad is not None:
+            if tf.reduce_any(tf.math.is_nan(grad)):
+                raise ValueError("NaN gradient detected.")                
+
+# Define a custom callback class to track GPU memory usage
+class GPUMemoryUsageCallback(tf.keras.callbacks.Callback):
+    def on_train_begin(self, logs=None):
+        # Enable memory growth to avoid GPU memory allocation issues
+        physical_devices = tf.config.experimental.list_physical_devices('GPU')
+        if physical_devices:
+            for device in physical_devices:
+                tf.config.experimental.set_memory_growth(device, True)
+
+    def on_batch_end(self, logs=None):
+        gpu_memory = tf.config.experimental.get_memory_info('GPU:0')
+        current_memory = gpu_memory['peak'] / 1e9  # Convert to GB
+        return current_memory
+

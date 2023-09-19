@@ -17,6 +17,7 @@ import argparse
 import json
 import os
 import shutil
+import re
 
 import numpy as np
 import pandas as pd
@@ -26,13 +27,13 @@ from tensorflow.keras import mixed_precision
 from baskerville import dataset
 from baskerville import seqnn
 from baskerville import trainer
+from baskerville import layers
 
 """
 hound_train.py
 
 Train Hound model using given parameters and data.
 """
-
 
 def main():
     parser = argparse.ArgumentParser(description="Train a model.")
@@ -66,6 +67,17 @@ def main():
         action="store_true",
         default=False,
         help="Restore only model trunk [Default: %(default)s]",
+    )
+    parser.add_argument(
+        "--transfer_mode",
+        default="full",
+        help="transfer method. [full, linear, adapter]",
+    )
+    parser.add_argument(
+        "--latent",
+        type=int,
+        default=16,
+        help="adapter latent size.",
     )
     parser.add_argument(
         "--tfr_train",
@@ -131,31 +143,65 @@ def main():
                 tfr_pattern=args.tfr_eval,
             )
         )
-
+    
     params_model["strand_pair"] = strand_pairs
 
     if args.mixed_precision:
-        mixed_precision.set_global_policy("mixed_float16")
-
+        policy = mixed_precision.Policy('mixed_float16')
+        mixed_precision.set_global_policy(policy)
+    
     if params_train.get("num_gpu", 1) == 1:
         ########################################
         # one GPU
 
         # initialize model
         seqnn_model = seqnn.SeqNN(params_model)
-
+    
         # restore
         if args.restore:
             seqnn_model.restore(args.restore, trunk=args.trunk)
 
+        # transfer learning strategies
+        if args.transfer_mode=='full':
+            seqnn_model.model.trainable=True
+        
+        elif args.transfer_mode=='batch_norm':
+            seqnn_model.model_trunk.trainable=False
+            for l in seqnn_model.model.layers:
+                if l.name.startswith("batch_normalization"):
+                    l.trainable=True
+            seqnn_model.model.summary()
+        
+        elif args.transfer_mode=='linear':
+            seqnn_model.model_trunk.trainable=False
+            seqnn_model.model.summary()
+        
+        elif args.transfer_mode=='adapterHoulsby':
+            seqnn_model.model_trunk.trainable=False
+            strand_pair = strand_pairs[0]
+            adapter_model = make_adapter_model(seqnn_model.model, strand_pair, args.latent)
+            seqnn_model.model = adapter_model
+            seqnn_model.models[0] = seqnn_model.model
+            seqnn_model.model_trunk = None
+            seqnn_model.model.summary()
+        
         # initialize trainer
         seqnn_trainer = trainer.Trainer(
             params_train, train_data, eval_data, args.out_dir
         )
-
+    
         # compile model
         seqnn_trainer.compile(seqnn_model)
 
+        # train model
+        if args.keras_fit:
+            seqnn_trainer.fit_keras(seqnn_model)
+        else:
+            if len(args.data_dirs) == 1:
+                seqnn_trainer.fit_tape(seqnn_model)
+            else:
+                seqnn_trainer.fit2(seqnn_model)
+    
     else:
         ########################################
         # multi GPU
@@ -163,6 +209,7 @@ def main():
         strategy = tf.distribute.MirroredStrategy()
 
         with strategy.scope():
+
             if not args.keras_fit:
                 # distribute data
                 for di in range(len(args.data_dirs)):
@@ -190,16 +237,81 @@ def main():
             # compile model
             seqnn_trainer.compile(seqnn_model)
 
-    # train model
-    if args.keras_fit:
-        seqnn_trainer.fit_keras(seqnn_model)
-    else:
-        if len(args.data_dirs) == 1:
-            seqnn_trainer.fit_tape(seqnn_model)
+        # train model
+        if args.keras_fit:
+            seqnn_trainer.fit_keras(seqnn_model)
         else:
-            seqnn_trainer.fit2(seqnn_model)
+            if len(args.data_dirs) == 1:
+                seqnn_trainer.fit_tape(seqnn_model)
+            else:
+                seqnn_trainer.fit2(seqnn_model)
 
+def make_adapter_model(input_model, strand_pair, latent_size=16):
+    # take seqnn_model as input
+    # output a new seqnn_model object
+    # only the adapter, and layer_norm are trainable
+    
+    model = tf.keras.Model(inputs=input_model.input, 
+                           outputs=input_model.layers[-2].output) # remove the switch_reverse layer
+    
+    # save current graph
+    layer_parent_dict_old = {} # the parent layers of each layer in the old graph 
+    for layer in model.layers:
+        for node in layer._outbound_nodes:
+            layer_name = node.outbound_layer.name
+            if layer_name not in layer_parent_dict_old:
+                layer_parent_dict_old.update({layer_name: [layer.name]})
+            else:
+                if layer.name not in layer_parent_dict_old[layer_name]:
+                    layer_parent_dict_old[layer_name].append(layer.name)
+    
+    layer_output_dict_new = {} # the output tensor of each layer in the new graph
+    layer_output_dict_new.update({model.layers[0].name: model.input})
+    
+    # remove switch_reverse
+    to_fix = [i for i in layer_parent_dict_old if re.match('switch_reverse', i)]
+    for i in to_fix:
+        del layer_parent_dict_old[i]
+    
+    # Iterate over all layers after the input
+    model_outputs = []
+    reverse_bool = None
+    
+    for layer in model.layers[1:]:
+    
+        # parent layers
+        parent_layers = layer_parent_dict_old[layer.name]
+    
+        # layer inputs
+        layer_input = [layer_output_dict_new[parent] for parent in parent_layers]
+        if len(layer_input) == 1: layer_input = layer_input[0]
+    
+        if re.match('stochastic_reverse_complement', layer.name):
+            x, reverse_bool  = layer(layer_input)
+        
+        # insert adapter:
+        elif re.match('add', layer.name):
+            if any([re.match('dropout', i) for i in parent_layers]):
+                print('adapter added before:%s'%layer.name)
+                x = layers.AdapterHoulsby(latent_size=latent_size)(layer_input[1])
+                x = layer([layer_input[0], x])
+            else:
+                x = layer(layer_input)
+        
+        else:
+            x = layer(layer_input)
+    
+        # save the output tensor of every layer
+        layer_output_dict_new.update({layer.name: x})
+    
+    final = layers.SwitchReverse(strand_pair)([layer_output_dict_new[model.layers[-1].name], reverse_bool])
+    model_adapter = tf.keras.Model(inputs=model.inputs, outputs=final)
+    
+    # set layer_norm layers to trainable
+    for l in model_adapter.layers:
+        if re.match('layer_normalization', l.name): l.trainable = True
 
+    return model_adapter
 ################################################################################
 # __main__
 ################################################################################
