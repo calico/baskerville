@@ -1188,6 +1188,8 @@ def transformer(
     qkv_width=1,
     mha_initializer="he_normal",
     kernel_initializer="he_normal",
+    adapter=None,
+    latent=16,
     **kwargs,
 ):
     """Construct a transformer block.
@@ -1225,6 +1227,10 @@ def transformer(
     if dropout > 0:
         current = tf.keras.layers.Dropout(dropout)(current)
 
+    # add houlsby-adapter
+    if adapter=='houlsby':
+        current = layers.AdapterHoulsby(latent_size=latent)(current)
+    
     # residual
     current = tf.keras.layers.Add()([inputs, current])
 
@@ -1232,7 +1238,7 @@ def transformer(
         final = current
     else:
         final = transformer_dense(
-            current, out_size, dense_expansion, l2_scale, dropout, kernel_initializer
+            current, out_size, dense_expansion, l2_scale, dropout, kernel_initializer, adapter, latent
         )
 
     return final
@@ -1344,7 +1350,8 @@ def transformer_split(
 
 
 def transformer_dense(
-    inputs, out_size, dense_expansion, l2_scale, dropout, kernel_initializer
+    inputs, out_size, dense_expansion, l2_scale, dropout, kernel_initializer,
+    adapter=None, latent=16
 ):
     """Transformer block dense portion."""
     # layer norm
@@ -1375,6 +1382,9 @@ def transformer_dense(
     # dropout
     if dropout > 0:
         current = tf.keras.layers.Dropout(dropout)(current)
+
+    if adapter=='houlsby':
+        current = layers.AdapterHoulsby(latent_size=latent)(current)
 
     # residual
     final = tf.keras.layers.Add()([inputs, current])
