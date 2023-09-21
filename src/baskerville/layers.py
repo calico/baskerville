@@ -26,8 +26,75 @@ for device in gpu_devices:
 #####################
 # transfer learning #
 #####################
+
+class Lora(tf.keras.layers.Layer):
+    # https://arxiv.org/abs/2106.09685
+    # adapted from: 
+    # https://keras.io/examples/nlp/parameter_efficient_finetuning_of_gpt2_with_lora/
+    # https://github.com/Elvenson/stable-diffusion-keras-ft/blob/main/layers.py
+    
+    def __init__(self, 
+                 original_layer, 
+                 rank=8, 
+                 alpha=16, 
+                 trainable=True, 
+                 **kwargs):
+        
+        # keep the name of this layer the same as the original dense layer.
+        original_layer_config = original_layer.get_config()
+        name = original_layer_config["name"]
+        kwargs.pop("name", None)
+        super().__init__(name=name, trainable=trainable, **kwargs)
+
+        self.output_dim = original_layer_config["units"]
+        
+        if rank > self.output_dim:
+            raise ValueError(f"LoRA rank {rank} must be less or equal than {self.output_dim}")
+
+        self.rank = rank
+        self.alpha = alpha
+        self.scale = alpha / rank
+        self.original_layer = original_layer
+        self.original_layer.trainable = False
+
+        # Note: the original paper mentions that normal distribution was
+        # used for initialization. However, the official LoRA implementation
+        # uses "Kaiming/He Initialization".
+        self.down_layer = tf.keras.layers.Dense(
+            units=rank,
+            use_bias=False,
+            kernel_initializer=tf.keras.initializers.HeUniform(),
+            #kernel_initializer=tf.keras.initializers.RandomNormal(stddev=1 / self.rank),
+            trainable=trainable,
+            name="lora_a"
+        )
+
+        self.up_layer = tf.keras.layers.Dense(
+            units=self.output_dim,
+            use_bias=False,
+            kernel_initializer=tf.keras.initializers.Zeros(),
+            trainable=trainable,
+            name="lora_b"
+        )
+
+    def call(self, inputs):
+        original_output = self.original_layer(inputs)
+        lora_output = self.up_layer(self.down_layer(inputs)) * self.scale
+        return original_output + lora_output
+
+    def get_config(self):
+        config = super().get_config().copy()
+        config.update(
+            {
+                "rank": self.rank,
+                "alpha": self.alpha
+            }
+        )
+        return config
+
 class AdapterHoulsby(tf.keras.layers.Layer):
-    ### Houlsby et al. 2019 implementation
+    # https://arxiv.org/abs/1902.00751
+    # adapted from: https://github.com/jain-harshil/Adapter-BERT
     
     def __init__(
         self, 

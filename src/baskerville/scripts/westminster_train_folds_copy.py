@@ -62,6 +62,18 @@ def main():
       help='Evaluation TFR pattern string appended to data_dir/tfrecords for subsetting [Default: %default]')
   parser.add_option_group(train_options)
 
+  # transfer options
+  transfer_options = OptionGroup(parser, 'transfer options')
+  transfer_options.add_option('--transfer', dest='transfer',
+      default=False, action='store_true',
+      help='whether to do transfer learning.')
+  transfer_options.add_option('--pretrain', dest='pretrain',
+      default=None, help='path to pretrained model trunk.')
+  transfer_options.add_option('--transfer_mode', dest='transfer_mode',
+      default='linear', help='transfer method.')
+  transfer_options.add_option('--latent', dest='latent', type='int', 
+      default=0, help='latent size. ')
+
   # eval
   eval_options = OptionGroup(parser, 'hound_eval.py options')
   eval_options.add_option('--rank', dest='rank_corr',
@@ -87,7 +99,7 @@ def main():
       default=False, action='store_true',
       help='Restart training from checkpoint [Default: %default]')
   rep_options.add_option('-e', dest='conda_env',
-      default='tf12',
+      default='tf2.12',
       help='Anaconda environment [Default: %default]')
   rep_options.add_option('-f', dest='fold_subset',
       default=None, type='int',
@@ -175,7 +187,7 @@ def main():
     exit(0)
 
   cmd_source = 'source /home/yuanh/.bashrc;'
-  hound_train = '/home/yuanh/programs/source/python_packages/baskerville/scripts/hound_train.py'
+  hound_train = 'hound_train.py'
   #######################################################
   # train
 
@@ -205,6 +217,15 @@ def main():
 
         cmd += ' %s' %hound_train
         cmd += ' %s' % options_string(options, train_options, rep_dir)
+
+        # transfer learning options
+        if options.transfer:
+          cmd += ' --restore %s/f%dc%d.h5' % (options.pretrain, fi, ci)
+          cmd += ' --trunk'
+          cmd += ' --transfer_mode %s' % options.transfer_mode
+        if options.latent!=0:
+          cmd += ' --latent %d' % options.latent
+
         cmd += ' %s %s' % (params_file, ' '.join(rep_data_dirs))
 
         name = '%s-train-f%dc%d' % (options.name, fi, ci)

@@ -71,7 +71,7 @@ def main():
     parser.add_argument(
         "--transfer_mode",
         default="full",
-        help="transfer method. [full, linear, adapter]",
+        help="transfer method. [full, linear, adapterHoulsby, lora, lora_full]",
     )
     parser.add_argument(
         "--latent",
@@ -185,6 +185,16 @@ def main():
             seqnn_model.model_trunk = None
             seqnn_model.model.summary()
         
+        elif args.transfer_mode=='lora':
+            seqnn_model.model_trunk.trainable=False
+            add_lora(seqnn_model.model, rank=args.latent, mode='default')
+            seqnn_model.model.summary()
+        
+        elif args.transfer_mode=='lora_full':
+            seqnn_model.model_trunk.trainable=False
+            add_lora(seqnn_model.model, rank=args.latent, mode='full')
+            seqnn_model.model.summary()
+            
         # initialize trainer
         seqnn_trainer = trainer.Trainer(
             params_train, train_data, eval_data, args.out_dir
@@ -312,6 +322,25 @@ def make_adapter_model(input_model, strand_pair, latent_size=16):
         if re.match('layer_normalization', l.name): l.trainable = True
 
     return model_adapter
+
+def add_lora(input_model, rank=8, alpha=16, mode='default'):
+    # take seqnn.model as input
+    # replace _q_layer, _v_layer in multihead_attention
+    # optionally replace _k_layer, _embedding_layer
+    if mode not in ['default','full']:
+        raise ValueError("mode must be default or full")
+    
+    for layer in input_model.layers:
+        if re.match('multihead_attention', layer.name):
+            # default loRA
+            layer._q_layer = layers.Lora(layer._q_layer, rank=rank, alpha=alpha)
+            layer._v_layer = layers.Lora(layer._v_layer, rank=rank, alpha=alpha)
+            # full loRA
+            if mode=='full':
+                layer._k_layer = layers.Lora(layer._k_layer, rank=rank, alpha=alpha)
+                layer._embedding_layer = layers.Lora(layer._embedding_layer, rank=rank, alpha=alpha)
+
+
 ################################################################################
 # __main__
 ################################################################################
