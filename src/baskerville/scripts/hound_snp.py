@@ -111,7 +111,7 @@ def main():
         dest="require_gpu",
         default=False,
         action="store_true",
-        help="Input and output are in gcs",
+        help="Only run on GPU",
     )
     (options, args) = parser.parse_args()
 
