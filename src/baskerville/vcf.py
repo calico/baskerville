@@ -616,7 +616,7 @@ def vcf_snps(
                         alt_n = len(snps[-1].alt_alleles[0])
                         ref_snp = genome_open.fetch(
                             snps[-1].chr, snp_pos, snp_pos + alt_n
-                        )
+                        ).upper()
 
                         # if alt matches fasta reference
                         if snps[-1].alt_alleles[0] == ref_snp:
