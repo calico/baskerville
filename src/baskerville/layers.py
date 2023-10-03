@@ -26,10 +26,52 @@ for device in gpu_devices:
 #####################
 # transfer learning #
 #####################
+class IA3(tf.keras.layers.Layer):
+    # activation-rescale adapter: 
+    # https://arxiv.org/pdf/2205.05638.pdf
+    
+    def __init__(self, 
+                 original_layer, 
+                 trainable=False, 
+                 **kwargs):
+        
+        # keep the name of this layer the same as the original dense layer.
+        original_layer_config = original_layer.get_config()
+        name = original_layer_config["name"]
+        kwargs.pop("name", None)
+        super().__init__(name=name, trainable=trainable, **kwargs)
+
+        self.output_dim = original_layer_config["units"]
+        
+        self.original_layer = original_layer
+        self.original_layer.trainable = False
+
+        # IA3 weights. Make it a dense layer to control trainable
+        self._ia3_layer = tf.keras.layers.Dense(
+            units=self.output_dim,
+            use_bias=False,
+            kernel_initializer=tf.keras.initializers.Ones(),
+            trainable=True,
+            name="ia3"
+        )
+
+    def call(self, inputs):
+        original_output = self.original_layer(inputs)
+        scaler = self._ia3_layer(tf.constant([[1]], dtype='float64'))[0]
+        return original_output * scaler
+
+    def get_config(self):
+        config = super().get_config().copy()
+        config.update(
+            {
+                "size": self.output_dim,
+            }
+        )
+        return config
 
 class Lora(tf.keras.layers.Layer):
-    # https://arxiv.org/abs/2106.09685
     # adapted from: 
+    # https://arxiv.org/abs/2106.09685
     # https://keras.io/examples/nlp/parameter_efficient_finetuning_of_gpt2_with_lora/
     # https://github.com/Elvenson/stable-diffusion-keras-ft/blob/main/layers.py
     
@@ -37,7 +79,7 @@ class Lora(tf.keras.layers.Layer):
                  original_layer, 
                  rank=8, 
                  alpha=16, 
-                 trainable=True, 
+                 trainable=False, 
                  **kwargs):
         
         # keep the name of this layer the same as the original dense layer.
@@ -554,12 +596,14 @@ class MultiheadAttention(tf.keras.layers.Layer):
             shape=[1, self._num_heads, 1, self._key_size],
             initializer=self._initializer,
             dtype=tf.float32,
+            trainable=True,
         )
         self._r_r_bias = self.add_weight(
             "%s/r_r_bias" % self.name,
             shape=[1, self._num_heads, 1, self._key_size],
             initializer=self._initializer,
             dtype=tf.float32,
+            trainable=True,
         )
 
     def _multihead_output(self, linear_layer, inputs):
