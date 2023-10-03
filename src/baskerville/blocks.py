@@ -93,8 +93,8 @@ def conv_block(
 
     # normalize
     if norm_type == "batch-sync":
-        current = tf.keras.layers.experimental.SyncBatchNormalization(
-            momentum=bn_momentum, gamma_initializer=norm_gamma
+        current = tf.keras.layers.BatchNormalization(
+            momentum=bn_momentum, gamma_initializer=norm_gamma, synchronized=True
         )(current)
     elif norm_type == "batch":
         current = tf.keras.layers.BatchNormalization(
@@ -221,8 +221,8 @@ def conv_dna(
     else:
         # normalize
         if norm_type == "batch-sync":
-            current = tf.keras.layers.experimental.SyncBatchNormalization(
-                momentum=bn_momentum
+            current = tf.keras.layers.BatchNormalization(
+                momentum=bn_momentum, synchronized=True
             )(current)
         elif norm_type == "batch":
             current = tf.keras.layers.BatchNormalization(momentum=bn_momentum)(current)
@@ -303,8 +303,8 @@ def conv_nac(
 
     # normalize
     if norm_type == "batch-sync":
-        current = tf.keras.layers.experimental.SyncBatchNormalization(
-            momentum=bn_momentum
+        current = tf.keras.layers.BatchNormalization(
+            momentum=bn_momentum, synchronized=True
         )(current)
     elif norm_type == "batch":
         current = tf.keras.layers.BatchNormalization(momentum=bn_momentum)(current)
@@ -479,11 +479,11 @@ def fpn_unet(
 
     # normalize
     if norm_type == "batch-sync":
-        current1 = tf.keras.layers.experimental.SyncBatchNormalization(
-            momentum=bn_momentum
+        current1 = tf.keras.layers.BatchNormalization(
+            momentum=bn_momentum, synchronized=True
         )(current1)
-        current2 = tf.keras.layers.experimental.SyncBatchNormalization(
-            momentum=bn_momentum
+        current2 = tf.keras.layers.BatchNormalization(
+            momentum=bn_momentum, synchronized=True
         )(current2)
     elif norm_type == "batch":
         current1 = tf.keras.layers.BatchNormalization(momentum=bn_momentum)(current1)
@@ -570,8 +570,8 @@ def fpn1_unet(
 
     # normalize
     if norm_type == "batch-sync":
-        current1 = tf.keras.layers.experimental.SyncBatchNormalization(
-            momentum=bn_momentum
+        current1 = tf.keras.layers.BatchNormalization(
+            momentum=bn_momentum, synchronized=True
         )(current1)
     elif norm_type == "batch":
         current1 = tf.keras.layers.BatchNormalization(momentum=bn_momentum)(current1)
@@ -648,11 +648,11 @@ def upsample_unet(
 
     # normalize
     if norm_type == "batch-sync":
-        current1 = tf.keras.layers.experimental.SyncBatchNormalization(
-            momentum=bn_momentum
+        current1 = tf.keras.layers.BatchNormalization(
+            momentum=bn_momentum, synchronized=True
         )(current1)
-        current2 = tf.keras.layers.experimental.SyncBatchNormalization(
-            momentum=bn_momentum
+        current2 = tf.keras.layers.BatchNormalization(
+            momentum=bn_momentum, synchronized=True
         )(current2)
     elif norm_type == "batch":
         current1 = tf.keras.layers.BatchNormalization(momentum=bn_momentum)(current1)
@@ -745,8 +745,8 @@ def tconv_nac(
 
     # normalize
     if norm_type == "batch-sync":
-        current = tf.keras.layers.experimental.SyncBatchNormalization(
-            momentum=bn_momentum
+        current = tf.keras.layers.BatchNormalization(
+            momentum=bn_momentum, synchronized=True
         )(current)
     elif norm_type == "batch":
         current = tf.keras.layers.BatchNormalization(momentum=bn_momentum)(current)
@@ -824,8 +824,8 @@ def conv_block_2d(
 
     # normalize
     if norm_type == "batch-sync":
-        current = tf.keras.layers.experimental.SyncBatchNormalization(
-            momentum=bn_momentum, gamma_initializer=norm_gamma
+        current = tf.keras.layers.BatchNormalization(
+            momentum=bn_momentum, gamma_initializer=norm_gamma, synchronized=True
         )(current)
     elif norm_type == "batch":
         current = tf.keras.layers.BatchNormalization(
@@ -1880,8 +1880,8 @@ def dense_block(
     if norm_gamma is None:
         norm_gamma = "zeros" if residual else "ones"
     if norm_type == "batch-sync":
-        current = tf.keras.layers.experimental.SyncBatchNormalization(
-            momentum=bn_momentum, gamma_initializer=norm_gamma
+        current = tf.keras.layers.BatchNormalization(
+            momentum=bn_momentum, gamma_initializer=norm_gamma, synchronized=True
         )(current)
     elif norm_type == "batch":
         current = tf.keras.layers.BatchNormalization(
@@ -1950,8 +1950,8 @@ def dense_nac(
     if norm_gamma is None:
         norm_gamma = "zeros" if residual else "ones"
     if norm_type == "batch-sync":
-        current = tf.keras.layers.experimental.SyncBatchNormalization(
-            momentum=bn_momentum, gamma_initializer=norm_gamma
+        current = tf.keras.layers.BatchNormalization(
+            momentum=bn_momentum, gamma_initializer=norm_gamma, synchronized=True
         )(current)
     elif norm_type == "batch":
         current = tf.keras.layers.BatchNormalization(
