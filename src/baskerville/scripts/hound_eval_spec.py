@@ -45,7 +45,7 @@ def main():
     parser.add_option(
         "-c",
         dest="class_min",
-        default=100,
+        default=80,
         type="int",
         help="Minimum target class size to consider [Default: %default]",
     )
@@ -182,6 +182,7 @@ def main():
     # initialize model
     seqnn_model = seqnn.SeqNN(params_model)
     seqnn_model.restore(model_file, options.head_i)
+    seqnn_model.build_slice(targets_df.index)
     if options.step > 1:
         seqnn_model.step(options.step)
     seqnn_model.build_ensemble(options.rc, options.shifts)
@@ -202,10 +203,13 @@ def main():
         eval_preds.append(yh)
 
         y = y.numpy().astype("float16")
+        y = y[:, :, np.array(targets_df.index)]
         if options.step > 1:
             step_i = np.arange(0, eval_data.target_length, options.step)
             y = y[:, step_i, :]
         eval_targets.append(y)
+
+        gc.collect()
 
     # flatten
     eval_preds = np.concatenate(eval_preds, axis=0)
