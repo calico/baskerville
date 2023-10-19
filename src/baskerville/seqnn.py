@@ -219,12 +219,13 @@ class SeqNN:
 
     def build_ensemble(self, ensemble_rc: bool = False, ensemble_shifts=[0]):
         """Build ensemble of models computing on augmented input sequences."""
-        if ensemble_rc or len(ensemble_shifts) > 1:
+        shift_bool = len(ensemble_shifts) > 1 or ensemble_shifts[0] != 0
+        if ensemble_rc or shift_bool:
             # sequence input
             sequence = tf.keras.Input(shape=(self.seq_length, 4), name="sequence")
             sequences = [sequence]
 
-            if len(ensemble_shifts) > 1:
+            if shift_bool:
                 # generate shifted sequences
                 sequences = layers.EnsembleShift(ensemble_shifts)(sequences)
 
