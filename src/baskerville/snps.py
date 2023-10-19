@@ -314,7 +314,7 @@ def make_alt_1hot(ref_1hot, snp_seq_pos, ref_allele, alt_allele):
             dna.hot1_delete(alt_1hot, snp_seq_pos + 1, delete_len)
         else:
             print(
-                "WARNING: Delection first nt does not match: %s %s"
+                "WARNING: Deletion first nt does not match: %s %s"
                 % (ref_allele, alt_allele),
                 file=sys.stderr,
             )
