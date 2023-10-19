@@ -18,6 +18,13 @@ import pdb
 import pickle
 import os
 from baskerville.snps import score_snps
+import tempfile
+import shutil
+import tensorflow as tf
+from baskerville.helpers.gcs_utils import (
+    upload_folder_gcs,
+    download_rename_inputs,
+)
 
 """
 hound_snp.py
@@ -92,7 +99,30 @@ def main():
         action="store_true",
         help="Untransform old models [Default: %default]",
     )
+    parser.add_option(
+        "--gcs",
+        dest="gcs",
+        default=False,
+        action="store_true",
+        help="Input and output are in gcs",
+    )
+    parser.add_option(
+        "--require_gpu",
+        dest="require_gpu",
+        default=False,
+        action="store_true",
+        help="Only run on GPU",
+    )
     (options, args) = parser.parse_args()
+
+    if options.gcs:
+        """Assume that output_dir will be gcs"""
+        gcs_output_dir = options.out_dir
+        temp_dir = tempfile.mkdtemp()  # create a temp dir for output
+        out_dir = temp_dir + "/output_dir"
+        if not os.path.isdir(out_dir):
+            os.mkdir(out_dir)
+        options.out_dir = out_dir
 
     if len(args) == 3:
         # single worker
@@ -111,10 +141,9 @@ def main():
         out_dir = options.out_dir
 
         # load options
-        options_pkl = open(options_pkl_file, "rb")
-        options = pickle.load(options_pkl)
-        options_pkl.close()
-
+        if options.gcs:
+            options_pkl_file = download_rename_inputs(options_pkl_file, temp_dir)
+        options = load_extra_options(options_pkl_file, options)
         # update output directory
         options.out_dir = out_dir
 
@@ -127,30 +156,78 @@ def main():
         worker_index = int(args[4])
 
         # load options
-        options_pkl = open(options_pkl_file, "rb")
-        options = pickle.load(options_pkl)
-        options_pkl.close()
-
+        if options.gcs:
+            options_pkl_file = download_rename_inputs(options_pkl_file, temp_dir)
+        options = load_extra_options(options_pkl_file, options)
         # update output directory
         options.out_dir = "%s/job%d" % (options.out_dir, worker_index)
 
     else:
         parser.error("Must provide parameters and model files and QTL VCF file")
 
-    if options.targets_file is None:
-        parser.error("Must provide targets file")
-
     if not os.path.isdir(options.out_dir):
         os.mkdir(options.out_dir)
 
     options.shifts = [int(shift) for shift in options.shifts.split(",")]
     options.snp_stats = options.snp_stats.split(",")
+    if options.targets_file is None:
+        parser.error("Must provide targets file")
+    #################################################################
+    # check if the program is run on GPU, else quit
+    physical_devices = tf.config.list_physical_devices()
+    # Check if a GPU is available
+    gpu_available = any(device.device_type == "GPU" for device in physical_devices)
 
+    if gpu_available:
+        print("Running on GPU")
+    else:
+        print("Running on CPU")
+        if options.require_gpu:
+            raise SystemExit("Job terminated because it's running on CPU")
+    #################################################################
+    # download input files from gcs to a local file
+    if options.gcs:
+        params_file = download_rename_inputs(params_file, temp_dir)
+        vcf_file = download_rename_inputs(vcf_file, temp_dir)
+        model_file = download_rename_inputs(model_file, temp_dir)
+        if options.genome_fasta is not None:
+            options.genome_fasta = download_rename_inputs(
+                options.genome_fasta, temp_dir
+            )
+        if options.targets_file is not None:
+            options.targets_file = download_rename_inputs(
+                options.targets_file, temp_dir
+            )
+    #################################################################
     # calculate SAD scores:
     if options.processes is not None:
         score_snps(params_file, model_file, vcf_file, worker_index, options)
     else:
         score_snps(params_file, model_file, vcf_file, 0, options)
+    # if the output dir is in gcs, sync it up
+    if options.gcs:
+        upload_folder_gcs(options.out_dir, gcs_output_dir)
+        if os.path.isdir(temp_dir):
+            shutil.rmtree(temp_dir)  # clean up temp dir
+
+
+def load_extra_options(options_pkl_file, options):
+    """
+    Args:
+        options_pkl_file: option file
+        options: existing options from command line
+    Returns:
+        options: updated options
+    """
+    options_pkl = open(options_pkl_file, "rb")
+    new_options = pickle.load(options_pkl)
+    new_option_attrs = vars(new_options)
+    # Assuming 'options' is the existing options object
+    # Update the existing options with the new attributes
+    for attr_name, attr_value in new_option_attrs.items():
+        setattr(options, attr_name, attr_value)
+    options_pkl.close()
+    return options
 
 
 ################################################################################
