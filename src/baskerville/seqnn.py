@@ -99,7 +99,7 @@ class SeqNN:
             block_args["reprs"] = self.reprs
 
         # U-net helper
-        if block_name[-5:] == "_unet":
+        if block_name.startswith("unet_"):
             # find matching representation
             unet_repr = None
             for seq_repr in reversed(self.reprs[:-1]):
