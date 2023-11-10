@@ -131,7 +131,12 @@ def score_snps(params_file, model_file, vcf_file, worker_index, options):
 
     # setup output
     scores_out = initialize_output_h5(
-        options.out_dir, options.snp_stats, snps, targets_length, targets_strand_df, num_shifts
+        options.out_dir,
+        options.snp_stats,
+        snps,
+        targets_length,
+        targets_strand_df,
+        num_shifts,
     )
 
     # SNP index
@@ -150,9 +155,13 @@ def score_snps(params_file, model_file, vcf_file, worker_index, options):
             # untransform predictions
             if options.targets_file is not None:
                 if options.untransform_old:
-                    ref_preds_shift = dataset.untransform_preds1(ref_preds_shift, targets_df)
+                    ref_preds_shift = dataset.untransform_preds1(
+                        ref_preds_shift, targets_df
+                    )
                 else:
-                    ref_preds_shift = dataset.untransform_preds(ref_preds_shift, targets_df)
+                    ref_preds_shift = dataset.untransform_preds(
+                        ref_preds_shift, targets_df
+                    )
 
             # sum strand pairs
             if strand_transform is not None:
@@ -189,9 +198,13 @@ def score_snps(params_file, model_file, vcf_file, worker_index, options):
                 # untransform predictions
                 if options.targets_file is not None:
                     if options.untransform_old:
-                        alt_preds_shift = dataset.untransform_preds1(alt_preds_shift, targets_df)
+                        alt_preds_shift = dataset.untransform_preds1(
+                            alt_preds_shift, targets_df
+                        )
                     else:
-                        alt_preds_shift = dataset.untransform_preds(alt_preds_shift, targets_df)
+                        alt_preds_shift = dataset.untransform_preds(
+                            alt_preds_shift, targets_df
+                        )
 
                 # sum strand pairs
                 if strand_transform is not None:
@@ -253,7 +266,9 @@ def cluster_snps(snps, seq_len: int, center_pct: float):
     return snp_clusters
 
 
-def initialize_output_h5(out_dir, snp_stats, snps, targets_length, targets_df, num_shifts):
+def initialize_output_h5(
+    out_dir, snp_stats, snps, targets_length, targets_df, num_shifts
+):
     """Initialize an output HDF5 file for SAD stats.
 
     Args:
@@ -307,7 +322,9 @@ def initialize_output_h5(out_dir, snp_stats, snps, targets_length, targets_df, n
     for snp_stat in snp_stats:
         if snp_stat in ["REF", "ALT"]:
             scores_out.create_dataset(
-                snp_stat, shape=(num_snps, num_shifts, targets_length, num_targets), dtype="float16"
+                snp_stat,
+                shape=(num_snps, num_shifts, targets_length, num_targets),
+                dtype="float16",
             )
         else:
             scores_out.create_dataset(
@@ -463,12 +480,12 @@ def write_snp_len(ref_preds, alt_preds, scores_out, si, snp_stats):
     alt_preds_sqrt = np.sqrt(alt_preds)
 
     # sum across length
-    ref_preds_sum = ref_preds.sum(axis=(0,1))
-    alt_preds_sum = alt_preds.sum(axis=(0,1))
-    ref_preds_log_sum = ref_preds_log.sum(axis=(0,1))
-    alt_preds_log_sum = alt_preds_log.sum(axis=(0,1))
-    ref_preds_sqrt_sum = ref_preds_sqrt.sum(axis=(0,1))
-    alt_preds_sqrt_sum = alt_preds_sqrt.sum(axis=(0,1))
+    ref_preds_sum = ref_preds.sum(axis=(0, 1))
+    alt_preds_sum = alt_preds.sum(axis=(0, 1))
+    ref_preds_log_sum = ref_preds_log.sum(axis=(0, 1))
+    alt_preds_log_sum = alt_preds_log.sum(axis=(0, 1))
+    ref_preds_sqrt_sum = ref_preds_sqrt.sum(axis=(0, 1))
+    alt_preds_sqrt_sum = alt_preds_sqrt.sum(axis=(0, 1))
 
     # difference
     altref_diff = alt_preds - ref_preds
@@ -565,8 +582,12 @@ def write_snp_len(ref_preds, alt_preds, scores_out, si, snp_stats):
         # compare normalized JS
         log_js_dist = []
         for s in range(num_shifts):
-            ref_alt_entr = rel_entr(ref_preds_log_norm[s], alt_preds_log_norm[s]).sum(axis=0)
-            alt_ref_entr = rel_entr(alt_preds_log_norm[s], ref_preds_log_norm[s]).sum(axis=0)
+            ref_alt_entr = rel_entr(ref_preds_log_norm[s], alt_preds_log_norm[s]).sum(
+                axis=0
+            )
+            alt_ref_entr = rel_entr(alt_preds_log_norm[s], ref_preds_log_norm[s]).sum(
+                axis=0
+            )
             log_js_dist.append((ref_alt_entr + alt_ref_entr) / 2)
         log_js_dist = np.mean(log_js_dist, axis=0)
         scores_out["logJS"][si] = log_js_dist.astype("float16")

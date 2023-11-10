@@ -23,24 +23,9 @@ ACNGT_TF_ARRAY = np.array(
 )
 
 dna_1hot_cases = [
-    (
-        "ACGT",
-        False,
-        False,
-        ACGT_ARRAY,
-    ),
-    (
-        "ACNGT",
-        False,
-        False,
-        ACNGT_FF_ARRAY,
-    ),
-    (
-        "ACNGT",
-        True,
-        False,
-        ACNGT_TF_ARRAY,
-    ),
+    ("ACGT", False, False, ACGT_ARRAY,),
+    ("ACNGT", False, False, ACNGT_FF_ARRAY,),
+    ("ACNGT", True, False, ACNGT_TF_ARRAY,),
 ]
 
 

@@ -755,7 +755,7 @@ class Trainer:
 
 def compute_norm(x, axis, keepdims):
     """Compute L2 norm of a tensor across an axis."""
-    return tf.math.reduce_sum(x**2, axis=axis, keepdims=keepdims) ** 0.5
+    return tf.math.reduce_sum(x ** 2, axis=axis, keepdims=keepdims) ** 0.5
 
 
 def unitwise_norm(x):

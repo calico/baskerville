@@ -1772,12 +1772,7 @@ def dense_block(
     # flatten
     if flatten:
         _, seq_len, seq_depth = current.shape
-        current = tf.keras.layers.Reshape(
-            (
-                1,
-                seq_len * seq_depth,
-            )
-        )(current)
+        current = tf.keras.layers.Reshape((1, seq_len * seq_depth,))(current)
 
     # dense
     current = tf.keras.layers.Dense(
@@ -1879,12 +1874,7 @@ def dense_nac(
     # flatten
     if flatten:
         _, seq_len, seq_depth = current.shape
-        current = tf.keras.layers.Reshape(
-            (
-                1,
-                seq_len * seq_depth,
-            )
-        )(current)
+        current = tf.keras.layers.Reshape((1, seq_len * seq_depth,))(current)
 
     # dense
     current = tf.keras.layers.Dense(
@@ -1934,12 +1924,7 @@ def final(
     # flatten
     if flatten:
         _, seq_len, seq_depth = current.shape
-        current = tf.keras.layers.Reshape(
-            (
-                1,
-                seq_len * seq_depth,
-            )
-        )(current)
+        current = tf.keras.layers.Reshape((1, seq_len * seq_depth,))(current)
 
     # dense
     current = tf.keras.layers.Dense(
