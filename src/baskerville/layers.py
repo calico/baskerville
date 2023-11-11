@@ -748,11 +748,14 @@ class WheezeExcite(tf.keras.layers.Layer):
 class SqueezeExcite(tf.keras.layers.Layer):
     def __init__(
         self,
-        activation="relu",
+        activation='relu',
         additive=False,
         bottleneck_ratio=8,
         norm_type=None,
         bn_momentum=0.9,
+        use_bias=True,
+        kernel_initializer='glorot_uniform',
+        bias_initializer='zeros',
     ):
         super(SqueezeExcite, self).__init__()
         self.activation = activation
@@ -760,6 +763,9 @@ class SqueezeExcite(tf.keras.layers.Layer):
         self.norm_type = norm_type
         self.bn_momentum = bn_momentum
         self.bottleneck_ratio = bottleneck_ratio
+        self.kernel_initializer=kernel_initializer
+        self.bias_initializer=bias_initializer
+        self.use_bias=use_bias
 
     def build(self, input_shape):
         self.num_channels = input_shape[-1]
@@ -778,26 +784,24 @@ class SqueezeExcite(tf.keras.layers.Layer):
             exit(1)
 
         self.dense1 = tf.keras.layers.Dense(
-            units=self.num_channels // self.bottleneck_ratio, activation="relu"
+            units=self.num_channels // self.bottleneck_ratio, 
+            activation="relu",
+            use_bias=self.use_bias,
+            kernel_initializer=self.kernel_initializer,
+            bias_initializer=self.bias_initializer,
         )
-        self.dense2 = tf.keras.layers.Dense(units=self.num_channels, activation=None)
-
-        # normalize
-        # if self.norm_type == 'batch-sync':
-        #   self.norm = tf.keras.layers.experimental.SyncBatchNormalization(
-        #     momentum=self.bn_momentum, gamma_initializer='zeros')
-        # elif self.norm_type == 'batch':
-        #   self.norm = tf.keras.layers.BatchNormalization(
-        #     momentum=self.bn_momentum, gamma_initializer='zeros')
-        # elif self.norm_type == 'layer':
-        #   self.norm = tf.keras.layers.LayerNormalization(
-        #     gamma_initializer='zeros')
-        # else:
-        #   self.norm = None
+        
+        self.dense2 = tf.keras.layers.Dense(
+            units=self.num_channels, 
+            use_bias=self.use_bias,
+            kernel_initializer=self.kernel_initializer,
+            bias_initializer=self.bias_initializer,
+            activation=None)
 
     def call(self, x):
         # activate
-        x = activate(x, self.activation)
+        if self.activation is not None:
+            x = activate(x, self.activation)
 
         # squeeze
         squeeze = self.gap(x)
@@ -805,8 +809,6 @@ class SqueezeExcite(tf.keras.layers.Layer):
         # excite
         excite = self.dense1(squeeze)
         excite = self.dense2(excite)
-        # if self.norm is not None:
-        #   excite = self.norm(excite)
 
         # scale
         if self.one_or_two == "one":
@@ -828,13 +830,14 @@ class SqueezeExcite(tf.keras.layers.Layer):
             {
                 "activation": self.activation,
                 "additive": self.additive,
+                "use_bias":self.use_bias,
                 "norm_type": self.norm_type,
                 "bn_momentum": self.bn_momentum,
                 "bottleneck_ratio": self.bottleneck_ratio,
+                'bottleneck_size': self.num_channels // self.bottleneck_ratio,
             }
         )
         return config
-
 
 class GlobalContext(tf.keras.layers.Layer):
     def __init__(self):

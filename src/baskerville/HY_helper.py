@@ -3,6 +3,8 @@ from basenji import dna_io
 import pysam
 import pyBigWig
 
+
+
 def make_seq_1hot(genome_open, chrm, start, end, seq_len):
     if start < 0:
         seq_dna = 'N'*(-start) + genome_open.fetch(chrm, 0, end)

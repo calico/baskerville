@@ -723,8 +723,8 @@ class Trainer:
         else:
             # schedule (currently OFF)
             initial_learning_rate = self.params.get("learning_rate", 0.01)
-            if False:
-                lr_schedule = keras.optimizers.schedules.ExponentialDecay(
+            if self.params.get("decay_steps"):
+                lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
                     initial_learning_rate,
                     decay_steps=self.params.get("decay_steps", 100000),
                     decay_rate=self.params.get("decay_rate", 0.96),
@@ -778,7 +778,7 @@ class Trainer:
                 global_clipnorm=global_clipnorm,
                 amsgrad=False,
             )  # reduces performance in my experience
-
+            
         elif optimizer_type in ["sgd", "momentum"]:
             self.optimizer = tf.keras.optimizers.SGD(
                 learning_rate=lr_schedule,

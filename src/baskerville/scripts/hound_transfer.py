@@ -28,6 +28,7 @@ from baskerville import dataset
 from baskerville import seqnn
 from baskerville import trainer
 from baskerville import layers
+from baskerville import transfer_helper
 
 """
 hound_transfer.py
@@ -72,13 +73,32 @@ def main():
     parser.add_argument(
         "--transfer_mode",
         default="full",
-        help="transfer method. [full, linear, adapterHoulsby, lora, lora_full, ia3]",
+        help="transfer method. [full, linear, adapter]",
     )
     parser.add_argument(
-        "--latent",
+        "--att_adapter",
+        default=None,
+        type=str,
+        help="attention layer module [adapterHoulsby, lora, lora_full, ia3]",
+    )
+    parser.add_argument(
+        "--att_latent",
         type=int,
         default=16,
-        help="adapter latent size.",
+        help="attention adapter latent size.",
+    )    
+    parser.add_argument(
+        "--conv_adapter",
+        default=None,
+        type=str,
+        help="conv layer module [conv, batch_norm, squez_excit]",
+    )
+
+    parser.add_argument(
+        "--se_ratio",
+        type=int,
+        default=16,
+        help="se bottleneck ratio.",
     )
     parser.add_argument(
         "--tfr_train",
@@ -105,6 +125,9 @@ def main():
     if args.params_file != "%s/params.json" % args.out_dir:
         shutil.copy(args.params_file, "%s/params.json" % args.out_dir)
 
+    if args.transfer_mode not in ['full','linear','sparse']:
+        raise ValueError("transfer mode must be one of full, linear, sparse")
+      
     # read model parameters
     with open(args.params_file) as params_open:
         params = json.load(params_open)
@@ -156,48 +179,112 @@ def main():
         # one GPU
 
         # initialize model
+        params_model['verbose']=False
         seqnn_model = seqnn.SeqNN(params_model)
     
         # restore
         if args.restore:
             seqnn_model.restore(args.restore, trunk=args.trunk)
 
-        # transfer learning strategies
+        # head params
+        print('params in new head: %d' %transfer_helper.param_count(seqnn_model.model.layers[-2]))
+
+        ####################
+        # transfer options #
+        ####################
         if args.transfer_mode=='full':
             seqnn_model.model.trainable=True
         
-        elif args.transfer_mode=='batch_norm':
-            seqnn_model.model_trunk.trainable=False
-            for l in seqnn_model.model.layers:
-                if l.name.startswith("batch_normalization"):
-                    l.trainable=True
-            seqnn_model.model.summary()
-        
         elif args.transfer_mode=='linear':
             seqnn_model.model_trunk.trainable=False
-            seqnn_model.model.summary()
-        
-        elif args.transfer_mode=='adapterHoulsby':
-            seqnn_model.model_trunk.trainable=False
-            strand_pair = strand_pairs[0]
-            adapter_model = make_adapter_model(seqnn_model.model, strand_pair, args.latent)
-            seqnn_model.model = adapter_model
-            seqnn_model.models[0] = seqnn_model.model
-            seqnn_model.model_trunk = None
-            seqnn_model.model.summary()
-        
-        elif args.transfer_mode=='lora':
-            add_lora(seqnn_model.model, rank=args.latent, mode='default')
-            seqnn_model.model.summary()
-        
-        elif args.transfer_mode=='lora_full':
-            add_lora(seqnn_model.model, rank=args.latent, mode='full')
-            seqnn_model.model.summary()
-            
-        elif args.transfer_mode=='ia3':
-            add_ia3(seqnn_model.model)
-            seqnn_model.model.summary()
-        
+
+        ############
+        # adapters #
+        ############
+        elif args.transfer_mode=='sparse':
+
+            # attention adapter
+            if args.att_adapter is not None:
+                if args.att_adapter=='adapterHoulsby':
+                    seqnn_model.model = transfer_helper.add_houlsby(seqnn_model.model, 
+                                                                    strand_pairs[0], 
+                                                                    latent_size=args.att_latent)
+                elif args.att_adapter=='lora':
+                    transfer_helper.add_lora(seqnn_model.model, 
+                                             rank=args.att_latent, 
+                                             mode='default')
+                    
+                elif args.att_adapter=='lora_full':
+                    transfer_helper.add_lora(seqnn_model.model, 
+                                             rank=args.att_latent, 
+                                             mode='full')
+                
+                elif args.att_adapter=='ia3':
+                    transfer_helper.add_ia3(seqnn_model.model)
+
+            # conv adapter
+            # assume seqnn_model is appropriately frozen
+            if args.conv_adapter is not None:
+                if args.conv_adapter=='conv':
+                    params_added = 0
+                    for l in seqnn_model.model.layers:
+                        if l.name.startswith("conv1d"):
+                            l.trainable=True
+                            params_added += transfer_helper.param_count(l, type='trainable')
+                    print('params added/unfrozen by conv: %d'%params_added)
+                
+                if args.conv_adapter=='conv_all':
+                    params_added = 0
+                    for l in seqnn_model.model.layers:
+                        if l.name.startswith(("conv1d","separable_conv1d")):
+                            l.trainable=True
+                            params_added += transfer_helper.param_count(l, type='trainable')
+                    print('params added/unfrozen by conv_all: %d'%params_added)
+
+                elif args.conv_adapter=='batch_norm':
+                    params_added = 0
+                    for l in seqnn_model.model.layers:
+                        if l.name.startswith("batch_normalization"):
+                            l.trainable=True
+                            params_added += transfer_helper.param_count(l, type='trainable')
+                    print('params added/unfrozen by batch_norm: %d'%params_added)
+
+                ##################
+                # squeeze-excite #
+                ##################
+                elif args.conv_adapter=='se':
+                    seqnn_model.model = transfer_helper.add_se(seqnn_model.model, 
+                                                               strand_pair=strand_pairs[0], 
+                                                               bottleneck_ratio=args.se_ratio, 
+                                                               insert_mode='pre_att',
+                                                               unfreeze_bn=False)
+
+                elif args.conv_adapter=='se_bn':
+                    seqnn_model.model = transfer_helper.add_se(seqnn_model.model, 
+                                                               strand_pair=strand_pairs[0], 
+                                                               bottleneck_ratio=args.se_ratio, 
+                                                               insert_mode='pre_att',
+                                                               unfreeze_bn=True)
+                
+                elif args.conv_adapter=='se_all':
+                    seqnn_model.model = transfer_helper.add_se(seqnn_model.model, 
+                                                               strand_pair=strand_pairs[0], 
+                                                               bottleneck_ratio=args.se_ratio, 
+                                                               insert_mode='all',
+                                                               unfreeze_bn=False)
+
+                elif args.conv_adapter=='se_all_bn':
+                    seqnn_model.model = transfer_helper.add_se(seqnn_model.model, 
+                                                               strand_pair=strand_pairs[0], 
+                                                               bottleneck_ratio=args.se_ratio, 
+                                                               insert_mode='all',
+                                                               unfreeze_bn=True)
+                    
+        #################
+        # final summary #
+        #################
+        seqnn_model.model.summary()
+                
         # initialize trainer
         seqnn_trainer = trainer.Trainer(
             params_train, train_data, eval_data, args.out_dir
@@ -214,6 +301,41 @@ def main():
                 seqnn_trainer.fit_tape(seqnn_model)
             else:
                 seqnn_trainer.fit2(seqnn_model)
+
+        #############################
+        # post-training adjustments # 
+        #############################
+        if args.transfer_mode=='sparse':
+            
+            # Houlsby adapter requires architecture change, overwrite params.json file with new one
+            if args.att_adapter=='adapterHoulsby':
+                transfer_helper.modify_json(input_json=args.params_file,
+                                            output_json=args.out_dir,
+                                            adapter='houlsby',
+                                            latent_size=args.att_latent)
+            
+            # merge lora weights to original, save weight to: model_best.mergeW.h5
+            # use original params.json
+            if args.att_adapter=='lora':
+                seqnn_model.model.load_weights('%s/model_best.h5'args.out_dir)
+                transfer_helper.merge_lora(seqnn_model.model, mode='default')
+                seqnn_model.save('%s/model_best.mergeW.h5'args.out_dir)
+                transfer_helper.var_reorder('%s/model_best.mergeW.h5'args.out_dir)
+            
+            if args.att_adapter=='lora_full':
+                seqnn_model.model.load_weights('%s/model_best.h5'args.out_dir)
+                transfer_helper.merge_lora(seqnn_model.model, mode='full')
+                seqnn_model.save('%s/model_best.mergeW.h5'args.out_dir)
+                transfer_helper.var_reorder('%s/model_best.mergeW.h5'args.out_dir)
+    
+            # merge ia3 weights to original, save weight to: model_best_mergeweight.h5
+            if args.att_adapter=='ia3':
+                seqnn_model.model.load_weights('%s/model_best.h5'args.out_dir)
+                transfer_helper.merge_ia3(seqnn_model.model)
+                seqnn_model.save('%s/model_best.mergeW.h5'args.out_dir)
+                transfer_helper.var_reorder('%s/model_best.mergeW.h5'args.out_dir)
+
+
     
     else:
         ########################################
@@ -259,157 +381,6 @@ def main():
             else:
                 seqnn_trainer.fit2(seqnn_model)
 
-def make_adapter_model(input_model, strand_pair, latent_size=16):
-    # take seqnn_model as input
-    # output a new seqnn_model object
-    # only the adapter, and layer_norm are trainable
-    
-    model = tf.keras.Model(inputs=input_model.input, 
-                           outputs=input_model.layers[-2].output) # remove the switch_reverse layer
-    
-    # save current graph
-    layer_parent_dict_old = {} # the parent layers of each layer in the old graph 
-    for layer in model.layers:
-        for node in layer._outbound_nodes:
-            layer_name = node.outbound_layer.name
-            if layer_name not in layer_parent_dict_old:
-                layer_parent_dict_old.update({layer_name: [layer.name]})
-            else:
-                if layer.name not in layer_parent_dict_old[layer_name]:
-                    layer_parent_dict_old[layer_name].append(layer.name)
-    
-    layer_output_dict_new = {} # the output tensor of each layer in the new graph
-    layer_output_dict_new.update({model.layers[0].name: model.input})
-    
-    # remove switch_reverse
-    to_fix = [i for i in layer_parent_dict_old if re.match('switch_reverse', i)]
-    for i in to_fix:
-        del layer_parent_dict_old[i]
-    
-    # Iterate over all layers after the input
-    model_outputs = []
-    reverse_bool = None
-    
-    for layer in model.layers[1:]:
-    
-        # parent layers
-        parent_layers = layer_parent_dict_old[layer.name]
-    
-        # layer inputs
-        layer_input = [layer_output_dict_new[parent] for parent in parent_layers]
-        if len(layer_input) == 1: layer_input = layer_input[0]
-    
-        if re.match('stochastic_reverse_complement', layer.name):
-            x, reverse_bool  = layer(layer_input)
-        
-        # insert adapter:
-        elif re.match('add', layer.name):
-            if any([re.match('dropout', i) for i in parent_layers]):
-                print('adapter added before:%s'%layer.name)
-                x = layers.AdapterHoulsby(latent_size=latent_size)(layer_input[1])
-                x = layer([layer_input[0], x])
-            else:
-                x = layer(layer_input)
-        
-        else:
-            x = layer(layer_input)
-    
-        # save the output tensor of every layer
-        layer_output_dict_new.update({layer.name: x})
-    
-    final = layers.SwitchReverse(strand_pair)([layer_output_dict_new[model.layers[-1].name], reverse_bool])
-    model_adapter = tf.keras.Model(inputs=model.inputs, outputs=final)
-    
-    # set layer_norm layers to trainable
-    for l in model_adapter.layers:
-        if re.match('layer_normalization', l.name): l.trainable = True
-
-    return model_adapter
-
-def add_lora(input_model, rank=8, alpha=16, mode='default'):
-    ######################
-    # inject lora layers #
-    ######################
-    # take seqnn.model as input
-    # replace _q_layer, _v_layer in multihead_attention
-    # optionally replace _k_layer, _embedding_layer
-    if mode not in ['default','full']:
-        raise ValueError("mode must be default or full")
-    
-    for layer in input_model.layers:
-        if re.match('multihead_attention', layer.name):
-            # default loRA
-            layer._q_layer = layers.Lora(layer._q_layer, rank=rank, alpha=alpha, trainable=True)
-            layer._v_layer = layers.Lora(layer._v_layer, rank=rank, alpha=alpha, trainable=True)
-            # full loRA
-            if mode=='full':
-                layer._k_layer = layers.Lora(layer._k_layer, rank=rank, alpha=alpha, trainable=True)
-                layer._embedding_layer = layers.Lora(layer._embedding_layer, rank=rank, alpha=alpha, trainable=True)
-    
-    input_model(input_model.input) # initialize new variables 
-
-    #################
-    # freeze params #
-    #################
-    # freeze all params but lora
-    for layer in input_model._flatten_layers():
-        lst_of_sublayers = list(layer._flatten_layers())
-        if len(lst_of_sublayers) == 1: 
-            if layer.name in ["lora_a", "lora_b"]:
-                layer.trainable = True
-            else:
-                layer.trainable = False
-
-    ### bias terms need to be frozen separately 
-    for layer in input_model.layers:
-        if re.match('multihead_attention', layer.name):
-            layer._r_w_bias = tf.Variable(layer._r_w_bias, trainable=False, name=layer._r_w_bias.name)
-            layer._r_r_bias = tf.Variable(layer._r_r_bias, trainable=False, name=layer._r_r_bias.name)
-
-    # set final head to be trainable
-    input_model.layers[-2].trainable=True
-
-
-def add_ia3(input_model):
-    #####################
-    # inject ia3 layers #
-    #####################
-    # take seqnn.model as input
-    # replace _k_layer, _v_layer, _embedding_layer in multihead_attention
-    for layer in input_model.layers:
-        if re.match('multihead_attention', layer.name):
-            layer._k_layer = layers.IA3(layer._k_layer, trainable=True)
-            layer._v_layer = layers.IA3(layer._v_layer, trainable=True)
-            layer._embedding_layer = layers.IA3(layer._embedding_layer, trainable=True)
-    input_model(input_model.input) # instantiate model to initialize new variables
-
-    #################
-    # freeze params #
-    #################
-    # set ia3 to trainable
-    for layer in input_model._flatten_layers():
-        lst_of_sublayers = list(layer._flatten_layers())
-        if len(lst_of_sublayers) == 1: 
-            if layer.name =='ia3':
-                layer.trainable = True
-            else:
-                layer.trainable = False
-            
-    ### bias terms need to be frozen separately 
-    for layer in input_model.layers:
-        if re.match('multihead_attention', layer.name):
-            layer._r_w_bias = tf.Variable(layer._r_w_bias, trainable=False, name=layer._r_w_bias.name)
-            layer._r_r_bias = tf.Variable(layer._r_r_bias, trainable=False, name=layer._r_r_bias.name)
-
-    # set final head to be trainable
-    input_model.layers[-2].trainable=True
-
-def param_count(model):
-    trainable = int(sum(tf.keras.backend.count_params(w) for w in model.trainable_weights))
-    non_trainable = int(sum(tf.keras.backend.count_params(w) for w in model.non_trainable_weights))
-    print('total params:%d' %(trainable + non_trainable))
-    print('trainable params:%d' %trainable)
-    print('non-trainable params:%d' %non_trainable)
 
 ################################################################################
 # __main__
