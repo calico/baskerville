@@ -471,7 +471,7 @@ class MultiheadAttention(tf.keras.layers.Layer):
 
         # Scale the query by the square-root of key size.
         if self._scaling:
-            q *= self._key_size ** -0.5
+            q *= self._key_size**-0.5
 
         # [B, H, T', T]
         content_logits = tf.matmul(q + self._r_w_bias, k, transpose_b=True)
@@ -888,7 +888,7 @@ class UpperTri(tf.keras.layers.Layer):
 
         triu_tup = np.triu_indices(seq_len, self.diagonal_offset)
         triu_index = list(triu_tup[0] + seq_len * triu_tup[1])
-        unroll_repr = tf.reshape(inputs, [-1, seq_len ** 2, output_dim])
+        unroll_repr = tf.reshape(inputs, [-1, seq_len**2, output_dim])
         return tf.gather(unroll_repr, triu_index, axis=1)
 
     def get_config(self):
