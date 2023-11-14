@@ -353,7 +353,7 @@ def untransform_preds(preds, targets_df, unscale=False):
 
     # sqrt
     sqrt_mask = np.array([ss.find("_sqrt") != -1 for ss in targets_df.sum_stat])
-    preds[:, sqrt_mask] = -1 + (preds[:, sqrt_mask] + 1) ** 2 # (4 / 3)
+    preds[:, sqrt_mask] = -1 + (preds[:, sqrt_mask] + 1) ** 2  # (4 / 3)
 
     # scale
     if unscale:

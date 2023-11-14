@@ -698,6 +698,10 @@ class SNP:
         alleles = [self.ref_allele] + self.alt_alleles
         return alleles
 
+    def indel_size(self):
+        """Return the size of the indel."""
+        return len(self.alt_allele) - len(self.ref_allele)
+
     def longest_alt(self):
         """Return the longest alt allele."""
         return max([len(al) for al in self.alt_alleles])
