@@ -1,0 +1,38 @@
+name: Baskerville Docs
+
+on:
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: write
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-python@v3
+
+      - name: Install dependencies
+        run: |
+          cd ${{ github.workspace }}/src/docs
+          pip install -r requirements.txt
+      - name: Sphinx build
+        run: |
+          cd ${{ github.workspace }}/src/docs/source
+          rm -f *.rst make.bat
+          cd ${{ github.workspace }}/src
+          sphinx-apidoc -F -a -o docs/source baskerville
+          cd ${{ github.workspace }}/src/docs
+          make html
+      - name: Deploy
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          publish_branch: gh-pages
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ${{ github.workspace }}/src/docs/build/html
+          force_orphan: true
