@@ -10,6 +10,10 @@ import sys
 
 # This root should be where docs folder is visible.
 sys.path.insert(0, os.path.abspath("../.."))
+sys.path.insert(0, os.path.abspath("../../baskerville"))
+sys.path.insert(0, os.path.abspath("../../baskerville/scripts"))
+sys.path.insert(0, os.path.abspath("../../bashkerville/helpers"))
+
 sys.setrecursionlimit(1500)
 
 project = "baskerville"
@@ -25,6 +29,7 @@ extensions = [
     "sphinx.ext.viewcode",
     "sphinx.ext.napoleon",
     "sphinx.ext.githubpages",
+    "sphinxcontrib.apidoc",
 ]
 
 templates_path = ["_templates"]
