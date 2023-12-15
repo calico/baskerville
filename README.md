@@ -10,6 +10,12 @@ Baskerville provides researchers with tools to:
 
 ---
 
+### Documentations
+
+Documentation page: https://calico.github.io/baskerville/index.html
+
+---
+
 ### Installation
 
 `git clone git@github.com:calico/baskerville.git`
