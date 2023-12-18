@@ -212,8 +212,8 @@ def snp_seq1(snp, seq_len, genome_open):
         seq = genome_open.fetch(snp.chr, seq_start - 1, seq_end).upper()
 
     # extend to full length
-    if len(seq) < seq_end - seq_start:
-        seq += "N" * (seq_end - seq_start - len(seq))
+    if len(seq) < seq_len:
+        seq += "N" * (seq_len - len(seq))
 
     # verify that ref allele matches ref sequence
     seq_ref = seq[left_len : left_len + len(snp.ref_allele)]
@@ -301,16 +301,17 @@ def snps_seq1(snps, seq_len, genome_fasta, return_seqs=False):
 
         # extract sequence as BED style
         if seq_start < 0:
-            seq = "N" * (-seq_start) + genome_open.fetch(snp.chr, 0, seq_end).upper()
+            seq = "N" * (1 - seq_start) + genome_open.fetch(snp.chr, 0, seq_end).upper()
         else:
             seq = genome_open.fetch(snp.chr, seq_start - 1, seq_end).upper()
 
         # extend to full length
-        if len(seq) < seq_end - seq_start:
-            seq += "N" * (seq_end - seq_start - len(seq))
+        if len(seq) < seq_len:
+            seq += "N" * (seq_len - len(seq))
 
         # verify that ref allele matches ref sequence
         seq_ref = seq[left_len : left_len + len(snp.ref_allele)]
+        ref_found = True
         if seq_ref != snp.ref_allele:
             # search for reference allele in alternatives
             ref_found = False
@@ -336,13 +337,13 @@ def snps_seq1(snps, seq_len, genome_fasta, return_seqs=False):
                     )
                     break
 
-            if not ref_found:
-                print(
-                    "WARNING: %s - reference genome %s does not match any allele; skipping"
-                    % (seq_ref, snp.rsid),
-                    file=sys.stderr,
-                )
-                continue
+        if not ref_found:
+            print(
+                "WARNING: %s - reference genome %s does not match any allele; skipping"
+                % (seq_ref, snp.rsid),
+                file=sys.stderr,
+            )
+            break
 
         seq_snps.append(snp)
 
