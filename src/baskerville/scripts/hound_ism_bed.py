@@ -14,33 +14,39 @@
 # limitations under the License.
 # =========================================================================
 from optparse import OptionParser
+
+import gc
 import json
 import os
-import pdb
-import time
+import pickle
+from queue import Queue
+import sys
+from threading import Thread
 
 import h5py
 import numpy as np
 import pandas as pd
+import tensorflow as tf
 
+
+from baskerville import bed
 from baskerville import dataset
 from baskerville import dna
 from baskerville import seqnn
 from baskerville import snps
-from baskerville import vcf
 
 """
-hound_ism_snp.py
+hound_ism_bed.py
 
-Perform an in silico saturated mutagenesis of the sequences surrounding variants
-given in a VCF file.
+Perform an in silico saturation mutagenesis of sequences in a BED file.
 """
+
 
 ################################################################################
 # main
 ################################################################################
 def main():
-    usage = "usage: %prog [options] <params_file> <model_file> <vcf_file>"
+    usage = "usage: %prog [options] <params_file> <model_file> <bed_file>"
     parser = OptionParser(usage)
     parser.add_option(
         "-d",
@@ -53,20 +59,27 @@ def main():
         "-f",
         dest="genome_fasta",
         default=None,
-        help="Genome FASTA [Default: %default]",
+        help="Genome FASTA for sequences [Default: %default]",
     )
     parser.add_option(
         "-l",
         dest="mut_len",
-        default=200,
+        default=0,
         type="int",
-        help="Length of centered sequence to mutate [Default: %default]",
+        help="Length of center sequence to mutate [Default: %default]",
     )
     parser.add_option(
         "-o",
         dest="out_dir",
-        default="ism_snp_out",
+        default="sat_mut",
         help="Output directory [Default: %default]",
+    )
+    parser.add_option(
+        "-p",
+        dest="processes",
+        default=None,
+        type="int",
+        help="Number of processes, passed by multi script",
     )
     parser.add_option(
         "--rc",
@@ -110,12 +123,13 @@ def main():
     )
     (options, args) = parser.parse_args()
 
-    if len(args) != 3:
-        parser.error("Must provide parameters and model files and VCF")
-    else:
+    if len(args) == 3:
+        # single worker
         params_file = args[0]
         model_file = args[1]
-        vcf_file = args[2]
+        bed_file = args[2]
+    else:
+        parser.error("Must provide parameter and model files and BED file")
 
     if not os.path.isdir(options.out_dir):
         os.mkdir(options.out_dir)
@@ -171,16 +185,13 @@ def main():
     seqnn_model.build_ensemble(options.rc)
 
     #################################################################
-    # SNP sequence dataset
+    # sequence dataset
 
-    # load SNPs
-    variants = vcf.vcf_snps(vcf_file)
-
-    # get one hot coded input sequences
-    seqs_1hot, seq_headers, variants, seqs_dna = vcf.snps_seq1(
-        variants, params_model["seq_length"], options.genome_fasta, return_seqs=True
+    # read sequences from BED
+    seqs_dna, seqs_coords = bed.make_bed_seqs(
+        bed_file, options.genome_fasta, params_model["seq_length"], stranded=True
     )
-    num_seqs = seqs_1hot.shape[0]
+    num_seqs = len(seqs_dna)
 
     # determine mutation region limits
     seq_mid = params_model["seq_length"] // 2
@@ -194,24 +205,46 @@ def main():
     if os.path.isfile(scores_h5_file):
         os.remove(scores_h5_file)
     scores_h5 = h5py.File(scores_h5_file, "w")
-    scores_h5.create_dataset("label", data=np.array(seq_headers, dtype="S"))
     scores_h5.create_dataset("seqs", dtype="bool", shape=(num_seqs, options.mut_len, 4))
     for snp_stat in options.snp_stats:
         scores_h5.create_dataset(
             snp_stat, dtype="float16", shape=(num_seqs, options.mut_len, 4, num_targets)
         )
 
-    #################################################################
-    # predict scores and write output
+    # store mutagenesis sequence coordinates
+    scores_chr = []
+    scores_start = []
+    scores_end = []
+    scores_strand = []
+    for seq_chr, seq_start, seq_end, seq_strand in seqs_coords:
+        scores_chr.append(seq_chr)
+        scores_strand.append(seq_strand)
+        if seq_strand == "+":
+            score_start = seq_start + mut_start
+            score_end = score_start + options.mut_len
+        else:
+            score_end = seq_end - mut_start
+            score_start = score_end - options.mut_len
+        scores_start.append(score_start)
+        scores_end.append(score_end)
 
-    for si in range(seqs_1hot.shape[0]):
+    scores_h5.create_dataset("chr", data=np.array(scores_chr, dtype="S"))
+    scores_h5.create_dataset("start", data=np.array(scores_start))
+    scores_h5.create_dataset("end", data=np.array(scores_end))
+    scores_h5.create_dataset("strand", data=np.array(scores_strand, dtype="S"))
+
+    #################################################################
+    # predict scores, write output
+
+    for si, seq_dna in enumerate(seqs_dna):
         print("Predicting %d" % si, flush=True)
 
-        # 1-hot encode reference
-        ref_1hot = np.expand_dims(seqs_1hot[si], axis=0)
+        # 1 hot code DNA
+        ref_1hot = dna.dna_1hot(seq_dna)
+        ref_1hot = np.expand_dims(ref_1hot, axis=0)
 
         # save sequence
-        scores_h5['seqs'][si] = ref_1hot[0, mut_start:mut_end].astype('bool')
+        scores_h5["seqs"][si] = ref_1hot[0, mut_start:mut_end].astype("bool")
 
         # predict reference
         ref_preds = []
@@ -250,11 +283,15 @@ def main():
                             options.untransform_old,
                         )
                         alt_preds.append(alt_preds_shift)
-                    alt_preds = np.array(alt_preds)                    
+                    alt_preds = np.array(alt_preds)
 
-                    ism_scores = snps.compute_scores(ref_preds, alt_preds, options.snp_stats)
+                    ism_scores = snps.compute_scores(
+                        ref_preds, alt_preds, options.snp_stats
+                    )
                     for snp_stat in options.snp_stats:
-                        scores_h5[snp_stat][si, mi-mut_start, ni] = ism_scores[snp_stat]
+                        scores_h5[snp_stat][si, mi - mut_start, ni] = ism_scores[
+                            snp_stat
+                        ]
 
     # close output HDF5
     scores_h5.close()
