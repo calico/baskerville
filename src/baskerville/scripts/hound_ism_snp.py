@@ -36,6 +36,7 @@ Perform an in silico saturated mutagenesis of the sequences surrounding variants
 given in a VCF file.
 """
 
+
 ################################################################################
 # main
 ################################################################################
@@ -211,7 +212,7 @@ def main():
         ref_1hot = np.expand_dims(seqs_1hot[si], axis=0)
 
         # save sequence
-        scores_h5['seqs'][si] = ref_1hot[0, mut_start:mut_end].astype('bool')
+        scores_h5["seqs"][si] = ref_1hot[0, mut_start:mut_end].astype("bool")
 
         # predict reference
         ref_preds = []
@@ -250,11 +251,15 @@ def main():
                             options.untransform_old,
                         )
                         alt_preds.append(alt_preds_shift)
-                    alt_preds = np.array(alt_preds)                    
+                    alt_preds = np.array(alt_preds)
 
-                    ism_scores = snps.compute_scores(ref_preds, alt_preds, options.snp_stats)
+                    ism_scores = snps.compute_scores(
+                        ref_preds, alt_preds, options.snp_stats
+                    )
                     for snp_stat in options.snp_stats:
-                        scores_h5[snp_stat][si, mi-mut_start, ni] = ism_scores[snp_stat]
+                        scores_h5[snp_stat][si, mi - mut_start, ni] = ism_scores[
+                            snp_stat
+                        ]
 
     # close output HDF5
     scores_h5.close()

@@ -970,14 +970,14 @@ class SeqNN:
         return preds
 
     def predict_transform(
-        self, 
-        seq_1hot: np.array, 
+        self,
+        seq_1hot: np.array,
         targets_df,
         strand_transform: np.array = None,
         untransform_old: bool = False,
     ):
         """Predict a single sequence and transform.
-        
+
         Args:
             seq_1hot (np.array): 1-hot encoded sequence.
             targets_df (pd.DataFrame): Targets dataframe.
@@ -986,19 +986,19 @@ class SeqNN:
         """
         # predict
         preds = self(seq_1hot)[0]
-        
+
         # untransform predictions
         if untransform_old:
             preds = dataset.untransform_preds1(preds, targets_df)
         else:
             preds = dataset.untransform_preds(preds, targets_df)
-        
+
         # sum strand pairs
         if strand_transform is not None:
             preds = preds * strand_transform
 
         return preds
-    
+
     def restore(self, model_file, head_i=0, trunk=False):
         """Restore weights from saved model."""
         if trunk:

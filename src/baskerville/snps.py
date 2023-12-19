@@ -37,7 +37,7 @@ def score_snps(params_file, model_file, vcf_file, worker_index, options):
 
     # read targets
     if options.targets_file is None:
-        print('Must provide targets file to clarify stranded datasets', file=sys.stderr)
+        print("Must provide targets file to clarify stranded datasets", file=sys.stderr)
         exit(1)
     targets_df = pd.read_csv(options.targets_file, sep="\t", index_col=0)
 

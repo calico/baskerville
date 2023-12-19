@@ -12,6 +12,7 @@ model_file = "tests/data/eval/model.h5"
 snp_out_dir = "tests/data/ism/snp_out"
 bed_out_dir = "tests/data/ism/bed_out"
 
+
 def test_snp():
     cmd = [
         "src/baskerville/scripts/hound_ism_snp.py",
@@ -45,6 +46,7 @@ def test_snp():
 
             # verify variance
             assert (score_var > 0).all()
+
 
 def test_bed():
     cmd = [

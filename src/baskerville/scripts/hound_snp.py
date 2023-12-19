@@ -185,7 +185,7 @@ def main():
         print("Running on CPU")
         if options.require_gpu:
             raise SystemExit("Job terminated because it's running on CPU")
-    
+
     #################################################################
     # download input files from gcs to a local file
     if options.gcs:
@@ -200,7 +200,7 @@ def main():
             options.targets_file = download_rename_inputs(
                 options.targets_file, temp_dir
             )
-    
+
     #################################################################
     # calculate SAD scores:
     if options.processes is not None:
