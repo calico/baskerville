@@ -15,7 +15,6 @@
 # =========================================================================
 from optparse import OptionParser
 import pdb
-import pickle
 import os
 from baskerville.snps import score_snps
 import tempfile
@@ -51,7 +50,7 @@ def main():
         "-f",
         dest="genome_fasta",
         default=None,
-        help="Genome FASTA for sequences [Default: %default]",
+        help="Genome FASTA [Default: %default]",
     )
     parser.add_option(
         "-o",
@@ -173,6 +172,7 @@ def main():
     options.snp_stats = options.snp_stats.split(",")
     if options.targets_file is None:
         parser.error("Must provide targets file")
+
     #################################################################
     # check if the program is run on GPU, else quit
     physical_devices = tf.config.list_physical_devices()
@@ -185,6 +185,7 @@ def main():
         print("Running on CPU")
         if options.require_gpu:
             raise SystemExit("Job terminated because it's running on CPU")
+
     #################################################################
     # download input files from gcs to a local file
     if options.gcs:
@@ -199,6 +200,7 @@ def main():
             options.targets_file = download_rename_inputs(
                 options.targets_file, temp_dir
             )
+
     #################################################################
     # calculate SAD scores:
     if options.processes is not None:

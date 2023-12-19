@@ -13,14 +13,16 @@
 # limitations under the License.
 # =========================================================================
 import pdb
+import gc
 import sys
 import time
 
 from natsort import natsorted
 import numpy as np
 import tensorflow as tf
-import gc
+
 from baskerville import blocks
+from baskerville import dataset
 from baskerville import layers
 from baskerville import metrics
 
@@ -964,6 +966,36 @@ class SeqNN:
 
         if not stream and step > 1:
             preds = preds[:, step_i, :]
+
+        return preds
+
+    def predict_transform(
+        self,
+        seq_1hot: np.array,
+        targets_df,
+        strand_transform: np.array = None,
+        untransform_old: bool = False,
+    ):
+        """Predict a single sequence and transform.
+
+        Args:
+            seq_1hot (np.array): 1-hot encoded sequence.
+            targets_df (pd.DataFrame): Targets dataframe.
+            strand_transform (np.array): Strand merging transform.
+            untransform_old (bool): Apply old untransform.
+        """
+        # predict
+        preds = self(seq_1hot)[0]
+
+        # untransform predictions
+        if untransform_old:
+            preds = dataset.untransform_preds1(preds, targets_df)
+        else:
+            preds = dataset.untransform_preds(preds, targets_df)
+
+        # sum strand pairs
+        if strand_transform is not None:
+            preds = preds * strand_transform
 
         return preds
 
