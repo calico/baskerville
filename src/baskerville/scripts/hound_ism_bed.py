@@ -15,19 +15,12 @@
 # =========================================================================
 from optparse import OptionParser
 
-import gc
 import json
 import os
-import pickle
-from queue import Queue
-import sys
-from threading import Thread
 
 import h5py
 import numpy as np
 import pandas as pd
-import tensorflow as tf
-
 
 from baskerville import bed
 from baskerville import dataset
@@ -42,9 +35,6 @@ Perform an in silico saturation mutagenesis of sequences in a BED file.
 """
 
 
-################################################################################
-# main
-################################################################################
 def main():
     usage = "usage: %prog [options] <params_file> <model_file> <bed_file>"
     parser = OptionParser(usage)

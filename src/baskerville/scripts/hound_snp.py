@@ -33,9 +33,6 @@ Compute variant effect predictions for SNPs in a VCF file.
 """
 
 
-################################################################################
-# main
-################################################################################
 def main():
     usage = "usage: %prog [options] <params_file> <model_file> <vcf_file>"
     parser = OptionParser(usage)

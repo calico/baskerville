@@ -36,9 +36,6 @@ Test the accuracy of a trained model on targets/predictions normalized across ta
 """
 
 
-################################################################################
-# main
-################################################################################
 def main():
     usage = "usage: %prog [options] <params_file> <model_file> <data_dir>"
     parser = OptionParser(usage)

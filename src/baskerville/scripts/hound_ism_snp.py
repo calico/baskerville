@@ -16,8 +16,6 @@
 from optparse import OptionParser
 import json
 import os
-import pdb
-import time
 
 import h5py
 import numpy as np
@@ -37,9 +35,6 @@ given in a VCF file.
 """
 
 
-################################################################################
-# main
-################################################################################
 def main():
     usage = "usage: %prog [options] <params_file> <model_file> <vcf_file>"
     parser = OptionParser(usage)
