@@ -13,6 +13,7 @@ from baskerville import dna
 from baskerville import dataset
 from baskerville import seqnn
 from baskerville import vcf as bvcf
+from baskerville.helpers.tensorrt_helpers import OptimizedModel
 
 
 def score_snps(params_file, model_file, vcf_file, worker_index, options):
@@ -63,14 +64,25 @@ def score_snps(params_file, model_file, vcf_file, worker_index, options):
     # setup model
 
     # can we sum on GPU?
-    sum_length = options.snp_stats == "SAD"
-
     seqnn_model = seqnn.SeqNN(params_model)
-    seqnn_model.restore(model_file)
-    seqnn_model.build_slice(targets_df.index)
-    if sum_length:
-        seqnn_model.build_sad()
-    seqnn_model.build_ensemble(options.rc)
+
+    # load model
+    if options.tensorrt:
+        seqnn_model.ensemble = OptimizedModel(model_file)
+        input_shape = tuple(seqnn_model.model.loaded_model_fn.inputs[0].shape.as_list())
+    else:
+        seqnn_model.restore(model_file)
+        seqnn_model.build_slice(targets_df.index)
+        sum_length = options.snp_stats == "SAD"
+        if sum_length:
+            seqnn_model.build_sad()
+        seqnn_model.build_ensemble(options.rc)
+        input_shape = seqnn_model.model.input_shape
+
+    # make dummy predictions to warm up model
+    dummy_input_shape = (1,) + input_shape[1:]
+    dummy_input = np.random.random(dummy_input_shape).astype(np.float32)
+    dummy_output = seqnn_model.model(dummy_input)
 
     # shift outside seqnn
     num_shifts = len(options.shifts)

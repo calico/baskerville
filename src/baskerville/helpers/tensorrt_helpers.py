@@ -34,7 +34,8 @@ class OptimizedModel:
     def predict(self, input_data):
         if self.loaded_model_fn is None:
             raise (Exception("Haven't loaded a model"))
-        x = tf.constant(input_data.astype("float32"))
+        # x = tf.constant(input_data.astype("float32"))
+        x = tf.cast(input_data, tf.float32)
         labeling = self.loaded_model_fn(x)
         try:
             preds = labeling["predictions"].numpy()
@@ -48,7 +49,7 @@ class OptimizedModel:
                     raise (
                         Exception("Failed to get predictions from saved model object")
                     )
-        return tf.squeeze(preds, axis=0)
+        return preds
 
     def load_model(self, saved_model_dir):
         saved_model_loaded = tf.saved_model.load(
@@ -58,7 +59,7 @@ class OptimizedModel:
         self.loaded_model_fn = wrapper_fp32
 
     def __call__(self, input_data):
-        return self.loaded_model_fn.predict(input_data)
+        return tf.expand_dims(self.predict(input_data), axis=0)
 
 
 class ModelOptimizer:
@@ -153,7 +154,7 @@ def main():
     seqnn_model.build_ensemble(True)
 
     # save this model to a directory
-    seqnn_model.model.save(f"{args.output_dir}/original_model")
+    seqnn_model.ensemble.save(f"{args.output_dir}/original_model")
 
     # Convert the model
     opt_model = ModelOptimizer(f"{args.output_dir}/original_model")
