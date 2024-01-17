@@ -6,7 +6,7 @@ import argparse
 import json
 import numpy as np
 import pandas as pd
-from baskerville import seqnn, layers
+from baskerville import seqnn, layers, dataset
 
 
 precision_dict = {
@@ -25,9 +25,9 @@ class OptimizedModel:
       saved_model_dir: Folder with saved model
     """
 
-    def __init__(self, saved_model_dir=None):
+    def __init__(self, saved_model_dir=None, strand_pair=[]):
         self.loaded_model_fn = None
-
+        self.strand_pair = strand_pair
         if not saved_model_dir is None:
             self.load_model(saved_model_dir)
 
@@ -62,8 +62,12 @@ class OptimizedModel:
         # need to do the prediction for ensemble model here
         x = tf.cast(input_data, tf.float32)
         sequences_rev = layers.EnsembleReverseComplement()([x])
+        if len(self.strand_pair) == 0:
+            strand_pair = None
+        else:
+            strand_pair = self.strand_pair[0]
         preds = [
-            layers.SwitchReverse(None)([self.predict(seq), rp])
+            layers.SwitchReverse(strand_pair)([self.predict(seq), rp])
             for (seq, rp) in sequences_rev
         ]
         preds_avg = tf.keras.layers.Average()(preds)
@@ -154,7 +158,23 @@ def main():
     with open(args.params_fn) as params_open:
         params = json.load(params_open)
     params_model = params["model"]
+    # handle strand pairs
+    if "strand_pair" in targets_df.columns:
+        # prep strand
+        targets_strand_df = dataset.targets_prep_strand(targets_df)
 
+        # set strand pairs (using new indexing)
+        orig_new_index = dict(zip(targets_df.index, np.arange(targets_df.shape[0])))
+        targets_strand_pair = np.array(
+            [orig_new_index[ti] for ti in targets_df.strand_pair]
+        )
+        params_model["strand_pair"] = [targets_strand_pair]
+
+        # construct strand sum transform
+        strand_transform = dataset.make_strand_transform(targets_df, targets_strand_df)
+    else:
+        targets_strand_df = targets_df
+        strand_transform = None
     # Load keras model into seqnn class
     seqnn_model = seqnn.SeqNN(params_model)
     seqnn_model.restore(args.model_fn)
