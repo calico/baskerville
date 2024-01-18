@@ -68,7 +68,7 @@ def score_snps(params_file, model_file, vcf_file, worker_index, options):
 
     # load model
     if options.tensorrt:
-        seqnn_model.ensemble = OptimizedModel(model_file, seqnn_model.strand_pair)
+        seqnn_model.model = OptimizedModel(model_file, seqnn_model.strand_pair)
         input_shape = tuple(seqnn_model.model.loaded_model_fn.inputs[0].shape.as_list())
     else:
         seqnn_model.restore(model_file)
