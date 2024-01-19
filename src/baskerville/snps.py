@@ -82,7 +82,7 @@ def score_snps(params_file, model_file, vcf_file, worker_index, options):
     # make dummy predictions to warm up model
     dummy_input_shape = (1,) + input_shape[1:]
     dummy_input = np.random.random(dummy_input_shape).astype(np.float32)
-    dummy_output = seqnn_model.model(dummy_input)
+    dummy_output = seqnn_model(dummy_input)
 
     # shift outside seqnn
     num_shifts = len(options.shifts)

@@ -71,7 +71,7 @@ class OptimizedModel:
             for (seq, rp) in sequences_rev
         ]
         preds_avg = tf.keras.layers.Average()(preds)
-        return tf.expand_dims(preds_avg, axis=0)
+        return preds_avg
 
 
 class ModelOptimizer:
