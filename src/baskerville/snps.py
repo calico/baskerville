@@ -67,13 +67,13 @@ def score_snps(params_file, model_file, vcf_file, worker_index, options):
     seqnn_model = seqnn.SeqNN(params_model)
 
     # load model
+    sum_length = options.snp_stats == "SAD"
     if options.tensorrt:
         seqnn_model.model = OptimizedModel(model_file, seqnn_model.strand_pair)
         input_shape = tuple(seqnn_model.model.loaded_model_fn.inputs[0].shape.as_list())
     else:
         seqnn_model.restore(model_file)
         seqnn_model.build_slice(targets_df.index)
-        sum_length = options.snp_stats == "SAD"
         if sum_length:
             seqnn_model.build_sad()
         seqnn_model.build_ensemble(options.rc)
