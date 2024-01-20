@@ -13,7 +13,7 @@ from baskerville import dna
 from baskerville import dataset
 from baskerville import seqnn
 from baskerville import vcf as bvcf
-from baskerville.helpers.tensorrt_helpers import OptimizedModel
+from baskerville.helpers.trt_optimized_model import OptimizedModel
 
 
 def score_snps(params_file, model_file, vcf_file, worker_index, options):
