@@ -101,22 +101,6 @@ def main():
     with open(args.params_fn) as params_open:
         params = json.load(params_open)
     params_model = params["model"]
-    # handle strand pairs
-    if "strand_pair" in targets_df.columns:
-        # prep strand
-        targets_strand_df = dataset.targets_prep_strand(targets_df)
-
-        # set strand pairs (using new indexing)
-        orig_new_index = dict(zip(targets_df.index, np.arange(targets_df.shape[0])))
-        targets_strand_pair = np.array(
-            [orig_new_index[ti] for ti in targets_df.strand_pair]
-        )
-        params_model["strand_pair"] = [targets_strand_pair]
-
-        # construct strand sum transform
-        strand_transform = dataset.make_strand_transform(targets_df, targets_strand_df)
-    else:
-        targets_strand_df = targets_df
     # Load keras model into seqnn class
     seqnn_model = seqnn.SeqNN(params_model)
     seqnn_model.restore(args.model_fn)
