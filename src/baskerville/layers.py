@@ -756,6 +756,7 @@ class SqueezeExcite(tf.keras.layers.Layer):
         use_bias=True,
         kernel_initializer='glorot_uniform',
         bias_initializer='zeros',
+        scale_fun='sigmoid',
     ):
         super(SqueezeExcite, self).__init__()
         self.activation = activation
@@ -766,6 +767,7 @@ class SqueezeExcite(tf.keras.layers.Layer):
         self.kernel_initializer=kernel_initializer
         self.bias_initializer=bias_initializer
         self.use_bias=use_bias
+        self.scale_fun=scale_fun
 
     def build(self, input_shape):
         self.num_channels = input_shape[-1]
@@ -779,6 +781,17 @@ class SqueezeExcite(tf.keras.layers.Layer):
         else:
             print(
                 "SqueezeExcite: input dim %d unexpected" % len(input_shape),
+                file=sys.stderr,
+            )
+            exit(1)
+
+        if self.scale_fun=='sigmoid':
+            self.scale_f = tf.keras.activations.sigmoid
+        elif self.scale_fun=='tanh': # set to tanh for transfer
+            self.scale_f = tf.keras.activations.tanh
+        else:
+            print(
+                "scale function must be sigmoid or tanh",
                 file=sys.stderr,
             )
             exit(1)
@@ -819,7 +832,7 @@ class SqueezeExcite(tf.keras.layers.Layer):
         if self.additive:
             xs = x + excite
         else:
-            excite = tf.keras.activations.sigmoid(excite)
+            excite = self.scale_f(excite)
             xs = x * excite
 
         return xs

@@ -45,7 +45,7 @@ def main():
     parser.add_option(
         "-c",
         dest="class_min",
-        default=100,
+        default=5,
         type="int",
         help="Minimum target class size to consider [Default: %default]",
     )
@@ -98,6 +98,13 @@ def main():
         help="File specifying target indexes and labels in table format",
     )
     parser.add_option(
+        "--target_classes",
+        dest="target_classes",
+        default=None,
+        type="str",
+        help="comma separated string of target classes",
+    )
+    parser.add_option(
         "--split",
         dest="split_label",
         default="test",
@@ -142,19 +149,25 @@ def main():
 
     # classify
     target_classes = []
-    for ti in range(num_targets):
-        description = targets_df.iloc[ti].description
-        if description.find(":") == -1:
-            tc = "*"
-        else:
-            desc_split = description.split(":")
-            if desc_split[0] == "CHIP":
-                tc = "/".join(desc_split[:2])
+
+    if options.target_classes is None:
+        for ti in range(num_targets):
+            description = targets_df.iloc[ti].description
+            if description.find(":") == -1:
+                tc = "*"
             else:
-                tc = desc_split[0]
-        target_classes.append(tc)
-    targets_df["class"] = target_classes
-    target_classes = sorted(set(target_classes))
+                desc_split = description.split(":")
+                if desc_split[0] == "CHIP":
+                    tc = "/".join(desc_split[:2])
+                else:
+                    tc = desc_split[0]
+            target_classes.append(tc)
+        targets_df["class"] = target_classes
+        target_classes = sorted(set(target_classes))
+    else:
+        targets_df["class"] = targets_df['description'].str.replace(':.*','',regex=True)
+        target_classes = options.target_classes.split(',')
+    
     print(target_classes)
 
     #######################################################

@@ -91,7 +91,7 @@ def main():
         "--conv_adapter",
         default=None,
         type=str,
-        help="conv layer module [conv, batch_norm, squez_excit]",
+        help="conv layer module [conv, bn, conv_bn, squez_excit]",
     )
 
     parser.add_argument(
@@ -206,9 +206,12 @@ def main():
             # attention adapter
             if args.att_adapter is not None:
                 if args.att_adapter=='adapterHoulsby':
-                    seqnn_model.model = transfer_helper.add_houlsby(seqnn_model.model, 
-                                                                    strand_pairs[0], 
-                                                                    latent_size=args.att_latent)
+                    if args.conv_adapter not in ['se', 'se_bn', 'se_all','se_all_bn']:
+                        # when att_adapter=='Houlsby' and conv_adapter=='se', do nothing.
+                        # see conv_adapter section.
+                        seqnn_model.model = transfer_helper.add_houlsby(seqnn_model.model, 
+                                                                        strand_pairs[0], 
+                                                                        latent_size=args.att_latent)
                 elif args.att_adapter=='lora':
                     transfer_helper.add_lora(seqnn_model.model, 
                                              rank=args.att_latent, 
@@ -228,57 +231,89 @@ def main():
                 if args.conv_adapter=='conv':
                     params_added = 0
                     for l in seqnn_model.model.layers:
-                        if l.name.startswith("conv1d"):
+                        if l.name.startswith(("conv1d","separable_conv1d")):
                             l.trainable=True
                             params_added += transfer_helper.param_count(l, type='trainable')
                     print('params added/unfrozen by conv: %d'%params_added)
                 
-                if args.conv_adapter=='conv_all':
+                elif args.conv_adapter=='conv_bn':
                     params_added = 0
                     for l in seqnn_model.model.layers:
-                        if l.name.startswith(("conv1d","separable_conv1d")):
+                        if l.name.startswith(("conv1d","separable_conv1d","batch_normalization")):
                             l.trainable=True
                             params_added += transfer_helper.param_count(l, type='trainable')
-                    print('params added/unfrozen by conv_all: %d'%params_added)
+                    print('params added/unfrozen by conv_bn: %d'%params_added)
 
-                elif args.conv_adapter=='batch_norm':
+                elif args.conv_adapter=='bn':
                     params_added = 0
                     for l in seqnn_model.model.layers:
                         if l.name.startswith("batch_normalization"):
                             l.trainable=True
                             params_added += transfer_helper.param_count(l, type='trainable')
-                    print('params added/unfrozen by batch_norm: %d'%params_added)
+                    print('params added/unfrozen by bn: %d'%params_added)
 
                 ##################
                 # squeeze-excite #
                 ##################
-                elif args.conv_adapter=='se':
-                    seqnn_model.model = transfer_helper.add_se(seqnn_model.model, 
-                                                               strand_pair=strand_pairs[0], 
-                                                               bottleneck_ratio=args.se_ratio, 
-                                                               insert_mode='pre_att',
-                                                               unfreeze_bn=False)
-
-                elif args.conv_adapter=='se_bn':
-                    seqnn_model.model = transfer_helper.add_se(seqnn_model.model, 
-                                                               strand_pair=strand_pairs[0], 
-                                                               bottleneck_ratio=args.se_ratio, 
-                                                               insert_mode='pre_att',
-                                                               unfreeze_bn=True)
-                
-                elif args.conv_adapter=='se_all':
-                    seqnn_model.model = transfer_helper.add_se(seqnn_model.model, 
-                                                               strand_pair=strand_pairs[0], 
-                                                               bottleneck_ratio=args.se_ratio, 
-                                                               insert_mode='all',
-                                                               unfreeze_bn=False)
-
-                elif args.conv_adapter=='se_all_bn':
-                    seqnn_model.model = transfer_helper.add_se(seqnn_model.model, 
-                                                               strand_pair=strand_pairs[0], 
-                                                               bottleneck_ratio=args.se_ratio, 
-                                                               insert_mode='all',
-                                                               unfreeze_bn=True)
+                elif args.conv_adapter in ['se','se_bn','se_all','se_all_bn']:
+                    if args.att_adapter=='adapterHoulsby':
+                        if args.conv_adapter=='se':
+                            seqnn_model.model = transfer_helper.add_houlsby_se(seqnn_model.model, 
+                                                                               strand_pair=strand_pairs[0], 
+                                                                               houlsby_latent=args.att_latent,
+                                                                               bottleneck_ratio=args.se_ratio, 
+                                                                               insert_mode='pre_att',
+                                                                               unfreeze_bn=False)
+                        elif args.conv_adapter=='se_bn':
+                            seqnn_model.model = transfer_helper.add_houlsby_se(seqnn_model.model, 
+                                                                               strand_pair=strand_pairs[0], 
+                                                                               houlsby_latent=args.att_latent,
+                                                                               bottleneck_ratio=args.se_ratio, 
+                                                                               insert_mode='pre_att',
+                                                                               unfreeze_bn=True)
+                        elif args.conv_adapter=='se_all':
+                            seqnn_model.model = transfer_helper.add_houlsby_se(seqnn_model.model, 
+                                                                               strand_pair=strand_pairs[0], 
+                                                                               houlsby_latent=args.att_latent,
+                                                                               bottleneck_ratio=args.se_ratio, 
+                                                                               insert_mode='all',
+                                                                               unfreeze_bn=False)
+                        elif args.conv_adapter=='se_all_bn':
+                            seqnn_model.model = transfer_helper.add_houlsby_se(seqnn_model.model, 
+                                                                               strand_pair=strand_pairs[0], 
+                                                                               houlsby_latent=args.att_latent,
+                                                                               bottleneck_ratio=args.se_ratio, 
+                                                                               insert_mode='all',
+                                                                               unfreeze_bn=True)
+                    else:
+                        if args.conv_adapter=='se':
+                            seqnn_model.model = transfer_helper.add_se(seqnn_model.model, 
+                                                                       strand_pair=strand_pairs[0], 
+                                                                       houlsby_latent=args.att_latent,
+                                                                       bottleneck_ratio=args.se_ratio, 
+                                                                       insert_mode='pre_att',
+                                                                       unfreeze_bn=False)
+                        elif args.conv_adapter=='se_bn':
+                            seqnn_model.model = transfer_helper.add_se(seqnn_model.model, 
+                                                                       strand_pair=strand_pairs[0], 
+                                                                       houlsby_latent=args.att_latent,
+                                                                       bottleneck_ratio=args.se_ratio, 
+                                                                       insert_mode='pre_att',
+                                                                       unfreeze_bn=True)
+                        elif args.conv_adapter=='se_all':
+                            seqnn_model.model = transfer_helper.add_se(seqnn_model.model, 
+                                                                       strand_pair=strand_pairs[0], 
+                                                                       houlsby_latent=args.att_latent,
+                                                                       bottleneck_ratio=args.se_ratio, 
+                                                                       insert_mode='all',
+                                                                       unfreeze_bn=False)
+                        elif args.conv_adapter=='se_all_bn':
+                            seqnn_model.model = transfer_helper.add_se(seqnn_model.model, 
+                                                                       strand_pair=strand_pairs[0], 
+                                                                       houlsby_latent=args.att_latent,
+                                                                       bottleneck_ratio=args.se_ratio, 
+                                                                       insert_mode='pre_att',
+                                                                       unfreeze_bn=True)
                     
         #################
         # final summary #
@@ -307,36 +342,37 @@ def main():
         #############################
         if args.transfer_mode=='sparse':
             
-            # Houlsby adapter requires architecture change, overwrite params.json file with new one
-            if args.att_adapter=='adapterHoulsby':
-                transfer_helper.modify_json(input_json=args.params_file,
-                                            output_json=args.out_dir,
-                                            adapter='houlsby',
-                                            latent_size=args.att_latent)
-            
-            # merge lora weights to original, save weight to: model_best.mergeW.h5
-            # use original params.json
+            # overwrite json file when needed
+            # for: adapterHoulsby and squeeze-excite
+            transfer_helper.modify_json(input_json=args.params_file,
+                                        output_json='%s/params.json'%args.out_dir,
+                                        adapter=args.att_adapter,
+                                        latent=args.att_latent,
+                                        conv=args.conv_adapter, 
+                                        se_ratio=args.se_ratio)
+
+            # merge weights when needed
+            # for: lora and ia3
+            # save weight to: model_best.mergeW.h5
             if args.att_adapter=='lora':
-                seqnn_model.model.load_weights('%s/model_best.h5'args.out_dir)
+                seqnn_model.model.load_weights('%s/model_best.h5'%args.out_dir)
                 transfer_helper.merge_lora(seqnn_model.model, mode='default')
-                seqnn_model.save('%s/model_best.mergeW.h5'args.out_dir)
-                transfer_helper.var_reorder('%s/model_best.mergeW.h5'args.out_dir)
+                seqnn_model.save('%s/model_best.mergeW.h5'%args.out_dir)
+                transfer_helper.var_reorder('%s/model_best.mergeW.h5'%args.out_dir)
             
             if args.att_adapter=='lora_full':
-                seqnn_model.model.load_weights('%s/model_best.h5'args.out_dir)
+                seqnn_model.model.load_weights('%s/model_best.h5'%args.out_dir)
                 transfer_helper.merge_lora(seqnn_model.model, mode='full')
-                seqnn_model.save('%s/model_best.mergeW.h5'args.out_dir)
-                transfer_helper.var_reorder('%s/model_best.mergeW.h5'args.out_dir)
+                seqnn_model.save('%s/model_best.mergeW.h5'%args.out_dir)
+                transfer_helper.var_reorder('%s/model_best.mergeW.h5'%args.out_dir)
     
             # merge ia3 weights to original, save weight to: model_best_mergeweight.h5
             if args.att_adapter=='ia3':
-                seqnn_model.model.load_weights('%s/model_best.h5'args.out_dir)
+                seqnn_model.model.load_weights('%s/model_best.h5'%args.out_dir)
                 transfer_helper.merge_ia3(seqnn_model.model)
-                seqnn_model.save('%s/model_best.mergeW.h5'args.out_dir)
-                transfer_helper.var_reorder('%s/model_best.mergeW.h5'args.out_dir)
+                seqnn_model.save('%s/model_best.mergeW.h5'%args.out_dir)
+                transfer_helper.var_reorder('%s/model_best.mergeW.h5'%args.out_dir)
 
-
-    
     else:
         ########################################
         # multi GPU

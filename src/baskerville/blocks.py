@@ -149,6 +149,8 @@ def conv_dna(
     conv_type="standard",
     kernel_initializer="he_normal",
     padding="same",
+    transfer_se=False,
+    se_ratio=16,
 ):
     """Construct a single convolution block, assumed to be operating on DNA.
 
@@ -196,6 +198,18 @@ def conv_dna(
         kernel_regularizer=tf.keras.regularizers.l2(l2_scale),
     )(current)
 
+    # squeeze-excite for transfer
+    if transfer_se:
+        se_out = squeeze_excite(current, 
+                                activation=None,
+                                additive=False, 
+                                bottleneck_ratio=se_ratio,
+                                use_bias=False,
+                                kernel_initializer=tf.keras.initializers.TruncatedNormal(stddev=1e-3),
+                                scale_fun='tanh'
+                               )
+        current = current + se_out
+    
     # squeeze-excite
     if se:
         current = squeeze_excite(current)
@@ -267,6 +281,8 @@ def conv_nac(
     kernel_initializer="he_normal",
     padding="same",
     se=False,
+    transfer_se=False,
+    se_ratio=16,
 ):
     """Construct a single convolution block.
 
@@ -325,6 +341,18 @@ def conv_nac(
         kernel_initializer=kernel_initializer,
         kernel_regularizer=tf.keras.regularizers.l2(l2_scale),
     )(current)
+
+    # squeeze-excite for transfer
+    if transfer_se:
+        se_out = squeeze_excite(current, 
+                                activation=None,
+                                additive=False, 
+                                bottleneck_ratio=se_ratio,
+                                use_bias=False,
+                                kernel_initializer=tf.keras.initializers.TruncatedNormal(stddev=1e-3),
+                                scale_fun='tanh'                                
+                               )
+        current = current + se_out
 
     # squeeze-excite
     if se:
@@ -456,6 +484,8 @@ def fpn_unet(
     bn_momentum=0.99,
     kernel_size=1,
     kernel_initializer="he_normal",
+    transfer_se=False,
+    se_ratio=16,
 ):
     """Construct a feature pyramid network block.
 
@@ -528,6 +558,17 @@ def fpn_unet(
         kernel_regularizer=tf.keras.regularizers.l2(l2_scale),
         kernel_initializer=kernel_initializer,
     )(current)
+
+    if transfer_se:
+        se_out = squeeze_excite(current, 
+                                activation=None,
+                                additive=False, 
+                                bottleneck_ratio=se_ratio,
+                                use_bias=False,
+                                kernel_initializer=tf.keras.initializers.TruncatedNormal(stddev=1e-3),
+                                scale_fun='tanh'                                
+                               )
+        current = current + se_out
 
     # dropout
     if dropout > 0:
@@ -1528,11 +1569,20 @@ def squeeze_excite(
     additive=False,
     norm_type=None,
     bn_momentum=0.9,
+    kernel_initializer='glorot_uniform',
+    use_bias=True,
+    scale_fun='sigmoid',
     **kwargs,
 ):
     return layers.SqueezeExcite(
-        activation, additive, bottleneck_ratio, norm_type, bn_momentum
-    )(inputs)
+        activation=activation, 
+        additive=additive, 
+        bottleneck_ratio=bottleneck_ratio, 
+        norm_type=norm_type, 
+        bn_momentum=bn_momentum, 
+        kernel_initializer=kernel_initializer, 
+        scale_fun=scale_fun,
+        use_bias=use_bias)(inputs)
 
 
 def wheeze_excite(inputs, pool_size, **kwargs):
