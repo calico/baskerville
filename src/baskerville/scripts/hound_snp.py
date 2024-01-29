@@ -15,7 +15,6 @@
 # =========================================================================
 from optparse import OptionParser
 import pdb
-import pickle
 import os
 from baskerville.snps import score_snps
 import tempfile
@@ -25,6 +24,7 @@ from baskerville.helpers.gcs_utils import (
     upload_folder_gcs,
     download_rename_inputs,
 )
+from baskerville.helpers.utils import load_extra_options
 
 """
 hound_snp.py
@@ -33,9 +33,6 @@ Compute variant effect predictions for SNPs in a VCF file.
 """
 
 
-################################################################################
-# main
-################################################################################
 def main():
     usage = "usage: %prog [options] <params_file> <model_file> <vcf_file>"
     parser = OptionParser(usage)
@@ -50,7 +47,7 @@ def main():
         "-f",
         dest="genome_fasta",
         default=None,
-        help="Genome FASTA for sequences [Default: %default]",
+        help="Genome FASTA [Default: %default]",
     )
     parser.add_option(
         "-o",
@@ -172,6 +169,7 @@ def main():
     options.snp_stats = options.snp_stats.split(",")
     if options.targets_file is None:
         parser.error("Must provide targets file")
+
     #################################################################
     # check if the program is run on GPU, else quit
     physical_devices = tf.config.list_physical_devices()
@@ -184,6 +182,7 @@ def main():
         print("Running on CPU")
         if options.require_gpu:
             raise SystemExit("Job terminated because it's running on CPU")
+
     #################################################################
     # download input files from gcs to a local file
     if options.gcs:
@@ -198,6 +197,7 @@ def main():
             options.targets_file = download_rename_inputs(
                 options.targets_file, temp_dir
             )
+
     #################################################################
     # calculate SAD scores:
     if options.processes is not None:
@@ -209,25 +209,6 @@ def main():
         upload_folder_gcs(options.out_dir, gcs_output_dir)
         if os.path.isdir(temp_dir):
             shutil.rmtree(temp_dir)  # clean up temp dir
-
-
-def load_extra_options(options_pkl_file, options):
-    """
-    Args:
-        options_pkl_file: option file
-        options: existing options from command line
-    Returns:
-        options: updated options
-    """
-    options_pkl = open(options_pkl_file, "rb")
-    new_options = pickle.load(options_pkl)
-    new_option_attrs = vars(new_options)
-    # Assuming 'options' is the existing options object
-    # Update the existing options with the new attributes
-    for attr_name, attr_value in new_option_attrs.items():
-        setattr(options, attr_name, attr_value)
-    options_pkl.close()
-    return options
 
 
 ################################################################################

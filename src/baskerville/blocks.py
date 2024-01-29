@@ -473,7 +473,7 @@ def conv_next(
     return current
 
 
-def fpn_unet(
+def unet_conv(
     inputs,
     unet_repr,
     activation="relu",
@@ -486,6 +486,7 @@ def fpn_unet(
     kernel_initializer="he_normal",
     transfer_se=False,
     se_ratio=16,
+    upsample_conv=False,
 ):
     """Construct a feature pyramid network block.
 
@@ -498,6 +499,7 @@ def fpn_unet(
       dropout:       Dropout rate probability
       norm_type:     Apply batch or layer normalization
       bn_momentum:   BatchNorm momentum
+      upsample_conv: Conv1D the upsampled input path
 
     Returns:
       [batch_size, seq_length, features] output sequence
@@ -529,11 +531,12 @@ def fpn_unet(
     filters = inputs.shape[-1]
 
     # dense
-    current1 = tf.keras.layers.Dense(
-        units=filters,
-        kernel_regularizer=tf.keras.regularizers.l2(l2_scale),
-        kernel_initializer=kernel_initializer,
-    )(current1)
+    if upsample_conv:
+        current1 = tf.keras.layers.Dense(
+            units=filters,
+            kernel_regularizer=tf.keras.regularizers.l2(l2_scale),
+            kernel_initializer=kernel_initializer,
+        )(current1)
     current2 = tf.keras.layers.Dense(
         units=filters,
         kernel_regularizer=tf.keras.regularizers.l2(l2_scale),
@@ -544,7 +547,6 @@ def fpn_unet(
     current1 = tf.keras.layers.UpSampling1D(size=stride)(current1)
 
     # add
-    # current2 = layers.Scale(initializer='ones')(current2)
     current = tf.keras.layers.Add()([current1, current2])
 
     # normalize?
@@ -577,83 +579,7 @@ def fpn_unet(
     return current
 
 
-def fpn1_unet(
-    inputs,
-    unet_repr,
-    activation="relu",
-    stride=2,
-    l2_scale=0,
-    dropout=0,
-    norm_type=None,
-    bn_momentum=0.99,
-    kernel_size=1,
-    kernel_initializer="he_normal",
-):
-    """Construct a feature pyramid network block.
-
-    Args:
-      inputs:        [batch_size, seq_length, features] input sequence
-      kernel_size:   Conv1D kernel_size
-      activation:    relu/gelu/etc
-      stride:        UpSample stride
-      l2_scale:      L2 regularization weight.
-      dropout:       Dropout rate probability
-      norm_type:     Apply batch or layer normalization
-      bn_momentum:   BatchNorm momentum
-
-    Returns:
-      [batch_size, seq_length, features] output sequence
-    """
-
-    # variables
-    current1 = inputs
-    current2 = unet_repr
-
-    # normalize
-    if norm_type == "batch-sync":
-        current1 = tf.keras.layers.BatchNormalization(
-            momentum=bn_momentum, synchronized=True
-        )(current1)
-    elif norm_type == "batch":
-        current1 = tf.keras.layers.BatchNormalization(momentum=bn_momentum)(current1)
-    elif norm_type == "layer":
-        current1 = tf.keras.layers.LayerNormalization()(current1)
-
-    # activate
-    current1 = layers.activate(current1, activation)
-    # current2 = layers.activate(current2, activation)
-
-    # dense
-    current1 = tf.keras.layers.Dense(
-        units=unet_repr.shape[-1],
-        kernel_regularizer=tf.keras.regularizers.l2(l2_scale),
-        kernel_initializer=kernel_initializer,
-    )(current1)
-
-    # upsample
-    current1 = tf.keras.layers.UpSampling1D(size=stride)(current1)
-
-    # add
-    current2 = layers.Scale(initializer="ones")(current2)
-    current = tf.keras.layers.Add()([current1, current2])
-
-    # convolution
-    current = tf.keras.layers.SeparableConv1D(
-        filters=unet_repr.shape[-1],
-        kernel_size=kernel_size,
-        padding="same",
-        kernel_regularizer=tf.keras.regularizers.l2(l2_scale),
-        kernel_initializer=kernel_initializer,
-    )(current)
-
-    # dropout
-    if dropout > 0:
-        current = tf.keras.layers.Dropout(dropout)(current)
-
-    return current
-
-
-def upsample_unet(
+def unet_concat(
     inputs,
     unet_repr,
     activation="relu",
@@ -812,11 +738,6 @@ def tconv_nac(
     if dropout > 0:
         current = tf.keras.layers.Dropout(rate=dropout)(current)
 
-    return current
-
-
-def concat_unet(inputs, unet_repr, **kwargs):
-    current = tf.keras.layers.Concatenate()([inputs, unet_repr])
     return current
 
 
@@ -2100,7 +2021,6 @@ name_func = {
     "center_average": center_average,
     "concat_dist_2d": concat_dist_2d,
     "concat_position": concat_position,
-    "concat_unet": concat_unet,
     "conv_block": conv_block,
     "conv_dna": conv_dna,
     "conv_nac": conv_nac,
@@ -2127,10 +2047,9 @@ name_func = {
     "tconv_nac": tconv_nac,
     "transformer": transformer,
     "transformer_tower": transformer_tower,
+    "unet_conv": unet_conv,
+    "unet_concat": unet_concat,
     "upper_tri": upper_tri,
-    "fpn_unet": fpn_unet,
-    "fpn1_unet": fpn1_unet,
-    "upsample_unet": upsample_unet,
     "wheeze_excite": wheeze_excite,
 }
 

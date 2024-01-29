@@ -20,6 +20,7 @@ import sys
 from natsort import natsorted
 import numpy as np
 import pandas as pd
+from scipy.sparse import dok_matrix
 import tensorflow as tf
 
 gpu_devices = tf.config.experimental.list_physical_devices("GPU")
@@ -310,6 +311,36 @@ class SeqDataset:
             return targets
 
 
+def make_strand_transform(targets_df, targets_strand_df):
+    """Make a sparse matrix to sum strand pairs.
+
+    Args:
+        targets_df (pd.DataFrame): Targets DataFrame.
+        targets_strand_df (pd.DataFrame): Targets DataFrame, with strand pairs collapsed.
+
+    Returns:
+        scipy.sparse.csr_matrix: Sparse matrix to sum strand pairs.
+    """
+
+    # initialize sparse matrix
+    strand_transform = dok_matrix((targets_df.shape[0], targets_strand_df.shape[0]))
+
+    # fill in matrix
+    ti = 0
+    sti = 0
+    for _, target in targets_df.iterrows():
+        strand_transform[ti, sti] = True
+        if target.strand_pair == target.name:
+            sti += 1
+        else:
+            if target.identifier[-1] == "-":
+                sti += 1
+        ti += 1
+    strand_transform = strand_transform.tocsr()
+
+    return strand_transform
+
+
 def targets_prep_strand(targets_df):
     """Adjust targets table for merged stranded datasets.
 
@@ -351,9 +382,9 @@ def untransform_preds(preds, targets_df, unscale=False):
     preds_unclip = cs - 1 + (preds - cs + 1) ** 2
     preds = np.where(preds > cs, preds_unclip, preds)
 
-    # ** 0.75
+    # sqrt
     sqrt_mask = np.array([ss.find("_sqrt") != -1 for ss in targets_df.sum_stat])
-    preds[:, sqrt_mask] = -1 + (preds[:, sqrt_mask] + 1) ** (4 / 3)
+    preds[:, sqrt_mask] = -1 + (preds[:, sqrt_mask] + 1) ** 2  # (4 / 3)
 
     # scale
     if unscale:
