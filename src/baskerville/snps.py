@@ -207,6 +207,28 @@ def score_snps(params_file, model_file, vcf_file, worker_index, options):
                 # save shift prediction
                 alt_preds.append(alt_preds_shift)
 
+            # stitch alternate predictions
+            if len(alt_shifts) != options.shifts and options.stitch:
+                alt_preds = np.array(alt_preds)
+                _, seq_len, _ = alt_preds.shape
+
+                # stack left and right pieces of sequence
+                alt_preds = np.stack(
+                    [
+                        np.concatenate(
+                            [
+                                left_pred[: seq_len // 2 + sh, :],
+                                right_pred[seq_len // 2 + sh :, :],
+                            ]
+                        )
+                        for left_pred, right_pred, sh in zip(
+                            alt_preds[0::2, :, :], alt_preds[1::2, :, :], options.shifts
+                        )
+                    ]
+                )
+                alt_preds = np.repeat(alt_preds, repeats=2, axis=0)
+                alt_preds = list(alt_preds)
+                
             # flip reference and alternate
             if snps[si].flipped:
                 rp_snp = np.array(alt_preds)
