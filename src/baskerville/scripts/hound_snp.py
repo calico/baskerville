@@ -76,7 +76,8 @@ def main():
         type="str",
         help="Ensemble prediction shifts [Default: %default]",
     )
-    parser.add_option("--stitch", 
+    parser.add_option(
+        "--stitch", 
         dest="stitch",
         default=False, 
         action="store_true",
