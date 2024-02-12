@@ -228,7 +228,7 @@ def score_snps(params_file, model_file, vcf_file, worker_index, options):
                 )
                 alt_preds = np.repeat(alt_preds, repeats=2, axis=0)
                 alt_preds = list(alt_preds)
-                
+
             # flip reference and alternate
             if snps[si].flipped:
                 rp_snp = np.array(alt_preds)

@@ -77,11 +77,12 @@ def main():
         help="Ensemble prediction shifts [Default: %default]",
     )
     parser.add_option(
-        "--stitch", 
+        "--stitch",
         dest="stitch",
-        default=False, 
+        default=False,
         action="store_true",
-        help=" [Default: %default]")
+        help=" [Default: %default]",
+    )
     parser.add_option(
         "--stats",
         dest="snp_stats",
