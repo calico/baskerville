@@ -117,6 +117,13 @@ def main():
         action="store_true",
         help="Only run on GPU",
     )
+    parser.add_option(
+        "--tensorrt",
+        dest="tensorrt",
+        default=False,
+        action="store_true",
+        help="Model type is tensorrt optimized",
+    )
     (options, args) = parser.parse_args()
 
     if options.gcs:
@@ -169,6 +176,14 @@ def main():
     else:
         parser.error("Must provide parameters and model files and QTL VCF file")
 
+    # check if the model type is correct
+    if options.tensorrt:
+        if model_file.endswith(".h5"):
+            raise SystemExit("Model type is tensorrt but model file is keras")
+        is_dir_model = True
+    else:
+        is_dir_model = False
+
     if not os.path.isdir(options.out_dir):
         os.mkdir(options.out_dir)
 
@@ -195,7 +210,7 @@ def main():
     if options.gcs:
         params_file = download_rename_inputs(params_file, temp_dir)
         vcf_file = download_rename_inputs(vcf_file, temp_dir)
-        model_file = download_rename_inputs(model_file, temp_dir)
+        model_file = download_rename_inputs(model_file, temp_dir, is_dir_model)
         if options.genome_fasta is not None:
             options.genome_fasta = download_rename_inputs(
                 options.genome_fasta, temp_dir

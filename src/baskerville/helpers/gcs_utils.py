@@ -254,9 +254,9 @@ def download_rename_inputs(filepath: str, temp_dir: str, is_dir: bool = False) -
     Returns: new filepath in the local machine
     """
     if is_dir:
-        download_folder_from_gcs(filepath, temp_dir)
         dir_name = filepath.split("/")[-1]
-        return temp_dir
+        download_folder_from_gcs(filepath, f"{temp_dir}/{dir_name}")
+        return f"{temp_dir}/{dir_name}"
     else:
         _, filename = split_gcs_uri(filepath)
         if "/" in filename:
