@@ -186,8 +186,9 @@ def score_snps(params_file, model_file, vcf_file, worker_index, options):
             if indel_size == 0:
                 alt_shifts = options.shifts
             else:
-                # repeat reference predictions
-                ref_preds = np.repeat(ref_preds, 2, axis=0)
+                # repeat reference predictions, unless stitching
+                if not options.indel_stitch:
+                    ref_preds = np.repeat(ref_preds, 2, axis=0)
 
                 # add compensation shifts
                 alt_shifts = []
@@ -219,27 +220,9 @@ def score_snps(params_file, model_file, vcf_file, worker_index, options):
                 # save shift prediction
                 alt_preds.append(alt_preds_shift)
 
-            # stitch alternate predictions
-            if len(alt_shifts) != options.shifts and options.stitch:
-                alt_preds = np.array(alt_preds)
-                _, seq_len, _ = alt_preds.shape
-
-                # stack left and right pieces of sequence
-                alt_preds = np.stack(
-                    [
-                        np.concatenate(
-                            [
-                                left_pred[: seq_len // 2 + sh, :],
-                                right_pred[seq_len // 2 + sh :, :],
-                            ]
-                        )
-                        for left_pred, right_pred, sh in zip(
-                            alt_preds[0::2, :, :], alt_preds[1::2, :, :], options.shifts
-                        )
-                    ]
-                )
-                alt_preds = np.repeat(alt_preds, repeats=2, axis=0)
-                alt_preds = list(alt_preds)
+            # stitch indel compensation shifts
+            if indel_size != 0 and options.indel_stitch:
+                alt_preds = stitch_preds(alt_preds, options.shifts)
 
             # flip reference and alternate
             if snps[si].flipped:
@@ -572,6 +555,23 @@ def make_alt_1hot(ref_1hot, snp_seq_pos, ref_allele, alt_allele):
             )
 
     return alt_1hot
+
+
+def stitch_preds(preds, shifts):
+    """Stitch indel left and right compensation shifts.
+
+    Args:
+        preds [np.array]: List of predictions.
+        shifts [int]: List of shifts.
+    """
+    cp = preds[0].shape[0] // 2
+    preds_stitch = []
+    for hi, shift in enumerate(shifts):
+        hil = 2 * hi
+        hir = hil + 1
+        preds_stitch_i = np.concatenate((preds[hil][:cp], preds[hir][cp:]), axis=0)
+        preds_stitch.append(preds_stitch_i)
+    return preds_stitch
 
 
 def write_pct(scores_out, snp_stats):

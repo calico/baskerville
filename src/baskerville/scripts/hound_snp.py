@@ -50,6 +50,13 @@ def main():
         help="Genome FASTA [Default: %default]",
     )
     parser.add_option(
+        "--indel_stitch",
+        dest="indel_stitch",
+        default=False,
+        action="store_true",
+        help="Stitch indel compensation shifts [Default: %default]",
+    )
+    parser.add_option(
         "-o",
         dest="out_dir",
         default="snp_out",
@@ -75,13 +82,6 @@ def main():
         default="0",
         type="str",
         help="Ensemble prediction shifts [Default: %default]",
-    )
-    parser.add_option(
-        "--stitch",
-        dest="stitch",
-        default=False,
-        action="store_true",
-        help=" [Default: %default]",
     )
     parser.add_option(
         "--stats",
