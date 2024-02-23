@@ -131,9 +131,10 @@ def main():
         gcs_output_dir = options.out_dir
         temp_dir = tempfile.mkdtemp()  # create a temp dir for output
         out_dir = temp_dir + "/output_dir"
-        if not os.path.isdir(out_dir):
-            os.mkdir(out_dir)
-        options.out_dir = out_dir
+        options.out_dir = options.out_dir
+
+    if not os.path.isdir(options.out_dir):
+        os.mkdir(options.out_dir)
 
     if len(args) == 3:
         # single worker
