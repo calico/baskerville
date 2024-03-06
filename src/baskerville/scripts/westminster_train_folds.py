@@ -142,12 +142,6 @@ def main():
         help="Run a subset of folds [Default:%default]",
     )
     rep_options.add_option(
-        "--name",
-        dest="name",
-        default="fold",
-        help="SLURM name prefix [Default: %default]",
-    )
-    rep_options.add_option(
         "-p",
         dest="processes",
         default=None,
@@ -246,11 +240,8 @@ def main():
                 for di in range(num_data):
                     rep_data_dirs.append("%s/data%d" % (rep_dir, di))
 
-                # if options.checkpoint:
-                #   os.rename('%s/train.out' % rep_dir, '%s/train1.out' % rep_dir)
-
                 # train command
-                cmd += "python3 -m hound_train"
+                cmd = "python3 -m baskerville.scripts.hound_train"
                 cmd += " %s" % options_string(options, train_options, rep_dir)
                 cmd += " %s %s" % (params_file, " ".join(rep_data_dirs))
                 train_jobs.append(cmd)
@@ -263,7 +254,7 @@ def main():
     #######################################################
     # evaluate training set
 
-    jobs = []
+    eval_jobs = []
 
     if not options.eval_train_off:
         for ci in range(options.crosses):
@@ -284,10 +275,7 @@ def main():
                         print("%s already generated." % acc_file)
                     else:
                         # hound evaluate
-                        cmd = ". /home/drk/anaconda3/etc/profile.d/conda.sh;"
-                        cmd += " conda activate %s;" % options.conda_env
-                        cmd += " echo $HOSTNAME;"
-                        cmd += " hound_eval.py"
+                        cmd = "python3 -m baskerville.scripts.hound_eval"
                         cmd += " --head %d" % di
                         cmd += " -o %s" % out_dir
                         if options.rc:
@@ -298,20 +286,7 @@ def main():
                         cmd += " %s" % params_file
                         cmd += " %s" % model_file
                         cmd += " %s/data%d" % (it_dir, di)
-
-                        name = "%s-evaltr-f%dc%d" % (options.name, fi, ci)
-                        job = slurm.Job(
-                            cmd,
-                            name=name,
-                            out_file="%s.out" % out_dir,
-                            err_file="%s.err" % out_dir,
-                            queue=options.queue,
-                            cpu=num_cpu,
-                            gpu=num_gpu,
-                            mem=30000,
-                            time="%d:00:00" % (3 * time_base),
-                        )
-                        jobs.append(job)
+                        eval_jobs.append(cmd)
 
     #######################################################
     # evaluate test set
@@ -334,10 +309,7 @@ def main():
                     if os.path.isfile(acc_file):
                         print("%s already generated." % acc_file)
                     else:
-                        cmd = ". /home/drk/anaconda3/etc/profile.d/conda.sh;"
-                        cmd += " conda activate %s;" % options.conda_env
-                        cmd += " echo $HOSTNAME;"
-                        cmd += " hound_eval.py"
+                        cmd = "python3 -m baskerville.scripts.hound_eval"
                         cmd += " --head %d" % di
                         cmd += " -o %s" % out_dir
                         if options.rc:
@@ -350,20 +322,7 @@ def main():
                         cmd += " %s" % params_file
                         cmd += " %s" % model_file
                         cmd += " %s/data%d" % (it_dir, di)
-
-                        name = "%s-eval-f%dc%d" % (options.name, fi, ci)
-                        job = slurm.Job(
-                            cmd,
-                            name=name,
-                            out_file="%s.out" % out_dir,
-                            err_file="%s.err" % out_dir,
-                            queue=options.queue,
-                            cpu=num_cpu,
-                            gpu=num_gpu,
-                            mem=30000,
-                            time="%d:00:00" % time_base,
-                        )
-                        jobs.append(job)
+                        eval_jobs.append(cmd)
 
     #######################################################
     # evaluate test specificity
@@ -386,10 +345,7 @@ def main():
                     if os.path.isfile(acc_file):
                         print("%s already generated." % acc_file)
                     else:
-                        cmd = ". /home/drk/anaconda3/etc/profile.d/conda.sh;"
-                        cmd += " conda activate %s;" % options.conda_env
-                        cmd += " echo $HOSTNAME;"
-                        cmd += " hound_eval_spec.py"
+                        cmd = "python3 -m baskerville.scripts.hound_eval_spec"
                         cmd += " --head %d" % di
                         cmd += " -o %s" % out_dir
                         cmd += " --step %d" % options.step
@@ -400,24 +356,11 @@ def main():
                         cmd += " %s" % params_file
                         cmd += " %s" % model_file
                         cmd += " %s/data%d" % (it_dir, di)
+                        eval_jobs.append(cmd)
 
-                        name = "%s-spec-f%dc%d" % (options.name, fi, ci)
-                        job = slurm.Job(
-                            cmd,
-                            name=name,
-                            out_file="%s.out" % out_dir,
-                            err_file="%s.err" % out_dir,
-                            queue=options.queue,
-                            cpu=num_cpu,
-                            gpu=num_gpu,
-                            mem=150000,
-                            time="%d:00:00" % (5 * time_base),
-                        )
-                        jobs.append(job)
-
-    slurm.multi_run(
-        jobs, max_proc=options.processes, verbose=True, launch_sleep=10, update_sleep=60
-    )
+    with open(options.out_dir + "/eval_jobs.txt", "w") as f:
+        for item in eval_jobs:
+            f.write("%s\n" % item)
 
 
 def make_rep_data(data_dir, rep_data_dir, fi, ci):
