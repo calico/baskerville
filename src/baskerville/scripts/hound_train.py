@@ -16,6 +16,7 @@
 import argparse
 import json
 import os
+import sys
 import shutil
 
 import numpy as np
@@ -57,6 +58,12 @@ def main():
         help="Output directory [Default: %(default)s]",
     )
     parser.add_argument(
+        "--outlog",
+        action="store_true",
+        default=False,
+        help="Keep a log file in out_dir/trainlog.txt [Default: %(default)s]",
+    )
+    parser.add_argument(
         "--restore",
         default=None,
         help="Restore model and continue training [Default: %(default)s]",
@@ -84,6 +91,9 @@ def main():
     )
     args = parser.parse_args()
 
+    if args.outlog:
+        orig_stdout = sys.stdout
+        sys.stdout = open("%s/trainlog.txt" % args.out_dir, "w")
     if args.keras_fit and len(args.data_dirs) > 1:
         print("Cannot use keras fit method with multi-genome training.")
         exit()
@@ -198,6 +208,8 @@ def main():
             seqnn_trainer.fit_tape(seqnn_model)
         else:
             seqnn_trainer.fit2(seqnn_model)
+    if args.outlog:
+        sys.stdout = orig_stdout
 
 
 ################################################################################
