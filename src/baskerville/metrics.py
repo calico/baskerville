@@ -30,7 +30,7 @@ for device in gpu_devices:
 ################################################################################
 def mean_squared_error_udot(y_true, y_pred, udot_weight: float = 1):
     """Mean squared error with mean-normalized specificity term.
-    
+
     Args:
         udot_weight: Weight of the mean-normalized specificity term.
     """
