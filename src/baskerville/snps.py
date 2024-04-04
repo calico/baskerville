@@ -148,7 +148,9 @@ def score_snps(params_file, model_file, vcf_file, worker_index, options):
 
     # CPU computation
     def score_write(ref_preds, alt_preds, si):
-        scores = compute_scores(ref_preds, alt_preds, options.snp_stats, strand_transform)
+        scores = compute_scores(
+            ref_preds, alt_preds, options.snp_stats, strand_transform
+        )
         for snp_stat in options.snp_stats:
             scores_out[snp_stat][si] = scores[snp_stat]
 
