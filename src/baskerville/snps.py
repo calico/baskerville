@@ -1,3 +1,4 @@
+import concurrent
 import json
 import pdb
 import sys
@@ -145,96 +146,97 @@ def score_snps(params_file, model_file, vcf_file, worker_index, options):
         num_shifts,
     )
 
+    # CPU computation
+    def score_write(ref_preds, alt_preds, si):
+        scores = compute_scores(ref_preds, alt_preds, options.snp_stats, strand_transform)
+        for snp_stat in options.snp_stats:
+            scores_out[snp_stat][si] = scores[snp_stat]
+
+    if options.untransform_old:
+        untransform = dataset.untransform_preds1
+    else:
+        untransform = dataset.untransform_preds
+
     # SNP index
     si = 0
 
-    for sc in tqdm(snp_clusters):
-        snp_1hot_list = sc.get_1hots(genome_open)
-        ref_1hot = np.expand_dims(snp_1hot_list[0], axis=0)
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        for sc in tqdm(snp_clusters):
+            snp_1hot_list = sc.get_1hots(genome_open)
+            ref_1hot = np.expand_dims(snp_1hot_list[0], axis=0)
 
-        # predict reference
-        ref_preds = []
-        for shift in options.shifts:
-            ref_1hot_shift = dna.hot1_augment(ref_1hot, shift=shift)
-            ref_preds_shift = seqnn_model(ref_1hot_shift)[0]
-
-            # untransform predictions
-            if options.targets_file is not None:
-                if options.untransform_old:
-                    ref_preds_shift = dataset.untransform_preds1(
-                        ref_preds_shift, targets_df
-                    )
-                else:
-                    ref_preds_shift = dataset.untransform_preds(
-                        ref_preds_shift, targets_df
-                    )
-
-            # save shift prediction
-            ref_preds.append(ref_preds_shift)
-        ref_preds = np.array(ref_preds)
-
-        ai = 0
-        for alt_1hot in snp_1hot_list[1:]:
-            alt_1hot = np.expand_dims(alt_1hot, axis=0)
-
-            # add compensation shifts for indels
-            indel_size = sc.snps[ai].indel_size()
-            if indel_size == 0:
-                alt_shifts = options.shifts
-            else:
-                # repeat reference predictions, unless stitching
-                if not options.indel_stitch:
-                    ref_preds = np.repeat(ref_preds, 2, axis=0)
-
-                # add compensation shifts
-                alt_shifts = []
-                for shift in options.shifts:
-                    alt_shifts.append(shift)
-                    alt_shifts.append(shift - indel_size)
-
-            # predict alternate
-            alt_preds = []
-            for shift in alt_shifts:
-                alt_1hot_shift = dna.hot1_augment(alt_1hot, shift=shift)
-                alt_preds_shift = seqnn_model(alt_1hot_shift)[0]
+            # predict reference
+            ref_preds = []
+            for shift in options.shifts:
+                ref_1hot_shift = dna.hot1_augment(ref_1hot, shift=shift)
+                ref_preds_shift = seqnn_model(ref_1hot_shift)[0]
 
                 # untransform predictions
-                if options.targets_file is not None:
-                    if options.untransform_old:
-                        alt_preds_shift = dataset.untransform_preds1(
-                            alt_preds_shift, targets_df
-                        )
+                if options.targets_file is None:
+                    ref_preds.append(ref_preds_shift)
+                else:
+                    rpsf = executor.submit(untransform, ref_preds_shift, targets_df)
+                    ref_preds.append(rpsf)
+
+            ai = 0
+            for alt_1hot in snp_1hot_list[1:]:
+                alt_1hot = np.expand_dims(alt_1hot, axis=0)
+
+                # add compensation shifts for indels
+                indel_size = sc.snps[ai].indel_size()
+                if indel_size == 0:
+                    alt_shifts = options.shifts
+                else:
+                    # repeat reference predictions, unless stitching
+                    if not options.indel_stitch:
+                        ref_preds = np.repeat(ref_preds, 2, axis=0)
+
+                    # add compensation shifts
+                    alt_shifts = []
+                    for shift in options.shifts:
+                        alt_shifts.append(shift)
+                        alt_shifts.append(shift - indel_size)
+
+                # predict alternate
+                alt_preds = []
+                for shift in alt_shifts:
+                    alt_1hot_shift = dna.hot1_augment(alt_1hot, shift=shift)
+                    alt_preds_shift = seqnn_model(alt_1hot_shift)[0]
+
+                    # untransform predictions
+                    if options.targets_file is None:
+                        alt_preds.append(alt_preds_shift)
                     else:
-                        alt_preds_shift = dataset.untransform_preds(
-                            alt_preds_shift, targets_df
-                        )
+                        apsf = executor.submit(untransform, alt_preds_shift, targets_df)
+                        alt_preds.append(apsf)
 
-                # save shift prediction
-                alt_preds.append(alt_preds_shift)
+                # result
+                if options.targets_file is not None:
+                    # get result, only if not already gotten
+                    if isinstance(ref_preds[0], concurrent.futures.Future):
+                        ref_preds = [rpsf.result() for rpsf in ref_preds]
+                    alt_preds = [apsf.result() for apsf in alt_preds]
 
-            # stitch indel compensation shifts
-            if indel_size != 0 and options.indel_stitch:
-                alt_preds = stitch_preds(alt_preds, options.shifts)
+                # stitch indel compensation shifts
+                if indel_size != 0 and options.indel_stitch:
+                    alt_preds = stitch_preds(alt_preds, options.shifts)
 
-            # flip reference and alternate
-            if snps[si].flipped:
-                rp_snp = np.array(alt_preds)
-                ap_snp = np.array(ref_preds)
-            else:
-                rp_snp = np.array(ref_preds)
-                ap_snp = np.array(alt_preds)
+                # flip reference and alternate
+                if snps[si].flipped:
+                    rp_snp = np.array(alt_preds)
+                    ap_snp = np.array(ref_preds)
+                else:
+                    rp_snp = np.array(ref_preds)
+                    ap_snp = np.array(alt_preds)
 
-            # write SNP
-            if sum_length:
-                write_snp(rp_snp, ap_snp, scores_out, si, options.snp_stats)
-            else:
-                # write_snp_len(rp_snp, ap_snp, scores_out, si, options.snp_stats)
-                scores = compute_scores(rp_snp, ap_snp, options.snp_stats, strand_transform)
-                for snp_stat in options.snp_stats:
-                    scores_out[snp_stat][si] = scores[snp_stat]
+                # write SNP
+                if sum_length:
+                    write_snp(rp_snp, ap_snp, scores_out, si, options.snp_stats)
+                else:
+                    executor.submit(score_write, rp_snp, ap_snp, si)
 
-            # update SNP index
-            si += 1
+                # update SNP index
+                si += 1
 
     # close genome
     genome_open.close()
