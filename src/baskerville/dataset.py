@@ -319,7 +319,7 @@ def make_strand_transform(targets_df, targets_strand_df):
         targets_strand_df (pd.DataFrame): Targets DataFrame, with strand pairs collapsed.
 
     Returns:
-        scipy.sparse.csr_matrix: Sparse matrix to sum strand pairs.
+        scipy.sparse.dok_matrix: Sparse matrix to sum strand pairs.
     """
 
     # initialize sparse matrix
@@ -336,7 +336,6 @@ def make_strand_transform(targets_df, targets_strand_df):
             if target.identifier[-1] == "-":
                 sti += 1
         ti += 1
-    strand_transform = strand_transform.tocsr()
 
     return strand_transform
 
