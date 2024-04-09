@@ -17,6 +17,7 @@ precision_dict = {
     "INT8": tf_trt.TrtPrecisionMode.INT8,
 }
 
+
 class ModelOptimizer:
     """
     Class of converter for tensorrt
@@ -38,7 +39,7 @@ class ModelOptimizer:
 
     def convert(self, precision="FP32"):
         t0 = time.time()
-        print('Converting the model.')
+        print("Converting the model.")
 
         if precision == "INT8" and self.calibration_data is None:
             raise (Exception("No calibration data set!"))
@@ -55,30 +56,34 @@ class ModelOptimizer:
         )
 
         if precision == "INT8":
-            self.func = self.converter.convert(calibration_input_fn=self.calibration_data)
+            self.func = self.converter.convert(
+                calibration_input_fn=self.calibration_data
+            )
         else:
             self.func = self.converter.convert()
-        print('Done in %ds' % (time.time()-t0))
+        print("Done in %ds" % (time.time() - t0))
 
     def build(self, seq_length):
         input_shape = (1, seq_length, 4)
         t0 = time.time()
-        print('Building TRT engines for shape:', input_shape)
+        print("Building TRT engines for shape:", input_shape)
+
         def input_fn():
             x = np.random.random(input_shape).astype(np.float32)
             x = tf.cast(x, tf.float32)
             yield x
+
         self.converter.build(input_fn)
-        print('Done in %ds' % (time.time()-t0))
+        print("Done in %ds" % (time.time() - t0))
 
     def build_func(self, seq_length):
         input_shape = (1, seq_length, 4)
         t0 = time.time()
-        print('Building TRT engines for shape:', input_shape)
+        print("Building TRT engines for shape:", input_shape)
         x = np.random.random(input_shape)
         x = tf.cast(x, tf.float32)
         self.func(x)
-        print('Done in %ds' % (time.time()-t0))
+        print("Done in %ds" % (time.time() - t0))
 
     def save(self, output_dir):
         self.converter.save(output_saved_model_dir=output_dir)
@@ -89,10 +94,7 @@ def main():
         description="Convert a seqnn model to TensorRT model."
     )
     parser.add_argument(
-        "-t",
-        "--targets_file",
-        default=None,
-        help="Path to the target variants file"
+        "-t", "--targets_file", default=None, help="Path to the target variants file"
     )
     parser.add_argument(
         "-o",
@@ -100,7 +102,9 @@ def main():
         default="trt_out",
         help="Output directory for storing saved models (original & converted)",
     )
-    parser.add_argument("params_file", type=str, help="Path to the JSON parameters file")
+    parser.add_argument(
+        "params_file", type=str, help="Path to the JSON parameters file"
+    )
     parser.add_argument("model_file", help="Trained model HDF5.")
     args = parser.parse_args()
 

@@ -1,6 +1,7 @@
 import tensorflow as tf
 from tensorflow.python.saved_model import tag_constants
 
+
 class OptimizedModel:
     """
     Class of model optimized with tensorrt
