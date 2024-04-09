@@ -156,6 +156,7 @@ def main():
     else:
         targets_strand_df = targets_df
         strand_transform = None
+
     num_targets = targets_strand_df.shape[0]
 
     #################################################################
@@ -249,7 +250,7 @@ def main():
                     alt_preds = np.array(alt_preds)
 
                     ism_scores = snps.compute_scores(
-                        ref_preds, alt_preds, options.snp_stats
+                        ref_preds, alt_preds, options.snp_stats, strand_transform
                     )
                     for snp_stat in options.snp_stats:
                         scores_h5[snp_stat][si, mi - mut_start, ni] = ism_scores[
