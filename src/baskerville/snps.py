@@ -6,12 +6,14 @@ import sys
 import h5py
 import numpy as np
 import pandas as pd
+import pybedtools
 import pysam
 from scipy.special import rel_entr
 from tqdm import tqdm
 
 from baskerville import dna
 from baskerville import dataset
+from baskerville.gene import Transcriptome
 from baskerville import seqnn
 from baskerville import vcf as bvcf
 from baskerville.helpers.trt_optimized_model import OptimizedModel
@@ -64,7 +66,6 @@ def score_snps(params_file, model_file, vcf_file, worker_index, options):
     #################################################################
     # setup model
 
-    # can we sum on GPU?
     seqnn_model = seqnn.SeqNN(params_model)
 
     # load model
@@ -83,7 +84,7 @@ def score_snps(params_file, model_file, vcf_file, worker_index, options):
     # make dummy predictions to warm up model
     dummy_input_shape = (1,) + input_shape[1:]
     dummy_input = np.random.random(dummy_input_shape).astype(np.float32)
-    dummy_output = seqnn_model(dummy_input)
+    seqnn_model(dummy_input)
 
     # shift outside seqnn
     num_shifts = len(options.shifts)
@@ -180,8 +181,7 @@ def score_snps(params_file, model_file, vcf_file, worker_index, options):
                     rpsf = executor.submit(untransform, ref_preds_shift, targets_df)
                     ref_preds.append(rpsf)
 
-            ai = 0
-            for alt_1hot in snp_1hot_list[1:]:
+            for ai, alt_1hot in enumerate(snp_1hot_list[1:]):
                 alt_1hot = np.expand_dims(alt_1hot, axis=0)
 
                 # add compensation shifts for indels
@@ -248,6 +248,283 @@ def score_snps(params_file, model_file, vcf_file, worker_index, options):
     scores_out.close()
 
 
+def score_gene_snps(params_file, model_file, vcf_file, worker_index, options):
+    """
+    Score SNPs in a VCF file with a SeqNN model.
+
+    :param params_file: Model parameters
+    :param model_file: Saved model weights
+    :param vcf_file: VCF
+    :param worker_index
+    :param options: options from cmd args
+    :return:
+    """
+
+    #################################################################
+    # read parameters and targets
+
+    # read model parameters
+    with open(params_file) as params_open:
+        params = json.load(params_open)
+    params_model = params["model"]
+
+    # read targets
+    if options.targets_file is None:
+        print("Must provide targets file to clarify stranded datasets", file=sys.stderr)
+        exit(1)
+    targets_df = pd.read_csv(options.targets_file, sep="\t", index_col=0)
+
+    # handle strand pairs
+    if "strand_pair" in targets_df.columns:
+        # prep strand
+        targets_strand_df = dataset.targets_prep_strand(targets_df)
+
+        # set strand pairs (using new indexing)
+        orig_new_index = dict(zip(targets_df.index, np.arange(targets_df.shape[0])))
+        targets_strand_pair = np.array(
+            [orig_new_index[ti] for ti in targets_df.strand_pair]
+        )
+        params_model["strand_pair"] = [targets_strand_pair]
+    else:
+        targets_strand_df = targets_df
+
+    # construct strand sum transform
+    plus_mask = targets_df.strand != "-"
+    minus_mask = targets_df.strand != "+"
+
+    #################################################################
+    # setup model
+
+    seqnn_model = seqnn.SeqNN(params_model)
+
+    # load model
+    if options.tensorrt:
+        seqnn_model.model = OptimizedModel(model_file, seqnn_model.strand_pair)
+        input_shape = tuple(seqnn_model.model.loaded_model_fn.inputs[0].shape.as_list())
+    else:
+        seqnn_model.restore(model_file)
+        seqnn_model.build_slice(targets_df.index)
+        seqnn_model.build_ensemble(options.rc)
+        input_shape = seqnn_model.model.input_shape
+
+    # make dummy predictions to warm up model
+    dummy_input_shape = (1,) + input_shape[1:]
+    dummy_input = np.random.random(dummy_input_shape).astype(np.float32)
+    seqnn_model(dummy_input)
+
+    # shift outside seqnn
+    num_shifts = len(options.shifts)
+    targets_length = seqnn_model.target_lengths[0]
+    model_stride = seqnn_model.model_strides[0]
+    model_crop = seqnn_model.target_crops[0] * model_stride
+
+    #################################################################
+    # load SNPs
+
+    # filter for worker SNPs
+    if options.processes is None:
+        start_i = None
+        end_i = None
+    else:
+        # determine boundaries
+        num_snps = bvcf.vcf_count(vcf_file)
+        worker_bounds = np.linspace(0, num_snps, options.processes + 1, dtype="int")
+        start_i = worker_bounds[worker_index]
+        end_i = worker_bounds[worker_index + 1]
+
+    # read SNPs
+    snps = bvcf.vcf_snps(
+        vcf_file,
+        require_sorted=True,
+        flip_ref=False,
+        validate_ref_fasta=options.genome_fasta,
+        start_i=start_i,
+        end_i=end_i,
+    )
+
+    # read genes
+    transcriptome = Transcriptome(options.genes_gtf)
+
+    # cluster genes
+    genesnp_clusters = cluster_genes(
+        transcriptome, params_model["seq_length"], options.cluster_pct
+    )
+
+    # delimit sequence boundaries
+    [gsc.delimit(params_model["seq_length"], model_crop) for gsc in genesnp_clusters]
+
+    # assign SNPs to genes
+    map_snps_genes(snps, genesnp_clusters)
+
+    # remove genes w/o SNPs
+    genesnp_clusters = [gsc for gsc in genesnp_clusters if len(gsc.snps) > 0]
+
+    # open genome FASTA
+    genome_open = pysam.Fastafile(options.genome_fasta)
+
+    #################################################################
+    # predict SNP scores, write output
+
+    # setup output
+    scores_out = initialize_output_h5(
+        options.out_dir,
+        options.snp_stats,
+        snps,
+        targets_length,
+        targets_strand_df,
+        num_shifts,
+        genesnp_clusters,
+    )
+
+    # CPU computation
+    def score_write(ref_preds, alt_preds, gene_id, snp_id):
+        scores = compute_scores(ref_preds, alt_preds, options.snp_stats)
+        for snp_stat in options.snp_stats:
+            stat_out = scores_out.require_group(snp_stat)
+            snp_out = stat_out.require_group(snp_id)
+            snp_out.create_dataset(gene_id, data=scores[snp_stat], dtype="float16")
+
+    if options.untransform_old:
+        untransform = dataset.untransform_preds1
+    else:
+        untransform = dataset.untransform_preds
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        for gsc in tqdm(genesnp_clusters):
+            snp_1hot_list = gsc.get_1hots(genome_open)
+            ref_1hot = np.expand_dims(snp_1hot_list[0], axis=0)
+
+            # predict reference
+            ref_preds = []
+            for shift in options.shifts:
+                ref_1hot_shift = dna.hot1_augment(ref_1hot, shift=shift)
+                ref_preds_shift = seqnn_model(ref_1hot_shift)[0]
+
+                # untransform predictions
+                if options.targets_file is None:
+                    ref_preds.append(ref_preds_shift)
+                else:
+                    rpsf = executor.submit(untransform, ref_preds_shift, targets_df)
+                    ref_preds.append(rpsf)
+
+            for ai, alt_1hot in enumerate(snp_1hot_list[1:]):
+                alt_1hot = np.expand_dims(alt_1hot, axis=0)
+
+                # add compensation shifts for indels
+                indel_size = gsc.snps[ai].indel_size()
+                if indel_size == 0:
+                    alt_shifts = options.shifts
+                else:
+                    # repeat reference predictions, unless stitching
+                    if not options.indel_stitch:
+                        ref_preds = np.repeat(ref_preds, 2, axis=0)
+
+                    # add compensation shifts
+                    alt_shifts = []
+                    for shift in options.shifts:
+                        alt_shifts.append(shift)
+                        alt_shifts.append(shift - indel_size)
+
+                # predict alternate
+                alt_preds = []
+                for shift in alt_shifts:
+                    alt_1hot_shift = dna.hot1_augment(alt_1hot, shift=shift)
+                    alt_preds_shift = seqnn_model(alt_1hot_shift)[0]
+
+                    # untransform predictions
+                    if options.targets_file is None:
+                        alt_preds.append(alt_preds_shift)
+                    else:
+                        apsf = executor.submit(untransform, alt_preds_shift, targets_df)
+                        alt_preds.append(apsf)
+
+                # result
+                if options.targets_file is not None:
+                    # get result, only if not already gotten
+                    if isinstance(ref_preds[0], concurrent.futures.Future):
+                        ref_preds = [rpsf.result() for rpsf in ref_preds]
+                    alt_preds = [apsf.result() for apsf in alt_preds]
+
+                # flip reference and alternate
+                if gsc.snps[ai].flipped:
+                    rp_snp = np.array(alt_preds)
+                    ap_snp = np.array(ref_preds)
+                else:
+                    rp_snp = np.array(ref_preds)
+                    ap_snp = np.array(alt_preds)
+
+                for gene in gsc.genes:
+                    # slice gene positions
+                    gene_slice = gene.output_slice(
+                        gsc.pstart, gsc.pend - gsc.pstart, model_stride
+                    )
+                    if len(gene_slice) == 0:
+                        print(
+                            f"WARNING: {gene.kv['gene_id']} exons fall outside prediction boundaries."
+                        )
+                    else:
+                        rp_gene = rp_snp[:, gene_slice]
+                        ap_gene = ap_snp[:, gene_slice]
+
+                        # slice gene strand
+                        if gene.strand == "+":
+                            rp_gene = rp_gene[..., plus_mask]
+                            ap_gene = ap_gene[..., plus_mask]
+                        else:
+                            rp_gene = rp_gene[..., minus_mask]
+                            ap_gene = ap_gene[..., minus_mask]
+
+                        # write SNP
+                        executor.submit(
+                            score_write,
+                            rp_gene,
+                            ap_gene,
+                            gene.kv["gene_id"],
+                            gsc.snps[ai].rsid,
+                        )
+
+    # close open files
+    genome_open.close()
+    scores_out.close()
+
+
+def cluster_genes(transcriptome, seq_length: int, center_pct: float):
+    """Cluster genes into regions that will satisfy the required center_pct.
+
+    Args:
+        transcriptome (Transcriptome): Transcriptome object.
+        seq_length (int): Sequence length.
+        center_pct (float): Percent of sequence length to cluster genes.
+    """
+    valid_gene_distance = int(seq_length * center_pct)
+
+    gene_clusters = []
+
+    # re-sort genes by midpoint
+    chromosomes = set([gene.chrom for gene in transcriptome.genes.values()])
+    for chrom in chromosomes:
+        gene_pos = []
+        gene_objs = []
+        for gene in transcriptome.genes.values():
+            if gene.chrom == chrom:
+                gene_pos.append(gene.midpoint())
+                gene_objs.append(gene)
+
+        cluster_pos0 = -valid_gene_distance
+        for gi in np.argsort(gene_pos):
+            gene = gene_objs[gi]
+            if gene_pos[gi] < cluster_pos0 + valid_gene_distance:
+                # append to latest cluster
+                gene_clusters[-1].add_gene(gene)
+            else:
+                # initialize new cluster
+                gene_clusters.append(GeneSNPCluster())
+                gene_clusters[-1].add_gene(gene)
+                cluster_pos0 = gene_pos[gi]
+
+    return gene_clusters
+
+
 def cluster_snps(snps, seq_len: int, center_pct: float):
     """Cluster a sorted list of SNPs into regions that will satisfy
        the required center_pct.
@@ -276,7 +553,7 @@ def cluster_snps(snps, seq_len: int, center_pct: float):
     return snp_clusters
 
 
-def compute_scores(ref_preds, alt_preds, snp_stats, strand_transform):
+def compute_scores(ref_preds, alt_preds, snp_stats, strand_transform=None):
     """Compute SNP scores from reference and alternative predictions.
 
     Args:
@@ -417,7 +694,13 @@ def compute_scores(ref_preds, alt_preds, snp_stats, strand_transform):
 
 
 def initialize_output_h5(
-    out_dir, snp_stats, snps, targets_length, targets_df, num_shifts
+    out_dir,
+    snp_stats,
+    snps,
+    targets_length,
+    targets_df,
+    num_shifts,
+    geneseq_clusters=None,
 ):
     """Initialize an output HDF5 file for SAD stats.
 
@@ -428,6 +711,7 @@ def initialize_output_h5(
         targets_length (int): Targets' sequence length
         targets_df (pd.DataFrame): Targets DataFrame.
         num_shifts (int): Number of shifts.
+        geneseq_clusters [GeneSNPCluster]: Gene sequence clusters.
     """
 
     num_targets = targets_df.shape[0]
@@ -468,18 +752,26 @@ def initialize_output_h5(
         "target_labels", data=np.array(targets_df.description, "S")
     )
 
-    # initialize SAD stats
-    for snp_stat in snp_stats:
-        if snp_stat in ["REF", "ALT"]:
-            scores_out.create_dataset(
-                snp_stat,
-                shape=(num_snps, num_shifts, targets_length, num_targets),
-                dtype="float16",
-            )
-        else:
-            scores_out.create_dataset(
-                snp_stat, shape=(num_snps, num_targets), dtype="float16"
-            )
+    if geneseq_clusters is not None:
+        # write genes
+        gene_ids = []
+        for gsc in geneseq_clusters:
+            gene_ids.extend([gene.kv["gene_id"] for gene in gsc.genes])
+        gene_ids = np.array(gene_ids, "S")
+        scores_out.create_dataset("gene", data=gene_ids)
+    else:
+        # initialize stats
+        for snp_stat in snp_stats:
+            if snp_stat in ["REF", "ALT"]:
+                scores_out.create_dataset(
+                    snp_stat,
+                    shape=(num_snps, num_shifts, targets_length, num_targets),
+                    dtype="float16",
+                )
+            else:
+                scores_out.create_dataset(
+                    snp_stat, shape=(num_snps, num_targets), dtype="float16"
+                )
 
     return scores_out
 
@@ -530,6 +822,36 @@ def make_alt_1hot(ref_1hot, snp_seq_pos, ref_allele, alt_allele):
             )
 
     return alt_1hot
+
+
+def make_gene_bedt(genesnp_clusters):
+    """Make a BedTool object for all gene sequences."""
+    gene_bed_lines = []
+    for gi, gsc in enumerate(genesnp_clusters):
+        geneseq_start = max(0, gsc.start)
+        gene_bed_lines.append("%s %d %d %d" % (gsc.chr, geneseq_start, gsc.end, gi))
+    gene_bedt = pybedtools.BedTool("\n".join(gene_bed_lines), from_string=True)
+    return gene_bedt
+
+
+def make_snp_bedt(snps):
+    """Make a BedTool object for all SNPs"""
+    snp_bed_lines = []
+    for si, snp in enumerate(snps):
+        snp_bed_lines.append("%s %d %d %d" % (snp.chr, snp.pos - 1, snp.pos, si))
+    snp_bedt = pybedtools.BedTool("\n".join(snp_bed_lines), from_string=True)
+    return snp_bedt
+
+
+def map_snps_genes(snps, genesnp_clusters):
+    """Map SNPs to gene sequences."""
+    geneseq_bedt = make_gene_bedt(genesnp_clusters)
+    snp_bedt = make_snp_bedt(snps)
+
+    for overlap in geneseq_bedt.intersect(snp_bedt, wa=True, wb=True):
+        gchr, gstart, gend, gi, schr, spos, send, si = overlap
+        gi, si = int(gi), int(si)
+        genesnp_clusters[gi].add_snp(snps[si])
 
 
 def stitch_preds(preds, shifts):
@@ -619,8 +941,8 @@ class SNPCluster:
         self.start = pos_mid - seq_len // 2
         self.end = self.start + seq_len
 
-        for snp in self.snps:
-            snp.seq_pos = snp.pos - 1 - self.start
+        # for snp in self.snps:
+        #     snp.seq_pos = snp.pos - 1 - self.start
 
     def get_1hots(self, genome_open):
         """Get list of one hot coded sequences."""
@@ -641,8 +963,10 @@ class SNPCluster:
         # verify reference alleles
         for snp in self.snps:
             ref_n = len(snp.ref_allele)
-            ref_snp = ref_seq[snp.seq_pos : snp.seq_pos + ref_n]
+            snp_pos = snp.pos - 1 - self.start
+            ref_snp = ref_seq[snp_pos : snp_pos + ref_n]
             if snp.ref_allele != ref_snp:
+                pdb.set_trace()
                 print(
                     "ERROR: %s does not match reference %s" % (snp, ref_snp),
                     file=sys.stderr,
@@ -656,9 +980,29 @@ class SNPCluster:
         # make alternative 1 hot coded sequences
         # (assuming SNP is 1-based indexed)
         for snp in self.snps:
+            snp_pos = snp.pos - 1 - self.start
             alt_1hot = make_alt_1hot(
-                ref_1hot, snp.seq_pos, snp.ref_allele, snp.alt_alleles[0]
+                ref_1hot, snp_pos, snp.ref_allele, snp.alt_alleles[0]
             )
             seqs1_list.append(alt_1hot)
 
         return seqs1_list
+
+
+class GeneSNPCluster(SNPCluster):
+    def __init__(self):
+        super().__init__()
+        self.genes = []
+
+    def add_gene(self, gene):
+        """Add gene to cluster."""
+        self.genes.append(gene)
+
+    def delimit(self, seq_len, crop=0):
+        """Delimit sequence boundaries."""
+        self.chr = self.genes[0].chrom
+        midp = int(np.mean([g.midpoint() for g in self.genes]))
+        self.start = midp - seq_len // 2
+        self.end = self.start + seq_len
+        self.pstart = self.start + crop
+        self.pend = self.end - crop

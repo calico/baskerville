@@ -13,6 +13,7 @@
 # limitations under the License.
 # =========================================================================
 
+import gzip
 from intervaltree import IntervalTree
 import numpy as np
 import pybedtools
@@ -77,8 +78,18 @@ class Gene:
         exon_ends = [exon.end for exon in self.exons]
         return min(exon_starts), max(exon_ends)
 
-    def output_slice(self, seq_start, seq_len, model_stride, span=False):
+    def output_slice(
+        self, seq_start, seq_len, model_stride, span=False, majority_overlap=False
+    ):
         gene_slice = []
+
+        def clip_boundaries(slice_start, slice_end):
+            slice_max = int(seq_len / model_stride)
+            slice_start = min(slice_start, slice_max)
+            slice_end = min(slice_end, slice_max)
+            slice_start = max(slice_start, 0)
+            slice_end = max(slice_end, 0)
+            return slice_start, slice_end
 
         if span:
             gene_start, gene_end = self.span()
@@ -91,12 +102,12 @@ class Gene:
             slice_start = int(np.round(gene_seq_start / model_stride))
             slice_end = int(np.round(gene_seq_end / model_stride))
 
-            # clip right boundaries
-            slice_max = int(seq_len / model_stride)
-            slice_start = min(slice_start, slice_max)
-            slice_end = min(slice_end, slice_max)
+            # clip boundaries
+            slice_start, slice_end = clip_boundaries(slice_start, slice_end)
 
-            gene_slice = range(slice_start, slice_end)
+            # add to gene slice
+            if slice_start < slice_end:
+                gene_slice = range(slice_start, slice_end)
 
         else:
             for exon in self.get_exons():
@@ -104,18 +115,26 @@ class Gene:
                 exon_seq_start = max(0, exon.begin - seq_start)
                 exon_seq_end = max(0, exon.end - seq_start)
 
-                # requires >50% overlap
-                slice_start = int(np.round(exon_seq_start / model_stride))
-                slice_end = int(np.round(exon_seq_end / model_stride))
+                if majority_overlap:
+                    # requires >50% overlap
+                    slice_start = int(np.round(exon_seq_start / model_stride))
+                    slice_end = int(np.round(exon_seq_end / model_stride))
+                else:
+                    # any overlap
+                    slice_start = int(np.floor(exon_seq_start / model_stride))
+                    slice_end = int(np.ceil(exon_seq_end / model_stride))
 
-                # clip right boundaries
-                slice_max = int(seq_len / model_stride)
-                slice_start = min(slice_start, slice_max)
-                slice_end = min(slice_end, slice_max)
+                # clip boundaries
+                slice_start, slice_end = clip_boundaries(slice_start, slice_end)
 
-                gene_slice.extend(range(slice_start, slice_end))
+                # add to gene slice
+                if slice_start < slice_end:
+                    gene_slice.extend(range(slice_start, slice_end))
 
-        return np.array(gene_slice)
+        # collapse overlaps
+        gene_slice = np.unique(gene_slice)
+
+        return gene_slice
 
 
 class Transcriptome:
