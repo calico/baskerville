@@ -125,7 +125,7 @@ def main():
     seqnn_model.build_ensemble(True)
 
     # save this model to a directory
-    seqnn_model.model.save(f"{args.out_dir}/original")
+    seqnn_model.ensemble.save(f"{args.out_dir}/original")
 
     # Convert the model
     opt_model = ModelOptimizer(f"{args.out_dir}/original")
