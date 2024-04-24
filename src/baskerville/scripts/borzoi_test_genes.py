@@ -27,6 +27,7 @@ import pyranges as pr
 from qnorm import quantile_normalize
 from scipy.stats import pearsonr
 from sklearn.metrics import explained_variance_score
+from tensorflow.keras import mixed_precision
 
 from baskerville import pygene
 from baskerville import dataset
@@ -76,6 +77,13 @@ def main():
         default=False,
         action="store_true",
         help="Aggregate entire gene span [Default: %default]",
+    )
+    parser.add_option(
+        "--f16",
+        dest="f16",        
+        default=False,
+        action="store_true",
+        help="use mixed precision for inference",
     )
     parser.add_option(
         "-t",
@@ -155,8 +163,19 @@ def main():
     )
 
     # initialize model
-    seqnn_model = seqnn.SeqNN(params_model)
-    seqnn_model.restore(model_file, options.head_i)
+    ###################
+    # mixed precision #
+    ###################
+    if options.f16:
+        mixed_precision.set_global_policy('mixed_float16') # first set global policy
+        seqnn_model = seqnn.SeqNN(params_model) # then create model
+        seqnn_model.restore(model_file, options.head_i)
+        seqnn_model.append_activation() # add additional activation to cast float16 output to float32
+    else:
+        # initialize model
+        seqnn_model = seqnn.SeqNN(params_model)
+        seqnn_model.restore(model_file, options.head_i)
+    
     seqnn_model.build_slice(targets_df.index)
     seqnn_model.build_ensemble(options.rc, options.shifts)
 

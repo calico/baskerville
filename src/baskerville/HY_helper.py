@@ -4,7 +4,6 @@ import pysam
 import pyBigWig
 
 
-
 def make_seq_1hot(genome_open, chrm, start, end, seq_len):
     if start < 0:
         seq_dna = 'N'*(-start) + genome_open.fetch(chrm, 0, end)
@@ -18,7 +17,7 @@ def make_seq_1hot(genome_open, chrm, start, end, seq_len):
     seq_1hot = dna_io.dna_1hot(seq_dna)
     return seq_1hot
 
-#Helper function to get (padded) one-hot
+# Helper function to get (padded) one-hot
 def process_sequence(fasta_file, chrom, start, end, seq_len=524288) :
 
     fasta_open = pysam.Fastafile(fasta_file)

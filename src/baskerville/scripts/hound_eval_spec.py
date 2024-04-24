@@ -25,6 +25,7 @@ import pandas as pd
 from qnorm import quantile_normalize
 from scipy.stats import pearsonr
 import tensorflow as tf
+from tensorflow.keras import mixed_precision
 
 from baskerville import dataset
 from baskerville import seqnn
@@ -73,6 +74,13 @@ def main():
         default=1,
         type="int",
         help="Step across positions [Default: %default]",
+    )
+    parser.add_option(
+        "--f16",
+        dest="f16",        
+        default=False,
+        action="store_true",
+        help="use mixed precision for inference",
     )
     parser.add_option(
         "--save",
@@ -190,8 +198,19 @@ def main():
     )
 
     # initialize model
-    seqnn_model = seqnn.SeqNN(params_model)
-    seqnn_model.restore(model_file, options.head_i)
+    ###################
+    # mixed precision #
+    ###################
+    if options.f16:
+        mixed_precision.set_global_policy('mixed_float16') # set global policy
+        seqnn_model = seqnn.SeqNN(params_model) # create model
+        seqnn_model.restore(model_file, options.head_i)
+        seqnn_model.append_activation() # add additional activation to cast float16 output to float32
+    else:
+        # initialize model
+        seqnn_model = seqnn.SeqNN(params_model)
+        seqnn_model.restore(model_file, options.head_i)
+
     seqnn_model.build_slice(targets_df.index)
     if options.step > 1:
         seqnn_model.step(options.step)

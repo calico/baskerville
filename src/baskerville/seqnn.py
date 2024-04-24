@@ -219,6 +219,12 @@ class SeqNN:
                 inputs=self.model.inputs, outputs=conv_layer.output
             )
 
+    def append_activation(self):
+        """add additional activation to convert float16 output to float32, required for mixed precision"""
+        model_0 = self.model
+        new_outputs = tf.keras.layers.Activation('linear', dtype='float32')(model_0.layers[-1].output)
+        self.model = tf.keras.Model(inputs=model_0.layers[0].input, outputs=new_outputs)
+    
     def build_ensemble(self, ensemble_rc: bool = False, ensemble_shifts=[0]):
         """Build ensemble of models computing on augmented input sequences."""
         shift_bool = len(ensemble_shifts) > 1 or ensemble_shifts[0] != 0
