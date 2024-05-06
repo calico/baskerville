@@ -966,7 +966,6 @@ class SNPCluster:
             snp_pos = snp.pos - 1 - self.start
             ref_snp = ref_seq[snp_pos : snp_pos + ref_n]
             if snp.ref_allele != ref_snp:
-                pdb.set_trace()
                 print(
                     "ERROR: %s does not match reference %s" % (snp, ref_snp),
                     file=sys.stderr,

@@ -56,6 +56,13 @@ def main():
         help="Genome FASTA for sequences [Default: %default]",
     )
     parser.add_option(
+        "--float16",
+        dest="float16",
+        default=False,
+        action="store_true",
+        help="Use mixed float16 precision [Default: %default]",
+    )
+    parser.add_option(
         "-o",
         dest="out_dir",
         default="snp_out",
