@@ -59,6 +59,13 @@ def main():
         help="Genome FASTA [Default: %default]",
     )
     parser.add_option(
+        "--float16",
+        dest="float16",
+        default=False,
+        action="store_true",
+        help="Use mixed float16 precision [Default: %default]",
+    )
+    parser.add_option(
         "-g",
         dest="genes_gtf",
         default="%s/genes/gencode41/gencode41_basic_nort.gtf" % os.environ["HG38"],
@@ -212,9 +219,12 @@ def main():
     # check if the program is run on GPU, else quit
     physical_devices = tf.config.list_physical_devices()
     gpu_available = any(device.device_type == "GPU" for device in physical_devices)
-
     if gpu_available:
         print("Running on GPU")
+        if options.float16:
+            print("Using mixed precision")
+            policy = tf.keras.mixed_precision.Policy("mixed_float16")
+            tf.keras.mixed_precision.set_global_policy(policy)
     else:
         print("Running on CPU")
         if options.require_gpu:
