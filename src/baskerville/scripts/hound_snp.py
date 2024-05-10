@@ -200,6 +200,9 @@ def main():
     if options.targets_file is None:
         parser.error("Must provide targets file")
 
+    if options.cluster_snps_pct > 0 and options.indel_stitch:
+        parser.error("Cannot use --cluster_snps_pct and --indel_stitch together")
+
     #################################################################
     # check if the program is run on GPU, else quit
     physical_devices = tf.config.list_physical_devices()
