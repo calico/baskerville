@@ -1152,6 +1152,7 @@ def transformer(
     kernel_initializer="he_normal",
     adapter=None,
     latent=16,
+    seqlen_train=None,
     **kwargs,
 ):
     """Construct a transformer block.
@@ -1183,6 +1184,7 @@ def transformer(
         initializer=mha_initializer,
         l2_scale=mha_l2_scale,
         qkv_width=qkv_width,
+        seqlen_train=seqlen_train
     )(current)
 
     # dropout

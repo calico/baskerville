@@ -448,6 +448,7 @@ class MultiheadAttention(tf.keras.layers.Layer):
         initializer="he_normal",
         l2_scale=0,
         qkv_width=1,
+        seqlen_train=None
     ):
         """Creates a MultiheadAttention module.
            Original version written by Ziga Avsec.
@@ -480,6 +481,7 @@ class MultiheadAttention(tf.keras.layers.Layer):
         self._gated = gated
         self._relative_position_symmetric = relative_position_symmetric
         self._relative_position_functions = relative_position_functions
+        self.seqlen_train = seqlen_train
         if num_position_features is None:
             # num_position_features needs to be divisible by the number of
             # relative positional functions *2 (for symmetric & asymmetric version).
@@ -641,13 +643,23 @@ class MultiheadAttention(tf.keras.layers.Layer):
         else:
             # Project positions to form relative keys.
             distances = tf.range(-seq_len + 1, seq_len, dtype=tf.float32)[tf.newaxis]
-            positional_encodings = positional_features(
-                positions=distances,
-                feature_size=self._num_position_features,
-                seq_length=seq_len,
-                symmetric=self._relative_position_symmetric,
-            )
-            # [1, 2T-1, Cr]
+
+            if self.seqlen_train is None:
+                positional_encodings = positional_features(
+                    positions=distances,
+                    feature_size=self._num_position_features,
+                    seq_length=seq_len,
+                    symmetric=self._relative_position_symmetric,
+                )
+                # [1, 2T-1, Cr]
+            else:
+                positional_encodings = positional_features(
+                    positions=distances,
+                    feature_size=self._num_position_features,
+                    seq_length=self.seqlen_train,
+                    symmetric=self._relative_position_symmetric,
+                )
+                # [1, 2T-1, Cr]
 
             if training:
                 positional_encodings = tf.nn.dropout(
