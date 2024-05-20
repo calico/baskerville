@@ -91,6 +91,7 @@ class Trainer:
         train_data,
         eval_data,
         out_dir: str,
+        log_dir: str,
         strategy=None,
         num_gpu: int = 1,
         keras_fit: bool = False,
@@ -103,6 +104,7 @@ class Trainer:
         if type(self.eval_data) is not list:
             self.eval_data = [self.eval_data]
         self.out_dir = out_dir
+        self.log_dir = log_dir
         self.strategy = strategy
         self.num_gpu = num_gpu
         self.batch_size = self.train_data[0].batch_size
@@ -188,7 +190,7 @@ class Trainer:
 
         callbacks = [
             early_stop,
-            tf.keras.callbacks.TensorBoard(self.out_dir),
+            tf.keras.callbacks.TensorBoard(self.log_dir, histogram_freq=1),
             tf.keras.callbacks.ModelCheckpoint("%s/model_check.h5" % self.out_dir),
             save_best,
         ]
@@ -397,6 +399,12 @@ class Trainer:
         # training loop
 
         first_step = True
+        # set up summary writer
+        train_log_dir = self.log_dir + "/train"
+        valid_log_dir = self.log_dir + "/valid"
+        train_summary_writer = tf.summary.create_file_writer(train_log_dir)
+        valid_summary_writer = tf.summary.create_file_writer(valid_log_dir)
+
         for ei in range(epoch_start, self.train_epochs_max):
             if ei >= self.train_epochs_min and np.min(unimproved) > self.patience:
                 break
@@ -429,7 +437,12 @@ class Trainer:
                 for di in range(self.num_datasets):
                     print("  Data %d" % di, end="")
                     model = seqnn_model.models[di]
-
+                    with train_summary_writer.as_default():
+                        tf.summary.scalar(
+                            "loss", train_loss[di].result().numpy(), step=ei
+                        )
+                        tf.summary.scalar("r", train_r[di].result().numpy(), step=ei)
+                        tf.summary.scalar("r2", train_r2[di].result().numpy(), step=ei)
                     # print training accuracy
                     print(
                         " - train_loss: %.4f" % train_loss[di].result().numpy(), end=""
@@ -449,6 +462,13 @@ class Trainer:
                                 eval_step0_distr(x, y)
                             else:
                                 eval_step1_distr(x, y)
+
+                    with valid_summary_writer.as_default():
+                        tf.summary.scalar(
+                            "loss", valid_loss[di].result().numpy(), step=ei
+                        )
+                        tf.summary.scalar("r", valid_r[di].result().numpy(), step=ei)
+                        tf.summary.scalar("r2", valid_r2[di].result().numpy(), step=ei)
 
                     # print validation accuracy
                     print(
@@ -587,6 +607,12 @@ class Trainer:
         valid_best = -np.inf
         unimproved = 0
 
+        # set up summary writer
+        train_log_dir = self.log_dir + "/train"
+        valid_log_dir = self.log_dir + "/valid"
+        train_summary_writer = tf.summary.create_file_writer(train_log_dir)
+        valid_summary_writer = tf.summary.create_file_writer(valid_log_dir)
+
         # training loop
         for ei in range(epoch_start, self.train_epochs_max):
             if ei >= self.train_epochs_min and unimproved > self.patience:
@@ -615,6 +641,12 @@ class Trainer:
                 train_loss_epoch = train_loss.result().numpy()
                 train_r_epoch = train_r.result().numpy()
                 train_r2_epoch = train_r2.result().numpy()
+
+                with train_summary_writer.as_default():
+                    tf.summary.scalar("loss", train_loss_epoch, step=ei)
+                    tf.summary.scalar("r", train_r_epoch, step=ei)
+                    tf.summary.scalar("r2", train_r2_epoch, step=ei)
+
                 print(
                     "Epoch %d - %ds - train_loss: %.4f - train_r: %.4f - train_r2: %.4f"
                     % (
@@ -631,6 +663,12 @@ class Trainer:
                 valid_loss_epoch = valid_loss.result().numpy()
                 valid_r_epoch = valid_r.result().numpy()
                 valid_r2_epoch = valid_r2.result().numpy()
+
+                with valid_summary_writer.as_default():
+                    tf.summary.scalar("loss", valid_loss_epoch, step=ei)
+                    tf.summary.scalar("r", valid_r_epoch, step=ei)
+                    tf.summary.scalar("r2", valid_r2_epoch, step=ei)
+
                 print(
                     " - valid_loss: %.4f - valid_r: %.4f - valid_r2: %.4f"
                     % (valid_loss_epoch, valid_r_epoch, valid_r2_epoch),
