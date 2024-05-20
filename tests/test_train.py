@@ -18,6 +18,8 @@ def test_train(clean_data):
         "src/baskerville/scripts/hound_train.py",
         "-o",
         "tests/data/train1",
+        "-l",
+        "tests/data/train1/logs",
         "tests/data/params.json",
         "tests/data/tiny/hg38",
     ]
@@ -33,6 +35,8 @@ def test_train2(clean_data):
         "src/baskerville/scripts/hound_train.py",
         "-o",
         "tests/data/train2",
+        "-l",
+        "tests/data/train2/logs",
         "tests/data/params.json",
         "tests/data/tiny/hg38",
         "tests/data/tiny/mm10",
