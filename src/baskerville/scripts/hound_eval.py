@@ -94,7 +94,6 @@ def main():
     parser.add_argument(
         "--split",
         default="test",
-        choices=["train", "valid", "test"],
         help="Dataset split label for eg TFR pattern [Default: %(default)s]",
     )
     parser.add_argument(
