@@ -59,7 +59,7 @@ def main():
     parser.add_argument(
         "-l",
         "--log_dir",
-        default=None,
+        default="log_out",
         help="Tensorboard log directory [Default: %(default)s]",
     )
     parser.add_argument(
