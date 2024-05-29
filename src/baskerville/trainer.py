@@ -27,6 +27,8 @@ def parse_loss(
     keras_fit: bool = True,
     spec_weight: float = 1,
     total_weight: float = 1,
+    weight_range: float = 1,
+    weight_exp: int = 1,
 ):
     """Parse loss function from label, strategy, and fitting method.
 
@@ -51,7 +53,10 @@ def parse_loss(
             )
         elif loss_label == "poisson_mn":
             loss_fn = metrics.PoissonMultinomial(
-                total_weight, reduction=tf.keras.losses.Reduction.NONE
+                total_weight=total_weight,
+                weight_range=weight_range,
+                weight_exp=weight_exp,
+                reduction=tf.keras.losses.Reduction.NONE,
             )
         else:
             loss_fn = tf.keras.losses.Poisson(reduction=tf.keras.losses.Reduction.NONE)
@@ -65,7 +70,11 @@ def parse_loss(
         elif loss_label == "poisson_kl":
             loss_fn = metrics.PoissonKL(spec_weight)
         elif loss_label == "poisson_mn":
-            loss_fn = metrics.PoissonMultinomial(total_weight)
+            loss_fn = metrics.PoissonMultinomial(
+                total_weight=total_weight,
+                weight_range=weight_range,
+                weight_exp=weight_exp,
+            )
         else:
             loss_fn = tf.keras.losses.Poisson()
 
@@ -129,9 +138,17 @@ class Trainer:
         # loss
         self.spec_weight = self.params.get("spec_weight", 1)
         self.total_weight = self.params.get("total_weight", 1)
+        self.weight_range = self.params.get("weight_range", 1)
+        self.weight_exp = self.params.get("weight_exp", 1)
         self.loss = self.params.get("loss", "poisson").lower()
         self.loss_fn = parse_loss(
-            self.loss, self.strategy, keras_fit, self.spec_weight, self.total_weight
+            self.loss,
+            self.strategy,
+            keras_fit,
+            self.spec_weight,
+            self.total_weight,
+            self.weight_range,
+            self.weight_exp,
         )
 
         # optimizer
