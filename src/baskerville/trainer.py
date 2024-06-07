@@ -455,7 +455,6 @@ class Trainer:
                     print("  Data %d" % di, end="")
                     model = seqnn_model.models[di]
                     with train_summary_writer.as_default():
-                        print("\nWrite into train_summary_writer\n")
                         tf.summary.scalar(
                             "loss", train_loss[di].result().numpy(), step=ei
                         )
@@ -484,7 +483,6 @@ class Trainer:
                                 eval_step1_distr(x, y)
 
                     with valid_summary_writer.as_default():
-                        print("\nWrite into valid_summary_writer\n")
                         tf.summary.scalar(
                             "loss", valid_loss[di].result().numpy(), step=ei
                         )
@@ -665,7 +663,6 @@ class Trainer:
                 train_r2_epoch = train_r2.result().numpy()
 
                 with train_summary_writer.as_default():
-                    print("\nWrite into train_summary_writer\n")
                     tf.summary.scalar("loss", train_loss_epoch, step=ei)
                     tf.summary.scalar("r", train_r_epoch, step=ei)
                     tf.summary.scalar("r2", train_r2_epoch, step=ei)
@@ -689,7 +686,6 @@ class Trainer:
                 valid_r2_epoch = valid_r2.result().numpy()
 
                 with valid_summary_writer.as_default():
-                    print("\nWrite into valid_summary_writer\n")
                     tf.summary.scalar("loss", valid_loss_epoch, step=ei)
                     tf.summary.scalar("r", valid_r_epoch, step=ei)
                     tf.summary.scalar("r2", valid_r2_epoch, step=ei)
