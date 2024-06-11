@@ -537,8 +537,8 @@ def break_large_contigs(contigs, break_t, verbose=False):
 
             # break in two
             ctg_mid = ctg.start + ctg_len // 2
-            ctg_left = Contig(ctg.genome, ctg.chr, ctg.start, ctg_mid)
-            ctg_right = Contig(ctg.genome, ctg.chr, ctg_mid, ctg.end)
+            ctg_left = data.Contig(ctg.genome, ctg.chr, ctg.start, ctg_mid)
+            ctg_right = data.Contig(ctg.genome, ctg.chr, ctg_mid, ctg.end)
 
             # add left
             ctg_left_len = ctg_left.end - ctg_left.start
