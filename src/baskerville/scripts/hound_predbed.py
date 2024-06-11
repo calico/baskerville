@@ -26,9 +26,10 @@ import pyBigWig
 import tensorflow as tf
 
 from baskerville import bed
+from baskerville import dataset
 from baskerville import dna
 from baskerville import seqnn
-from baskerville import stream
+
 
 """
 hound_predbed.py
@@ -120,34 +121,17 @@ def main():
         default=None,
         help="File specifying target indexes and labels in table format",
     )
-
+    parser.add_argument(
+        "-u",
+        "--untransform_old",
+        default=False,
+        action="store_true",
+        help="Untransform old models [Default: %default]",
+    )
     parser.add_argument("params_file", help="Parameters file")
     parser.add_argument("model_file", help="Model file")
     parser.add_argument("bed_file", help="BED file")
     args = parser.parse_args()
-
-    if len(args) == 3:
-        params_file = args[0]
-        model_file = args[1]
-        bed_file = args[2]
-
-    elif len(args) == 5:
-        # multi worker
-        options_pkl_file = args[0]
-        params_file = args[1]
-        model_file = args[2]
-        bed_file = args[3]
-        worker_index = int(args[4])
-
-        # load options
-        options_pkl = open(options_pkl_file, "rb")
-        options = pickle.load(options_pkl)
-        options_pkl.close()
-
-        # update output directory
-        args.out_dir = "%s/job%d" % (args.out_dir, worker_index)
-    else:
-        parser.error("Must provide parameter and model files and BED file")
 
     os.makedirs(args.out_dir, exist_ok=True)
 
@@ -166,7 +150,7 @@ def main():
     #################################################################
     # read parameters and collet target information
 
-    with open(params_file) as params_open:
+    with open(args.params_file) as params_open:
         params = json.load(params_open)
     params_model = params["model"]
 
@@ -181,7 +165,7 @@ def main():
 
     # initialize model
     seqnn_model = seqnn.SeqNN(params_model)
-    seqnn_model.restore(model_file, args.head)
+    seqnn_model.restore(args.model_file, args.head)
     seqnn_model.build_slice(target_slice)
     seqnn_model.build_ensemble(args.rc, args.shifts)
 
@@ -205,27 +189,8 @@ def main():
 
     # construct model sequences
     model_seqs_dna, model_seqs_coords = bed.make_bed_seqs(
-        bed_file, args.genome_fasta, params_model["seq_length"], stranded=False
+        args.bed_file, args.genome_fasta, params_model["seq_length"], stranded=False
     )
-
-    # construct site coordinates
-    site_seqs_coords = bed.read_bed_coords(bed_file, args.site_length)
-
-    # filter for worker SNPs
-    if args.processes is not None:
-        worker_bounds = np.linspace(
-            0, len(model_seqs_dna), args.processes + 1, dtype="int"
-        )
-        model_seqs_dna = model_seqs_dna[
-            worker_bounds[worker_index] : worker_bounds[worker_index + 1]
-        ]
-        model_seqs_coords = model_seqs_coords[
-            worker_bounds[worker_index] : worker_bounds[worker_index + 1]
-        ]
-        site_seqs_coords = site_seqs_coords[
-            worker_bounds[worker_index] : worker_bounds[worker_index + 1]
-        ]
-
     num_seqs = len(model_seqs_dna)
 
     #################################################################
@@ -258,6 +223,7 @@ def main():
         )
 
     # store site coordinates
+    site_seqs_coords = bed.read_bed_coords(args.bed_file, args.site_length)
     site_seqs_chr, site_seqs_start, site_seqs_end = zip(*site_seqs_coords)
     site_seqs_chr = np.array(site_seqs_chr, dtype="S")
     site_seqs_start = np.array(site_seqs_start)
@@ -268,7 +234,7 @@ def main():
 
     #################################################################
     # predict scores, write output
-
+    """
     # define sequence generator
     def seqs_gen():
         for seq_dna in model_seqs_dna:
@@ -278,18 +244,29 @@ def main():
     preds_stream = stream.PredStreamGen(
         seqnn_model, seqs_gen(), params["train"]["batch_size"]
     )
+    """
 
-    for si in range(num_seqs):
-        preds_seq = preds_stream[si]
+    for si, seq_dna in enumerate(model_seqs_dna):
+        seq_1hot = np.expand_dims(dna.dna_1hot(seq_dna), axis=0)
+        preds_seq = seqnn_model.predict(seq_1hot)[0]
+
+        if args.untransform_old:
+            preds_seq = dataset.untransform_preds1(preds_seq, targets_df)
+        else:
+            preds_seq = dataset.untransform_preds(preds_seq, targets_df)
 
         # slice site
         preds_site = preds_seq[site_preds_start:site_preds_end, :]
 
-        # write
+        # optionally, sum
         if args.sum:
-            out_h5["preds"][si] = preds_site.sum(axis=0)
-        else:
-            out_h5["preds"][si] = preds_site
+            preds_site = np.sum(preds_site, axis=0)
+
+        # clip to float16 max
+        preds_write = np.clip(preds_site, 0, np.finfo(np.float16).max)
+
+        # write
+        out_h5["preds"][si] = preds_write
 
         # write bigwig
         for ti in args.bigwig_indexes:
