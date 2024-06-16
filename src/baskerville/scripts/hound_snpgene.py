@@ -72,6 +72,13 @@ def main():
         help="GTF for gene definition [Default %default]",
     )
     parser.add_option(
+        "--indel_stitch",
+        dest="indel_stitch",
+        default=False,
+        action="store_true",
+        help="Stitch indel compensation shifts [Default: %default]",
+    )
+    parser.add_option(
         "-o",
         dest="out_dir",
         default="snpgene_out",
@@ -155,8 +162,8 @@ def main():
         out_dir = temp_dir + "/output_dir"
         options.out_dir = out_dir
 
-    if not os.path.isdir(options.out_dir):
-        os.mkdir(options.out_dir)
+    # is this here for GCS?
+    os.makedirs(options.out_dir, exist_ok=True)
 
     if len(args) == 3:
         # single worker

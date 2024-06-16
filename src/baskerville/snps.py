@@ -89,6 +89,9 @@ def score_snps(params_file, model_file, vcf_file, worker_index, options):
     # shift outside seqnn
     num_shifts = len(options.shifts)
     targets_length = seqnn_model.target_lengths[0]
+    targets_length = seqnn_model.target_lengths[0]
+    model_stride = seqnn_model.model_strides[0]
+    model_crop = seqnn_model.target_crops[0] * model_stride
 
     #################################################################
     # load SNPs
@@ -194,16 +197,11 @@ def score_snps(params_file, model_file, vcf_file, worker_index, options):
             for ai, alt_1hot in enumerate(snp_1hot_list[1:]):
                 alt_1hot = np.expand_dims(alt_1hot, axis=0)
 
-                # add compensation shifts for indels
+                # add left/right shifts for indels
                 indel_size = sc.snps[ai].indel_size()
                 if indel_size == 0:
                     alt_shifts = options.shifts
                 else:
-                    # repeat reference predictions, unless stitching
-                    if not options.indel_stitch:
-                        ref_preds = np.repeat(ref_preds, 2, axis=0)
-
-                    # add compensation shifts
                     alt_shifts = []
                     for shift in options.shifts:
                         alt_shifts.append(shift)
@@ -229,9 +227,11 @@ def score_snps(params_file, model_file, vcf_file, worker_index, options):
                         ref_preds = [rpsf.result() for rpsf in ref_preds]
                     alt_preds = [apsf.result() for apsf in alt_preds]
 
-                # stitch indel compensation shifts
+                # stitch indel shifts
                 if indel_size != 0 and options.indel_stitch:
-                    alt_preds = stitch_preds(alt_preds, options.shifts)
+                    snp_seq_pos = sc.snps[ai].pos - sc.start - model_crop
+                    snp_seq_bin = snp_seq_pos // model_stride
+                    alt_preds = stitch_preds(alt_preds, options.shifts, snp_seq_bin)
 
                 # flip reference and alternate
                 if snps[si].flipped:
@@ -240,6 +240,10 @@ def score_snps(params_file, model_file, vcf_file, worker_index, options):
                 else:
                     rp_snp = np.array(ref_preds)
                     ap_snp = np.array(alt_preds)
+
+                # repeat reference predictions for indels w/o stitching
+                if indel_size != 0 and not options.indel_stitch:
+                    rp_snp = np.repeat(rp_snp, 2, axis=0)
 
                 # write SNP
                 if sum_length:
@@ -420,16 +424,11 @@ def score_gene_snps(params_file, model_file, vcf_file, worker_index, options):
             for ai, alt_1hot in enumerate(snp_1hot_list[1:]):
                 alt_1hot = np.expand_dims(alt_1hot, axis=0)
 
-                # add compensation shifts for indels
+                # add left/right shifts for indels
                 indel_size = gsc.snps[ai].indel_size()
                 if indel_size == 0:
                     alt_shifts = options.shifts
                 else:
-                    # repeat reference predictions, unless stitching
-                    if not options.indel_stitch:
-                        ref_preds = np.repeat(ref_preds, 2, axis=0)
-
-                    # add compensation shifts
                     alt_shifts = []
                     for shift in options.shifts:
                         alt_shifts.append(shift)
@@ -455,6 +454,12 @@ def score_gene_snps(params_file, model_file, vcf_file, worker_index, options):
                         ref_preds = [rpsf.result() for rpsf in ref_preds]
                     alt_preds = [apsf.result() for apsf in alt_preds]
 
+                # stitch indel shifts
+                if indel_size != 0 and options.indel_stitch:
+                    snp_seq_pos = gsc.snps[ai].pos - gsc.start - model_crop
+                    snp_seq_bin = snp_seq_pos // model_stride
+                    alt_preds = stitch_preds(alt_preds, options.shifts, snp_seq_bin)
+
                 # flip reference and alternate
                 if gsc.snps[ai].flipped:
                     rp_snp = np.array(alt_preds)
@@ -462,6 +467,10 @@ def score_gene_snps(params_file, model_file, vcf_file, worker_index, options):
                 else:
                     rp_snp = np.array(ref_preds)
                     ap_snp = np.array(alt_preds)
+
+                # repeat reference predictions for indels w/o stitching
+                if indel_size != 0 and not options.indel_stitch:
+                    rp_snp = np.repeat(rp_snp, 2, axis=0)
 
                 for gene in gsc.genes:
                     # slice gene positions
@@ -864,19 +873,21 @@ def map_snps_genes(snps, genesnp_clusters):
         genesnp_clusters[gi].add_snp(snps[si])
 
 
-def stitch_preds(preds, shifts):
+def stitch_preds(preds, shifts, pos=None):
     """Stitch indel left and right compensation shifts.
 
     Args:
         preds [np.array]: List of predictions.
         shifts [int]: List of shifts.
+        pos (int): SNP position to stitch at.
     """
-    cp = preds[0].shape[0] // 2
+    if pos is None:
+        pos = preds[0].shape[0] // 2
     preds_stitch = []
     for hi, shift in enumerate(shifts):
         hil = 2 * hi
         hir = hil + 1
-        preds_stitch_i = np.concatenate((preds[hil][:cp], preds[hir][cp:]), axis=0)
+        preds_stitch_i = np.concatenate((preds[hil][:pos], preds[hir][pos:]), axis=0)
         preds_stitch.append(preds_stitch_i)
     return preds_stitch
 
