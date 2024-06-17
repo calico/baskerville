@@ -6,7 +6,7 @@ import pandas as pd
 
 from baskerville.dataset import targets_prep_strand
 
-stat_keys = ["logSUM", "logD2"]
+stat_keys = ["logSUM", "logD2", "logSAD"]
 fasta_file = "tests/data/hg38_1m.fa.gz"
 targets_file = "tests/data/tiny/hg38/targets.txt"
 params_file = "tests/data/eval/params.json"
