@@ -34,6 +34,18 @@ def param_summary(model):
     print('trainable params:%d' %trainable)
     print('non-trainable params:%d' %non_trainable)
 
+def keras2dict(model):
+    layer_parent_dict = {} # the parent layers of each layer in the old graph 
+    for layer in model.layers:
+        for node in layer._outbound_nodes:
+            layer_name = node.outbound_layer.name
+            if layer_name not in layer_parent_dict:
+                layer_parent_dict.update({layer_name: [layer.name]})
+            else:
+                if layer.name not in layer_parent_dict[layer_name]:
+                    layer_parent_dict[layer_name].append(layer.name)
+    return layer_parent_dict
+
 ######################
 # add houlsby layers #
 ######################
@@ -46,15 +58,7 @@ def add_houlsby(input_model, strand_pair, latent_size=16):
                            outputs=input_model.layers[-2].output) # remove the switch_reverse layer
     
     # save current graph
-    layer_parent_dict_old = {} # the parent layers of each layer in the old graph 
-    for layer in model.layers:
-        for node in layer._outbound_nodes:
-            layer_name = node.outbound_layer.name
-            if layer_name not in layer_parent_dict_old:
-                layer_parent_dict_old.update({layer_name: [layer.name]})
-            else:
-                if layer.name not in layer_parent_dict_old[layer_name]:
-                    layer_parent_dict_old[layer_name].append(layer.name)
+    layer_parent_dict_old = keras2dict(model)
     
     layer_output_dict_new = {} # the output tensor of each layer in the new graph
     layer_output_dict_new.update({model.layers[0].name: model.input})
@@ -98,7 +102,9 @@ def add_houlsby(input_model, strand_pair, latent_size=16):
     final = layers.SwitchReverse(strand_pair)([layer_output_dict_new[model.layers[-1].name], reverse_bool])
     model_adapter = tf.keras.Model(inputs=model.inputs, outputs=final)
 
-    # set trainable
+    #################
+    # set trainable #
+    #################
     for l in model_adapter.layers[:-2]: # trunk
         if re.match('layer_normalization|adapter_houlsby', l.name): 
             l.trainable = True
@@ -175,44 +181,192 @@ def add_lora(input_model, rank=8, alpha=16, mode='default'):
 ##################
 # add ia3 layers #
 ##################
-def add_ia3(input_model):
-    # take seqnn.model as input
-    # replace _k_layer, _v_layer, _embedding_layer in multihead_attention
+def add_ia3(input_model, strand_pair):
+    
+    ####################
+    # add to kv layers #
+    ####################
     for layer in input_model.layers:
         if re.match('multihead_attention', layer.name):
             layer._k_layer = layers.IA3(layer._k_layer, trainable=True)
             layer._v_layer = layers.IA3(layer._v_layer, trainable=True)
-            layer._embedding_layer = layers.IA3(layer._embedding_layer, trainable=True)
-    input_model(input_model.input) # instantiate model to initialize new variables
+    
+    ###################
+    # add to ff layer #
+    ###################
+    # save old graph to dictionary
+    layer_parent_dict_old = keras2dict(input_model)
+    
+    # remove switch_reverse_layer
+    to_fix = [i for i in layer_parent_dict_old if re.match('switch_reverse', i)]
+    for i in to_fix:
+        del layer_parent_dict_old[i]
 
-    # freeze params:
-    for layer in input_model._flatten_layers():
+    # create new graph
+    layer_output_dict_new = {} # the output tensor of each layer in the new graph
+    layer_output_dict_new.update({input_model.layers[0].name: input_model.input})
+    
+    # Iterate over all layers after the input
+    model_outputs = []
+    reverse_bool = None
+    for layer in input_model.layers[1:-1]:
+    
+        # get layer inputs
+        parent_layers = layer_parent_dict_old[layer.name]
+        layer_input = [layer_output_dict_new[parent] for parent in parent_layers]
+        if len(layer_input) == 1: layer_input = layer_input[0]
+
+        # construct
+        if re.match('stochastic_reverse_complement', layer.name):
+            x, reverse_bool  = layer(layer_input)
+        # transformer ff down-project layer (1536 -> 768):
+        elif re.match('dense', layer.name) and layer.input_shape[-1]==1536:
+            x = layers.IA3_ff(layer, trainable=True)(layer_input)
+        else:
+            x = layer(layer_input)
+    
+        # save layers to dictionary
+        layer_output_dict_new.update({layer.name: x})
+    
+    final = layers.SwitchReverse(strand_pair)([layer_output_dict_new[input_model.layers[-2].name], reverse_bool])
+    model_adapter = tf.keras.Model(inputs=input_model.inputs, outputs=final)
+
+    #################
+    # set trainable #
+    #################
+    for layer in model_adapter._flatten_layers():
         lst_of_sublayers = list(layer._flatten_layers())
         if len(lst_of_sublayers) == 1: 
-            if layer.name =='ia3':
+            if layer.name in ['ia3', 'ia3_ff']:
                 layer.trainable = True
             else:
                 layer.trainable = False
             
     ### bias terms need to be frozen separately 
-    for layer in input_model.layers:
+    for layer in model_adapter.layers:
         if re.match('multihead_attention', layer.name):
             layer._r_w_bias = tf.Variable(layer._r_w_bias, trainable=False, name=layer._r_w_bias.name)
             layer._r_r_bias = tf.Variable(layer._r_r_bias, trainable=False, name=layer._r_r_bias.name)
 
     # set final head to be trainable
-    input_model.layers[-2].trainable=True
+    model_adapter.layers[-2].trainable=True
 
     # expected number of trainable params added/unfrozen:
     params_added = 0
-    for l in input_model.layers:
-        if re.match('multihead_attention', l.name):
+    for l in model_adapter.layers:
+        if re.match('multihead_attention', l.name): # kv layers
             params_added += param_count(l._k_layer._ia3_layer)
             params_added += param_count(l._v_layer._ia3_layer)
-            params_added += param_count(l._embedding_layer._ia3_layer)
+        elif re.match('dense', l.name) and l.input_shape[-1]==1536: # ff layers
+            params_added += param_count(l._ia3_layer)
     
     print('params added/unfrozen by ia3: %d'%params_added)
+    
+    return model_adapter
 
+
+###############
+# modify json #
+###############
+# houlsby and squeeze-excite
+def modify_json(input_json, output_json, adapter='adapterHoulsby', latent=None, conv=None, se_ratio=None):
+
+    with open(input_json) as params_open:
+        params = json.load(params_open)
+
+    # houlsby #
+    if adapter=='adapterHoulsby':
+        params["model"]["trunk"][2]['adapter']= 'houlsby'
+        params["model"]["trunk"][2]['latent']= latent
+
+    # squeeze-excite #
+    if conv=='se_all' or conv=='se_all_bn':
+        for i in [0, 1, 3, 4]:
+            params['model']['trunk'][i]['transfer_se']=True
+            params['model']['trunk'][i]['se_ratio']=se_ratio
+    
+    elif conv=='se' or conv=='se_bn':
+        for i in [0, 1]:
+            params['model']['trunk'][i]['transfer_se']=True
+            params['model']['trunk'][i]['se_ratio']=se_ratio
+
+    else:
+        pass
+        
+    ### output
+    with open(output_json, 'w') as params_open:
+        json.dump(params, params_open, indent=4)
+
+
+######################
+# merge lora weights #
+######################
+def merge_lora_layer(lora_layer):
+    down_weights = lora_layer.down_layer.kernel
+    up_weights = lora_layer.up_layer.kernel
+    increment_weights = tf.einsum("ab,bc->ac", down_weights, up_weights) * lora_layer.scale
+    lora_layer.original_layer.kernel.assign_add(increment_weights)
+    return lora_layer.original_layer
+
+def merge_lora(input_model, mode='default'):
+    for layer in input_model.layers:
+        if 'multihead_attention' in layer.name:
+            # default loRA
+            layer._q_layer = merge_lora_layer(layer._q_layer)
+            layer._v_layer = merge_lora_layer(layer._v_layer)
+            if mode=='full':
+                layer._k_layer = merge_lora_layer(layer._k_layer)
+                layer._embedding_layer = merge_lora_layer(layer._embedding_layer)
+    input_model(input_model.input)
+
+# correct weights.h5 weight order
+def var_reorder(weight_h5):
+    # assumes weight_h5 model saved with seqnn_model.save()
+    # [i.name for i in model.layers[30].weights] to check for multihead_attention layer weights order.
+    # model.load_weights() load weights sequencially, assuming h5 weights are in the right order.
+    # When inserting lora/ia3, multihead_attention layer weights order changed.
+    # multihead_attention layer weights order is saved inside f['model_weights']['multihead_attention'].attrs
+    # After saving the weight_merged model, we need to go into the weights.h5, and change the attrs in multihead attention.
+    var_init_order = ['r_w_bias:0:0',
+                      'r_r_bias:0:0', 
+                      'q_layer/kernel:0', 
+                      'k_layer/kernel:0',
+                      'v_layer/kernel:0',
+                      'embedding_layer/kernel:0',
+                      'embedding_layer/bias:0',
+                      'r_k_layer/kernel:0']
+
+    f = h5py.File(weight_h5, 'r+')
+    layers = [i for i in list(f['model_weights'].keys()) if 'multihead_attention' in i]
+    for l_name in layers:
+        new_name_order = [l_name+'/'+i for i in var_init_order]
+        f['model_weights'][l_name].attrs.modify(name='weight_names', value=new_name_order)
+    f.close()
+
+#####################
+# merge ia3 weights #
+#####################
+def merge_ia3(original_model, ia3_model):
+    # original model contains pre-trained weights
+    # ia3 model is the fine-tuned ia3 model
+    for i, layer in enumerate(original_model.layers):
+        # attention layers
+        if re.match('multihead_attention', layer.name):
+            # scale k
+            k_scaler = ia3_model.layers[i]._k_layer._ia3_layer.kernel[0]
+            layer._k_layer.kernel.assign(layer._k_layer.kernel * k_scaler)
+            # scale v
+            v_scaler = ia3_model.layers[i]._v_layer._ia3_layer.kernel[0]
+            layer._v_layer.kernel.assign(layer._v_layer.kernel * v_scaler)
+        # ff layers
+        elif re.match('dense', layer.name) and layer.input_shape[-1]==1536:
+            ff_scaler = tf.expand_dims(ia3_model.layers[i]._ia3_layer.kernel[0], 1)
+            layer.kernel.assign(layer.kernel * ff_scaler)
+        # other layers
+        else:
+            layer.set_weights(ia3_model.layers[i].get_weights())
+
+'''
 ######################
 # add squeeze excite #
 ######################
@@ -229,15 +383,7 @@ def add_se(input_model, strand_pair, bottleneck_ratio=8, insert_mode='pre_att', 
                            outputs=input_model.layers[-2].output) # remove the switch_reverse layer
     
     # save current graph
-    layer_parent_dict_old = {} # the parent layers of each layer in the old graph 
-    for layer in model.layers:
-        for node in layer._outbound_nodes:
-            layer_name = node.outbound_layer.name
-            if layer_name not in layer_parent_dict_old:
-                layer_parent_dict_old.update({layer_name: [layer.name]})
-            else:
-                if layer.name not in layer_parent_dict_old[layer_name]:
-                    layer_parent_dict_old[layer_name].append(layer.name)
+    layer_parent_dict_old = keras2dict(model)
     
     layer_output_dict_new = {} # the output tensor of each layer in the new graph
     layer_output_dict_new.update({model.layers[0].name: model.input})
@@ -333,15 +479,7 @@ def add_houlsby_se(input_model, strand_pair, houlsby_latent=8, bottleneck_ratio=
                            outputs=input_model.layers[-2].output) # remove the switch_reverse layer
     
     # save current graph
-    layer_parent_dict_old = {} # the parent layers of each layer in the old graph 
-    for layer in model.layers:
-        for node in layer._outbound_nodes:
-            layer_name = node.outbound_layer.name
-            if layer_name not in layer_parent_dict_old:
-                layer_parent_dict_old.update({layer_name: [layer.name]})
-            else:
-                if layer.name not in layer_parent_dict_old[layer_name]:
-                    layer_parent_dict_old[layer_name].append(layer.name)
+    layer_parent_dict_old = keras2dict(model)
     
     layer_output_dict_new = {} # the output tensor of each layer in the new graph
     layer_output_dict_new.update({model.layers[0].name: model.input})
@@ -441,100 +579,4 @@ def add_houlsby_se(input_model, strand_pair, houlsby_latent=8, bottleneck_ratio=
     print('params added/unfrozen by se_block: %d'%params_added)
     
     return model_final
-
-###############
-# modify json #
-###############
-# houlsby and squeeze-excite
-def modify_json(input_json, output_json, adapter='adapterHoulsby', latent=None, conv=None, se_ratio=None):
-
-    with open(input_json) as params_open:
-        params = json.load(params_open)
-
-    # houlsby #
-    if adapter=='adapterHoulsby':
-        params["model"]["trunk"][2]['adapter']= 'houlsby'
-        params["model"]["trunk"][2]['latent']= latent
-
-    # squeeze-excite #
-    if conv=='se_all' or conv=='se_all_bn':
-        for i in [0, 1, 3, 4]:
-            params['model']['trunk'][i]['transfer_se']=True
-            params['model']['trunk'][i]['se_ratio']=se_ratio
-    
-    elif conv=='se' or conv=='se_bn':
-        for i in [0, 1]:
-            params['model']['trunk'][i]['transfer_se']=True
-            params['model']['trunk'][i]['se_ratio']=se_ratio
-
-    else:
-        pass
-        
-    ### output
-    with open(output_json, 'w') as params_open:
-        json.dump(params, params_open, indent=4)
-
-
-######################
-# merge lora weights #
-######################
-def merge_lora_layer(lora_layer):
-    down_weights = lora_layer.down_layer.kernel
-    up_weights = lora_layer.up_layer.kernel
-    increment_weights = tf.einsum("ab,bc->ac", down_weights, up_weights) * lora_layer.scale
-    lora_layer.original_layer.kernel.assign_add(increment_weights)
-    return lora_layer.original_layer
-
-def merge_lora(input_model, mode='default'):
-    for layer in input_model.layers:
-        if 'multihead_attention' in layer.name:
-            # default loRA
-            layer._q_layer = merge_lora_layer(layer._q_layer)
-            layer._v_layer = merge_lora_layer(layer._v_layer)
-            if mode=='full':
-                layer._k_layer = merge_lora_layer(layer._k_layer)
-                layer._embedding_layer = merge_lora_layer(layer._embedding_layer)
-    input_model(input_model.input)
-
-# correct weights.h5 weight order
-def var_reorder(weight_h5):
-    # assumes weight_h5 model saved with seqnn_model.save()
-    # [i.name for i in model.layers[30].weights] to check for multihead_attention layer weights order.
-    # model.load_weights() load weights sequencially, assuming layer weights are in the right order.
-    # When inserting lora/ia3, multihead_attention layer weights order changed.
-    # multihead_attention layer weights order is saved inside f['model_weights']['multihead_attention'].attrs
-    # After saving the weight_merged model, we need to go into the weights.h5, and change the attrs in multihead attention.
-    var_init_order = ['r_w_bias:0:0',
-                      'r_r_bias:0:0', 
-                      'q_layer/kernel:0', 
-                      'k_layer/kernel:0',
-                      'v_layer/kernel:0',
-                      'embedding_layer/kernel:0',
-                      'embedding_layer/bias:0',
-                      'r_k_layer/kernel:0']
-
-    f = h5py.File(weight_h5, 'r+')
-    layers = [i for i in list(f['model_weights'].keys()) if 'multihead_attention' in i]
-    for l_name in layers:
-        new_name_order = [l_name+'/'+i for i in var_init_order]
-        f['model_weights'][l_name].attrs.modify(name='weight_names', value=new_name_order)
-    f.close()
-
-#####################
-# merge ia3 weights #
-#####################
-def merge_ia3_layer(ia3_layer, type='kv'):
-    scaler = ia3_layer._ia3_layer.kernel[0]
-    ia3_layer.original_layer.kernel.assign(ia3_layer.original_layer.kernel * scaler)
-    if type=='embedding':
-        ia3_layer.original_layer.bias.assign(ia3_layer.original_layer.bias * scaler)
-    return ia3_layer.original_layer
-
-def merge_ia3(input_model):
-    for layer in input_model.layers:
-        if 'multihead_attention' in layer.name:
-            layer._k_layer = merge_ia3_layer(layer._k_layer, type='kv')
-            layer._v_layer = merge_ia3_layer(layer._v_layer, type='kv')
-            layer._embedding_layer = merge_ia3_layer(layer._embedding_layer, type='embedding')
-    input_model(input_model.input)
-
+'''

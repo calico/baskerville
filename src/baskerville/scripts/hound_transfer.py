@@ -223,8 +223,9 @@ def main():
                                              mode='full')
                 
                 elif args.att_adapter=='ia3':
-                    transfer_helper.add_ia3(seqnn_model.model)
+                    seqnn_model.model = transfer_helper.add_ia3(seqnn_model.model, strand_pairs[0])
 
+            '''
             # conv adapter
             # assume seqnn_model is appropriately frozen
             if args.conv_adapter is not None:
@@ -314,6 +315,7 @@ def main():
                                                                        bottleneck_ratio=args.se_ratio, 
                                                                        insert_mode='pre_att',
                                                                        unfreeze_bn=True)
+            '''
                     
         #################
         # final summary #
@@ -368,10 +370,16 @@ def main():
     
             # merge ia3 weights to original, save weight to: model_best_mergeweight.h5
             if args.att_adapter=='ia3':
-                seqnn_model.model.load_weights('%s/model_best.h5'%args.out_dir)
-                transfer_helper.merge_ia3(seqnn_model.model)
-                seqnn_model.save('%s/model_best.mergeW.h5'%args.out_dir)
-                transfer_helper.var_reorder('%s/model_best.mergeW.h5'%args.out_dir)
+                # ia3 model
+                ia3_model = seqnn_model.model
+                ia3_model.load_weights('%s/model_best.h5'%args.out_dir)                
+                # original model
+                seqnn_model2 = seqnn.SeqNN(params_model)
+                seqnn_model2.restore(args.restore, trunk=args.trunk)
+                original_model = seqnn_model2.model
+                # merge weights into original model
+                transfer_helper.merge_ia3(original_model, ia3_model)
+                original_model.save('%s/model_best.mergeW.h5'%args.out_dir)
 
     else:
         ########################################

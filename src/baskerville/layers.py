@@ -27,8 +27,8 @@ for device in gpu_devices:
 # transfer learning #
 #####################
 class IA3(tf.keras.layers.Layer):
-    # activation-rescale adapter: 
     # https://arxiv.org/pdf/2205.05638.pdf
+    # ia3 module for attention layer, scale output.
     
     def __init__(self, 
                  original_layer, 
@@ -69,6 +69,48 @@ class IA3(tf.keras.layers.Layer):
         )
         return config
 
+class IA3_ff(tf.keras.layers.Layer):
+    # https://arxiv.org/pdf/2205.05638.pdf
+    # ia3 module for down-projection ff layer, scale input.
+    
+    def __init__(self, 
+                 original_layer, 
+                 trainable=False, 
+                 **kwargs):
+        
+        # keep the name of this layer the same as the original dense layer.
+        original_layer_config = original_layer.get_config()
+        name = original_layer_config["name"]
+        kwargs.pop("name", None)
+        super().__init__(name=name, trainable=trainable, **kwargs)
+
+        self.input_dim = original_layer.input_shape[-1]
+        
+        self.original_layer = original_layer
+        self.original_layer.trainable = False
+
+        # IA3 weights. Make it a dense layer to control trainable
+        self._ia3_layer = tf.keras.layers.Dense(
+            units=self.input_dim,
+            use_bias=False,
+            kernel_initializer=tf.keras.initializers.Ones(),
+            trainable=True,
+            name="ia3_ff"
+        )
+
+    def call(self, inputs):
+        scaler = self._ia3_layer(tf.constant([[1]], dtype='float64'))[0]
+        return self.original_layer(inputs * scaler)
+
+    def get_config(self):
+        config = super().get_config().copy()
+        config.update(
+            {
+                "size": self.input_dim
+            }
+        )
+        return config
+        
 class Lora(tf.keras.layers.Layer):
     # adapted from: 
     # https://arxiv.org/abs/2106.09685
