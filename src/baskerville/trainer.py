@@ -122,8 +122,8 @@ class Trainer:
 
         # if log_dir is in gcs then create a local temp dir
         if is_gcs_path(self.log_dir):
-            folder_name = self.log_dir.split("/")[-1]
-            self.log_dir = tempfile.mkdtemp() + folder_name
+            folder_name = "/".join(self.log_dir.split("/")[3:])
+            self.log_dir = tempfile.mkdtemp() + "/" + folder_name
             self.gcs_log_dir = log_dir
             self.gcs = True
         else:
