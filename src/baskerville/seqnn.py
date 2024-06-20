@@ -912,10 +912,11 @@ class SeqNN:
         else:
             model = self.model
 
-        if isinstance(x, np.ndarray):
-            preds = model(x).numpy().astype(dtype)
-        else:
-            preds = model(x)
+        preds = model(x).numpy().astype(dtype)
+        # if isinstance(x, np.ndarray):
+        #     preds = model(x).numpy().astype(dtype)
+        # else:
+        #     preds = model(x)
         return preds
 
     def predict(
