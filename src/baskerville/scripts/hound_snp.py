@@ -140,8 +140,8 @@ def main():
         out_dir = temp_dir + "/output_dir"
         options.out_dir = out_dir
 
-    if not os.path.isdir(options.out_dir):
-        os.mkdir(options.out_dir)
+    # is this here for GCS?
+    os.makedirs(options.out_dir, exist_ok=True)
 
     if len(args) == 3:
         # single worker
@@ -199,9 +199,6 @@ def main():
     options.snp_stats = options.snp_stats.split(",")
     if options.targets_file is None:
         parser.error("Must provide targets file")
-
-    if options.cluster_snps_pct > 0 and options.indel_stitch:
-        parser.error("Cannot use --cluster_snps_pct and --indel_stitch together")
 
     #################################################################
     # check if the program is run on GPU, else quit
