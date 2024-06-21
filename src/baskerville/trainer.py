@@ -510,8 +510,8 @@ class Trainer:
 
                     # upload to gcs
                     if self.gcs:
-                        upload_folder_gcs(self.log_dir, self.gcs_log_dir)
-
+                        upload_folder_gcs(train_log_dir, self.gcs_log_dir + "/train")
+                        upload_folder_gcs(valid_log_dir, self.gcs_log_dir + "/valid")
                     # checkpoint
                     managers[di].save()
                     model.save(
@@ -713,7 +713,8 @@ class Trainer:
 
                 # upload to gcs
                 if self.gcs:
-                    upload_folder_gcs(self.log_dir, self.gcs_log_dir)
+                    upload_folder_gcs(train_log_dir, self.gcs_log_dir + "/train")
+                    upload_folder_gcs(valid_log_dir, self.gcs_log_dir + "/valid")
 
                 # checkpoint
                 manager.save()
