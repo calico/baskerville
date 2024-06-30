@@ -128,22 +128,27 @@ def poisson_multinomial(
         rescale (bool): Rescale loss after re-weighting.
     """
     seq_len = y_true.shape[1]
-    pos_start = -(seq_len / 2 - 0.5)
-    pos_end = seq_len / 2 + 0.5
-    sigma = -pos_start / (np.log(weight_range)) ** (1 / weight_exp)
-
-    positions = tf.range(pos_start, pos_end, dtype=tf.float32)
-    position_weights = tf.exp(-((positions / sigma) ** weight_exp))
-    position_weights /= tf.reduce_max(position_weights)
-    position_weights = tf.expand_dims(position_weights, axis=0)
-    position_weights = tf.expand_dims(position_weights, axis=-1)
+    
+    if weight_range < 1:
+        raise ValueError("Poisson Multinomial weight_range must be >=1")
+    elif weight_range == 1:
+        position_weights = tf.ones((1, seq_len, 1))
+    else:
+        pos_start = -(seq_len / 2 - 0.5)
+        pos_end = seq_len / 2 + 0.5
+        positions = tf.range(pos_start, pos_end, dtype=tf.float32)
+        sigma = -pos_start / (np.log(weight_range)) ** (1 / weight_exp)
+        position_weights = tf.exp(-((positions / sigma) ** weight_exp))
+        position_weights /= tf.reduce_max(position_weights)
+        position_weights = tf.expand_dims(position_weights, axis=0)
+        position_weights = tf.expand_dims(position_weights, axis=-1)
 
     y_true = tf.math.multiply(y_true, position_weights)
     y_pred = tf.math.multiply(y_pred, position_weights)
 
     # sum across lengths
-    s_true = tf.math.reduce_sum(y_true, axis=-2, keepdims=True)
-    s_pred = tf.math.reduce_sum(y_pred, axis=-2, keepdims=True)
+    s_true = tf.math.reduce_sum(y_true, axis=-2) # B x T
+    s_pred = tf.math.reduce_sum(y_pred, axis=-2) # B x T
 
     # total count poisson loss, mean across targets
     poisson_term = poisson(s_true, s_pred)  # B x T
@@ -154,7 +159,7 @@ def poisson_multinomial(
     y_pred += epsilon
 
     # normalize to sum to one
-    p_pred = y_pred / s_pred
+    p_pred = y_pred / tf.expand_dims(s_pred, axis=-2) # B x L x T
 
     # multinomial loss
     pl_pred = tf.math.log(p_pred)  # B x L x T
