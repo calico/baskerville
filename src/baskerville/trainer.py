@@ -531,22 +531,40 @@ class Trainer:
 
         if self.strategy is None:
 
-            @tf.function
-            def train_step(x, y):
-                with tf.GradientTape() as tape:
-                    pred = model(x, training=True)
-                    loss = self.loss_fn(y, pred) + sum(model.losses)
-                train_loss(loss)
-                train_r(y, pred)
-                train_r2(y, pred)
-                gradients = tape.gradient(loss, model.trainable_variables)
-                if self.agc_clip is not None:
-                    gradients = adaptive_clip_grad(
-                        model.trainable_variables, gradients, self.agc_clip
+            if self.loss_scale:
+                
+                @tf.function
+                def train_step(x, y):
+                    with tf.GradientTape() as tape:
+                        pred = model(x, training=True)
+                        loss = self.loss_fn(y, pred) + sum(model.losses)
+                        scaled_loss = self.optimizer.get_scaled_loss(loss)                        
+                    train_loss(loss)
+                    train_r(y, pred)
+                    train_r2(y, pred)
+                    scaled_gradients = tape.gradient(scaled_loss, model.trainable_variables)
+                    gradients = self.optimizer.get_unscaled_gradients(scaled_gradients)
+                    self.optimizer.apply_gradients(
+                        zip(gradients, model.trainable_variables)
+                    )                    
+            else:
+                
+                @tf.function
+                def train_step(x, y):
+                    with tf.GradientTape() as tape:
+                        pred = model(x, training=True)
+                        loss = self.loss_fn(y, pred) + sum(model.losses)
+                    train_loss(loss)
+                    train_r(y, pred)
+                    train_r2(y, pred)
+                    gradients = tape.gradient(loss, model.trainable_variables)
+                    if self.agc_clip is not None:
+                        gradients = adaptive_clip_grad(
+                            model.trainable_variables, gradients, self.agc_clip
+                        )
+                    self.optimizer.apply_gradients(
+                        zip(gradients, model.trainable_variables)
                     )
-                self.optimizer.apply_gradients(
-                    zip(gradients, model.trainable_variables)
-                )
 
             @tf.function
             def eval_step(x, y):

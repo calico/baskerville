@@ -149,7 +149,7 @@ class Lora(tf.keras.layers.Layer):
             use_bias=False,
             kernel_initializer=tf.keras.initializers.HeUniform(),
             #kernel_initializer=tf.keras.initializers.RandomNormal(stddev=1 / self.rank),
-            trainable=trainable,
+            trainable=True,
             name="lora_a"
         )
 
@@ -157,8 +157,85 @@ class Lora(tf.keras.layers.Layer):
             units=self.output_dim,
             use_bias=False,
             kernel_initializer=tf.keras.initializers.Zeros(),
-            trainable=trainable,
+            trainable=True,
             name="lora_b"
+        )
+
+    def call(self, inputs):
+        original_output = self.original_layer(inputs)
+        lora_output = self.up_layer(self.down_layer(inputs)) * self.scale
+        return original_output + lora_output
+
+    def get_config(self):
+        config = super().get_config().copy()
+        config.update(
+            {
+                "rank": self.rank,
+                "alpha": self.alpha
+            }
+        )
+        return config
+
+class Locon(tf.keras.layers.Layer):
+    # LoRA for conv-layer, adapted from: 
+    # https://arxiv.org/pdf/2309.14859#page=23.84
+    # https://github.com/KohakuBlueleaf/LyCORIS/blob/main/lycoris/modules/locon.py
+    # use default alpha and rank for locon
+    
+    def __init__(self, 
+                 original_layer, 
+                 rank=4, 
+                 alpha=1, 
+                 trainable=False,
+                 **kwargs):
+        
+        # keep the name of this layer the same as the original conv layer.
+        original_layer_config = original_layer.get_config()
+        name = original_layer_config["name"]
+        kwargs.pop("name", None)
+        super().__init__(name=name, trainable=trainable, **kwargs)
+
+        self.input_dim = original_layer.input_shape[-1]
+        self.output_dim = original_layer_config["filters"]
+        
+        if rank > self.output_dim:
+            raise ValueError(f"LoRA rank {rank} must be less or equal than {self.output_dim}")
+
+        self.rank = rank
+        self.alpha = alpha
+        self.scale = alpha / rank
+        self.original_layer = original_layer
+        self.original_layer.trainable = False
+
+        input_dim = original_layer.input_shape[-1]
+        output_dim = original_layer_config["filters"]
+        kernel_size = original_layer_config['kernel_size'][0]
+        stride = original_layer_config['strides'][0]
+        dilation_rate = original_layer_config["dilation_rate"][0]
+
+        # Note: the original paper mentions that normal distribution was
+        # used for initialization. However, the official LoRA implementation
+        # uses "Kaiming/He Initialization".
+        
+        self.down_layer = tf.keras.layers.Conv1D(
+            filters=rank,
+            kernel_size=kernel_size,
+            strides=stride,
+            padding="same",
+            use_bias=False,
+            dilation_rate=dilation_rate,
+            kernel_initializer=tf.keras.initializers.HeUniform(),
+            name='locon_down'
+        )
+        
+        self.up_layer = tf.keras.layers.Conv1D(
+            filters=output_dim,
+            kernel_size=1,
+            strides=stride,
+            padding="same",
+            use_bias=False,
+            kernel_initializer=tf.keras.initializers.Zeros(),
+            name='locon_up'
         )
 
     def call(self, inputs):
@@ -226,7 +303,6 @@ class AdapterHoulsby(tf.keras.layers.Layer):
 ############################################################
 # Basic
 ############################################################
-
 
 class Scale(tf.keras.layers.Layer):
     """Scale the input by a learned value.
@@ -678,7 +754,8 @@ class MultiheadAttention(tf.keras.layers.Layer):
             q *= self._key_size**-0.5
 
         # [B, H, T', T]
-        content_logits = tf.matmul(q + self._r_w_bias, k, transpose_b=True)
+        #content_logits = tf.matmul(q + self._r_w_bias, k, transpose_b=True)        
+        content_logits = tf.matmul(q + tf.cast(self._r_w_bias, dtype=inputs.dtype), k, transpose_b=True)
 
         if self._num_position_features == 0:
             logits = content_logits
@@ -714,10 +791,12 @@ class MultiheadAttention(tf.keras.layers.Layer):
             # Add shifted relative logits to content logits.
             if self._content_position_bias:
                 # [B, H, T', 2T-1]
-                relative_logits = tf.matmul(q + self._r_r_bias, r_k, transpose_b=True)
+                #relative_logits = tf.matmul(q + self._r_r_bias, r_k, transpose_b=True)
+                relative_logits = tf.matmul(q + tf.cast(self._r_r_bias, dtype=inputs.dtype), r_k, transpose_b=True)
             else:
                 # [1, H, 1, 2T-1]
-                relative_logits = tf.matmul(self._r_r_bias, r_k, transpose_b=True)
+                #relative_logits = tf.matmul(self._r_r_bias, r_k, transpose_b=True)
+                relative_logits = tf.matmul(tf.cast(self._r_r_bias, dtype=inputs.dtype), r_k, transpose_b=True)
                 # [1, H, T', 2T-1]
                 relative_logits = tf.broadcast_to(
                     relative_logits,
@@ -804,7 +883,7 @@ class SqueezeExcite(tf.keras.layers.Layer):
         self,
         activation='relu',
         additive=False,
-        bottleneck_ratio=8,
+        rank=8,
         norm_type=None,
         bn_momentum=0.9,
         use_bias=True,
@@ -817,7 +896,7 @@ class SqueezeExcite(tf.keras.layers.Layer):
         self.additive = additive
         self.norm_type = norm_type
         self.bn_momentum = bn_momentum
-        self.bottleneck_ratio = bottleneck_ratio
+        self.rank = rank
         self.kernel_initializer=kernel_initializer
         self.bias_initializer=bias_initializer
         self.use_bias=use_bias
@@ -851,7 +930,7 @@ class SqueezeExcite(tf.keras.layers.Layer):
             exit(1)
 
         self.dense1 = tf.keras.layers.Dense(
-            units=self.num_channels // self.bottleneck_ratio, 
+            units=self.rank, 
             activation="relu",
             use_bias=self.use_bias,
             kernel_initializer=self.kernel_initializer,
@@ -900,8 +979,7 @@ class SqueezeExcite(tf.keras.layers.Layer):
                 "use_bias":self.use_bias,
                 "norm_type": self.norm_type,
                 "bn_momentum": self.bn_momentum,
-                "bottleneck_ratio": self.bottleneck_ratio,
-                'bottleneck_size': self.num_channels // self.bottleneck_ratio,
+                "rank": self.rank
             }
         )
         return config

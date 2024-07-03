@@ -25,7 +25,7 @@ from baskerville import blocks
 from baskerville import dataset
 from baskerville import layers
 from baskerville import metrics
-
+from baskerville.helpers import transfer_helper
 
 class SeqNN:
     """Sequence neural network model.
@@ -198,6 +198,13 @@ class SeqNN:
         for ho in self.head_output:
             self.models.append(tf.keras.Model(inputs=sequence, outputs=ho))
         self.model = self.models[0]
+   
+        # add adapter
+        if hasattr(self, 'adapter'):
+            for hi, head in enumerate(self.heads):
+                self.models[hi] = self.insert_adapter(self.models[hi])
+            self.model = self.models[0]
+
         if self.verbose:
             print(self.model.summary())
 
@@ -1093,3 +1100,18 @@ class SeqNN:
             print("model_strides", self.model_strides)
             print("target_lengths", self.target_lengths)
             print("target_crops", self.target_crops)
+
+    # method for inserting adapter for transfer learning
+    def insert_adapter(self, model):
+        if self.adapter=='houlsby':
+            output_model = transfer_helper.add_houlsby(model, 
+                                                       self.strand_pair[0], 
+                                                       latent_size=self.adapter_latent)
+        elif self.adapter=='houlsby_se':
+            output_model = transfer_helper.add_houlsby_se(model, 
+                                                          self.strand_pair[0], 
+                                                          houlsby_latent=self.adapter_latent,
+                                                          conv_select=self.conv_select,
+                                                          se_rank=self.se_rank)
+        return output_model
+                    
