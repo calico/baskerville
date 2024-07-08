@@ -16,10 +16,11 @@
 from optparse import OptionParser
 import pdb
 import os
-from baskerville.snps import score_snps
 import tempfile
 import shutil
 import tensorflow as tf
+
+from baskerville.snps import score_gene_snps
 from baskerville.helpers.gcs_utils import (
     upload_folder_gcs,
     download_rename_inputs,
@@ -27,21 +28,29 @@ from baskerville.helpers.gcs_utils import (
 from baskerville.helpers.utils import load_extra_options
 
 """
-hound_snp.py
+hound_snpgene.py
 
-Compute variant effect predictions for SNPs in a VCF file.
+Compute variant effect predictions for SNPs in a VCF file,
+with respect to gene exons in a GTF file
 """
 
 
 def main():
     usage = "usage: %prog [options] <params_file> <model_file> <vcf_file>"
     parser = OptionParser(usage)
+    # parser.add_option(
+    #     "-b",
+    #     dest="bedgraph",
+    #     default=False,
+    #     action="store_true",
+    #     help="Write ref/alt predictions as bedgraph [Default: %default]",
+    # )
     parser.add_option(
         "-c",
-        dest="cluster_snps_pct",
+        dest="cluster_pct",
         default=0,
         type="float",
-        help="Cluster SNPs within a %% of the seq length to make a single ref pred [Default: %default]",
+        help="Cluster genes within a %% of the seq length to make a single ref pred [Default: %default]",
     )
     parser.add_option(
         "-f",
@@ -57,6 +66,12 @@ def main():
         help="Use mixed float16 precision [Default: %default]",
     )
     parser.add_option(
+        "-g",
+        dest="genes_gtf",
+        default="%s/genes/gencode41/gencode41_basic_nort.gtf" % os.environ["HG38"],
+        help="GTF for gene definition [Default %default]",
+    )
+    parser.add_option(
         "--indel_stitch",
         dest="indel_stitch",
         default=False,
@@ -66,7 +81,7 @@ def main():
     parser.add_option(
         "-o",
         dest="out_dir",
-        default="snp_out",
+        default="snpgene_out",
         help="Output directory for tables and plots [Default: %default]",
     )
     parser.add_option(
@@ -89,6 +104,13 @@ def main():
         default="0",
         type="str",
         help="Ensemble prediction shifts [Default: %default]",
+    )
+    parser.add_option(
+        "--span",
+        dest="span",
+        default=False,
+        action="store_true",
+        help="Aggregate entire gene span [Default: %default]",
     )
     parser.add_option(
         "--stats",
@@ -233,9 +255,10 @@ def main():
     #################################################################
     # calculate SAD scores:
     if options.processes is not None:
-        score_snps(params_file, model_file, vcf_file, worker_index, options)
+        score_gene_snps(params_file, model_file, vcf_file, worker_index, options)
     else:
-        score_snps(params_file, model_file, vcf_file, 0, options)
+        score_gene_snps(params_file, model_file, vcf_file, 0, options)
+
     # if the output dir is in gcs, sync it up
     if options.gcs:
         upload_folder_gcs(options.out_dir, gcs_output_dir)

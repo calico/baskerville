@@ -21,7 +21,8 @@ import pdb
 
 import numpy as np
 import tensorflow as tf
-
+import tempfile
+from baskerville.helpers.gcs_utils import is_gcs_path, upload_folder_gcs
 from baskerville import metrics
 from tensorflow.keras import mixed_precision
 
@@ -32,6 +33,8 @@ def parse_loss(
     keras_fit: bool = True,
     spec_weight: float = 1,
     total_weight: float = 1,
+    weight_range: float = 1,
+    weight_exp: int = 1,
 ):
     """Parse loss function from label, strategy, and fitting method.
 
@@ -56,7 +59,10 @@ def parse_loss(
             )
         elif loss_label == "poisson_mn":
             loss_fn = metrics.PoissonMultinomial(
-                total_weight, reduction=tf.keras.losses.Reduction.NONE
+                total_weight=total_weight,
+                weight_range=weight_range,
+                weight_exp=weight_exp,
+                reduction=tf.keras.losses.Reduction.NONE,
             )
         elif loss_label == "poisson_kl":
             loss_fn = metrics.PoissonKL(
@@ -78,7 +84,11 @@ def parse_loss(
         elif loss_label == "poisson_kl":
             loss_fn = metrics.PoissonKL(spec_weight)
         elif loss_label == "poisson_mn":
-            loss_fn = metrics.PoissonMultinomial(total_weight)
+            loss_fn = metrics.PoissonMultinomial(
+                total_weight=total_weight,
+                weight_range=weight_range,
+                weight_exp=weight_exp,
+            )
         else:
             loss_fn = tf.keras.losses.Poisson()
 
@@ -104,6 +114,7 @@ class Trainer:
         train_data,
         eval_data,
         out_dir: str,
+        log_dir: str,
         strategy=None,
         num_gpu: int = 1,
         keras_fit: bool = False,
@@ -117,11 +128,21 @@ class Trainer:
         if type(self.eval_data) is not list:
             self.eval_data = [self.eval_data]
         self.out_dir = out_dir
+        self.log_dir = log_dir
         self.strategy = strategy
         self.num_gpu = num_gpu
         self.batch_size = self.train_data[0].batch_size
         self.compiled = False
         self.loss_scale = loss_scale
+
+        # if log_dir is in gcs then create a local temp dir
+        if is_gcs_path(self.log_dir):
+            folder_name = "/".join(self.log_dir.split("/")[3:])
+            self.log_dir = tempfile.mkdtemp() + "/" + folder_name
+            self.gcs_log_dir = log_dir
+            self.gcs = True
+        else:
+            self.gcs = False
 
         # early stopping
         self.patience = self.params.get("patience", 20)
@@ -142,9 +163,17 @@ class Trainer:
         # loss
         self.spec_weight = self.params.get("spec_weight", 1)
         self.total_weight = self.params.get("total_weight", 1)
+        self.weight_range = self.params.get("weight_range", 1)
+        self.weight_exp = self.params.get("weight_exp", 1)
         self.loss = self.params.get("loss", "poisson").lower()
         self.loss_fn = parse_loss(
-            self.loss, self.strategy, keras_fit, self.spec_weight, self.total_weight
+            self.loss,
+            self.strategy,
+            keras_fit,
+            self.spec_weight,
+            self.total_weight,
+            self.weight_range,
+            self.weight_exp,
         )
 
         # optimizer
@@ -203,7 +232,7 @@ class Trainer:
 
         callbacks = [
             early_stop,
-            tf.keras.callbacks.TensorBoard(self.out_dir),
+            tf.keras.callbacks.TensorBoard(self.log_dir, histogram_freq=1),
             tf.keras.callbacks.ModelCheckpoint("%s/model_check.h5" % self.out_dir),
             save_best,
         ]
@@ -417,6 +446,12 @@ class Trainer:
             file.write('epoch\tbatch\tgpu_mem(GB)\n')
 
         first_step = True
+        # set up summary writer
+        train_log_dir = self.log_dir + "/train"
+        valid_log_dir = self.log_dir + "/valid"
+        train_summary_writer = tf.summary.create_file_writer(train_log_dir)
+        valid_summary_writer = tf.summary.create_file_writer(valid_log_dir)
+
         for ei in range(epoch_start, self.train_epochs_max):
             if ei >= self.train_epochs_min and np.min(unimproved) > self.patience:
                 break
@@ -456,6 +491,13 @@ class Trainer:
                 for di in range(self.num_datasets):
                     print("  Data %d" % di, end="")
                     model = seqnn_model.models[di]
+                    with train_summary_writer.as_default():
+                        tf.summary.scalar(
+                            "loss", train_loss[di].result().numpy(), step=ei
+                        )
+                        tf.summary.scalar("r", train_r[di].result().numpy(), step=ei)
+                        tf.summary.scalar("r2", train_r2[di].result().numpy(), step=ei)
+                        train_summary_writer.flush()
 
                     # print training accuracy
                     print(
@@ -477,6 +519,14 @@ class Trainer:
                             else:
                                 eval_step1_distr(x, y)
 
+                    with valid_summary_writer.as_default():
+                        tf.summary.scalar(
+                            "loss", valid_loss[di].result().numpy(), step=ei
+                        )
+                        tf.summary.scalar("r", valid_r[di].result().numpy(), step=ei)
+                        tf.summary.scalar("r2", valid_r2[di].result().numpy(), step=ei)
+                        valid_summary_writer.flush()
+
                     # print validation accuracy
                     print(
                         " - valid_loss: %.4f" % valid_loss[di].result().numpy(), end=""
@@ -485,6 +535,10 @@ class Trainer:
                     print(" - valid_r2: %.4f" % valid_r2[di].result().numpy(), end="")
                     early_stop_stat = valid_r[di].result().numpy()
 
+                    # upload to gcs
+                    if self.gcs:
+                        upload_folder_gcs(train_log_dir, self.gcs_log_dir)
+                        upload_folder_gcs(valid_log_dir, self.gcs_log_dir)
                     # checkpoint
                     managers[di].save()
                     model.save(
@@ -633,6 +687,12 @@ class Trainer:
         valid_best = -np.inf
         unimproved = 0
 
+        # set up summary writer
+        train_log_dir = self.log_dir + "/train"
+        valid_log_dir = self.log_dir + "/valid"
+        train_summary_writer = tf.summary.create_file_writer(train_log_dir)
+        valid_summary_writer = tf.summary.create_file_writer(valid_log_dir)
+
         # training loop
         gpu_memory_callback = GPUMemoryUsageCallback()
         file_path='%s/gpu_mem.txt' % self.out_dir
@@ -672,6 +732,13 @@ class Trainer:
                 train_loss_epoch = train_loss.result().numpy()
                 train_r_epoch = train_r.result().numpy()
                 train_r2_epoch = train_r2.result().numpy()
+
+                with train_summary_writer.as_default():
+                    tf.summary.scalar("loss", train_loss_epoch, step=ei)
+                    tf.summary.scalar("r", train_r_epoch, step=ei)
+                    tf.summary.scalar("r2", train_r2_epoch, step=ei)
+                    train_summary_writer.flush()
+
                 print(
                     "Epoch %d - %ds - train_loss: %.4f - train_r: %.4f - train_r2: %.4f"
                     % (
@@ -688,11 +755,23 @@ class Trainer:
                 valid_loss_epoch = valid_loss.result().numpy()
                 valid_r_epoch = valid_r.result().numpy()
                 valid_r2_epoch = valid_r2.result().numpy()
+
+                with valid_summary_writer.as_default():
+                    tf.summary.scalar("loss", valid_loss_epoch, step=ei)
+                    tf.summary.scalar("r", valid_r_epoch, step=ei)
+                    tf.summary.scalar("r2", valid_r2_epoch, step=ei)
+                    valid_summary_writer.flush()
+
                 print(
                     " - valid_loss: %.4f - valid_r: %.4f - valid_r2: %.4f"
                     % (valid_loss_epoch, valid_r_epoch, valid_r2_epoch),
                     end="",
                 )
+
+                # upload to gcs
+                if self.gcs:
+                    upload_folder_gcs(train_log_dir, self.gcs_log_dir)
+                    upload_folder_gcs(valid_log_dir, self.gcs_log_dir)
 
                 # checkpoint
                 manager.save()

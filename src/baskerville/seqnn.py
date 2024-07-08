@@ -925,7 +925,12 @@ class SeqNN:
         else:
             model = self.model
 
-        return model(x).numpy().astype(dtype)
+        preds = model(x).numpy().astype(dtype)
+        # if isinstance(x, np.ndarray):
+        #     preds = model(x).numpy().astype(dtype)
+        # else:
+        #     preds = model(x)
+        return preds
 
     def predict(
         self,
@@ -968,7 +973,7 @@ class SeqNN:
             preds = model.predict_generator(dataset, **kwargs).astype(dtype)
         elif stream:
             preds = []
-            for x, y in seq_data.dataset:
+            for x, y in dataset:
                 yh = model.predict(x, **kwargs)
                 if step > 1:
                     yh = yh[:, step_i, :]

@@ -319,7 +319,7 @@ def make_strand_transform(targets_df, targets_strand_df):
         targets_strand_df (pd.DataFrame): Targets DataFrame, with strand pairs collapsed.
 
     Returns:
-        scipy.sparse.csr_matrix: Sparse matrix to sum strand pairs.
+        scipy.sparse.dok_matrix: Sparse matrix to sum strand pairs.
     """
 
     # initialize sparse matrix
@@ -336,7 +336,6 @@ def make_strand_transform(targets_df, targets_strand_df):
             if target.identifier[-1] == "-":
                 sti += 1
         ti += 1
-    strand_transform = strand_transform.tocsr()
 
     return strand_transform
 
@@ -367,7 +366,7 @@ def targets_prep_strand(targets_df):
     return targets_strand_df
 
 
-def untransform_preds(preds, targets_df, unscale=False):
+def untransform_preds(preds, targets_df, unscale=False, unclip=True):
     """Undo the squashing transformations performed for the tasks.
 
     Args:
@@ -378,9 +377,10 @@ def untransform_preds(preds, targets_df, unscale=False):
       preds (np.array): Untransformed predictions LxT.
     """
     # clip soft
-    cs = np.expand_dims(np.array(targets_df.clip_soft), axis=0)
-    preds_unclip = cs - 1 + (preds - cs + 1) ** 2
-    preds = np.where(preds > cs, preds_unclip, preds)
+    if unclip:
+        cs = np.expand_dims(np.array(targets_df.clip_soft), axis=0)
+        preds_unclip = cs - 1 + (preds - cs + 1) ** 2
+        preds = np.where(preds > cs, preds_unclip, preds)
 
     # sqrt
     sqrt_mask = np.array([ss.find("_sqrt") != -1 for ss in targets_df.sum_stat])
@@ -394,7 +394,7 @@ def untransform_preds(preds, targets_df, unscale=False):
     return preds
 
 
-def untransform_preds1(preds, targets_df, unscale=False):
+def untransform_preds1(preds, targets_df, unscale=False, unclip=True):
     """Undo the squashing transformations performed for the tasks.
 
     Args:
@@ -409,9 +409,10 @@ def untransform_preds1(preds, targets_df, unscale=False):
     preds = preds / scale
 
     # clip soft
-    cs = np.expand_dims(np.array(targets_df.clip_soft), axis=0)
-    preds_unclip = cs + (preds - cs) ** 2
-    preds = np.where(preds > cs, preds_unclip, preds)
+    if unclip:
+        cs = np.expand_dims(np.array(targets_df.clip_soft), axis=0)
+        preds_unclip = cs + (preds - cs) ** 2
+        preds = np.where(preds > cs, preds_unclip, preds)
 
     # ** 0.75
     sqrt_mask = np.array([ss.find("_sqrt") != -1 for ss in targets_df.sum_stat])
