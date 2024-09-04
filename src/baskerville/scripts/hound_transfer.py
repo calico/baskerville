@@ -60,6 +60,12 @@ def main():
         help="Output directory [Default: %(default)s]",
     )
     parser.add_argument(
+        "-l",
+        "--log_dir",
+        default="log_out",
+        help="Tensorboard log directory [Default: %(default)s]",
+    )    
+    parser.add_argument(
         "--restore",
         default=None,
         help="Restore model and continue training [Default: %(default)s]",
@@ -261,11 +267,11 @@ def main():
             seqnn_model.append_activation()
             # run with loss scaling
             seqnn_trainer = trainer.Trainer(
-                params_train, train_data, eval_data, args.out_dir, loss_scale=True
+                params_train, train_data, eval_data, args.out_dir, args.log_dir, loss_scale=True
             )
         else:
             seqnn_trainer = trainer.Trainer(
-                params_train, train_data, eval_data, args.out_dir
+                params_train, train_data, eval_data, args.out_dir, args.log_dir
             )
             
         # compile model
