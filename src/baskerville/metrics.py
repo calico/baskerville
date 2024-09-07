@@ -128,7 +128,7 @@ def poisson_multinomial(
         rescale (bool): Rescale loss after re-weighting.
     """
     seq_len = y_true.shape[1]
-    
+
     if weight_range < 1:
         raise ValueError("Poisson Multinomial weight_range must be >=1")
     elif weight_range == 1:
@@ -147,8 +147,8 @@ def poisson_multinomial(
     y_pred = tf.math.multiply(y_pred, position_weights)
 
     # sum across lengths
-    s_true = tf.math.reduce_sum(y_true, axis=-2) # B x T
-    s_pred = tf.math.reduce_sum(y_pred, axis=-2) # B x T
+    s_true = tf.math.reduce_sum(y_true, axis=-2)  # B x T
+    s_pred = tf.math.reduce_sum(y_pred, axis=-2)  # B x T
 
     # total count poisson loss, mean across targets
     poisson_term = poisson(s_true, s_pred)  # B x T
@@ -159,7 +159,7 @@ def poisson_multinomial(
     y_pred += epsilon
 
     # normalize to sum to one
-    p_pred = y_pred / tf.expand_dims(s_pred, axis=-2) # B x L x T
+    p_pred = y_pred / tf.expand_dims(s_pred, axis=-2)  # B x L x T
 
     # multinomial loss
     pl_pred = tf.math.log(p_pred)  # B x L x T
@@ -168,7 +168,7 @@ def poisson_multinomial(
     multinomial_term /= tf.reduce_sum(position_weights)
 
     # normalize to scale of 1:1 term ratio
-    loss_raw = multinomial_term + total_weight * poisson_term
+    loss_raw = multinomial_term + total_weight * poisson_term  # B x T
     if rescale:
         loss_rescale = loss_raw * 2 / (1 + total_weight)
     else:
