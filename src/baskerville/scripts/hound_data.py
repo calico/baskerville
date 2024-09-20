@@ -81,7 +81,9 @@ def main():
         help="Generate cross fold split [Default: %default]",
     )
     parser.add_option(
-        "-g", dest="gaps_file", help="Genome assembly gaps BED [Default: %default]"
+        "-g",
+        dest="gaps_file",
+        help="Genome assembly gaps BED [Default: %default]"
     )
     parser.add_option(
         "-i",
@@ -194,7 +196,11 @@ def main():
         type="str",
         help="Proportion of the data for testing [Default: %default]",
     )
-    parser.add_option("-u", dest="umap_bed", help="Unmappable regions in BED format")
+    parser.add_option(
+        "-u",
+        dest="umap_bed",
+        help="Unmappable regions in BED format"
+    )
     parser.add_option(
         "--umap_t",
         dest="umap_t",
@@ -229,6 +235,13 @@ def main():
         default=0.05,
         type="str",
         help="Proportion of the data for validation [Default: %default]",
+    )
+    parser.add_option(
+        "--transform_old",
+        dest="transform_old",
+        default=False,
+        action="store_true",
+        help="Apply old target transforms [Default: %default]",
     )
     (options, args) = parser.parse_args()
 
@@ -493,6 +506,8 @@ def main():
                 cmd += " -b %s" % options.blacklist_bed
             if options.interp_nan:
                 cmd += " -i"
+            if options.transform_old:
+                cmd += " --transform_old"
             cmd += " %s" % genome_cov_file
             cmd += " %s" % seqs_bed_file
             cmd += " %s" % seqs_cov_file
