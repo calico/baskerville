@@ -68,7 +68,7 @@ def main():
     parser.add_option(
         "-o",
         dest="out_dir",
-        default="sat_mut",
+        default="sat_del",
         help="Output directory [Default: %default]",
     )
     parser.add_option(
@@ -269,7 +269,7 @@ def main():
             # for each nucleotide
             # copy and modify
             alt_1hot = np.copy(ref_1hot)
-            
+
             # left-matched shift: delete 1 nucleotide at position mi
             dna.hot1_delete(alt_1hot[0], mi, options.del_len)
 
@@ -300,9 +300,7 @@ def main():
                 ref_preds_stitch, alt_preds, options.snp_stats, None
             )
             for snp_stat in options.snp_stats:
-                scores_h5[snp_stat][si, mi - mut_start, 0] = ism_scores[
-                    snp_stat
-                ]
+                scores_h5[snp_stat][si, mi - mut_start, 0] = ism_scores[snp_stat]
 
     # close output HDF5
     scores_h5.close()
