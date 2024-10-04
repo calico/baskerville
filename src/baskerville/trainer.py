@@ -12,10 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # =========================================================================
-# modified fit2 to:
-# show progress bar during training
-# save gpu memory information
-
 import time
 import pdb
 
@@ -441,9 +437,9 @@ class Trainer:
         # training loop
 
         gpu_memory_callback = GPUMemoryUsageCallback()
-        file_path='%s/gpu_mem.txt' % self.out_dir
-        with open(file_path, 'w') as file:
-            file.write('epoch\tbatch\tgpu_mem(GB)\n')
+        file_path = "%s/gpu_mem.txt" % self.out_dir
+        with open(file_path, "w") as file:
+            file.write("epoch\tbatch\tgpu_mem(GB)\n")
 
         first_step = True
         # set up summary writer
@@ -461,10 +457,12 @@ class Trainer:
 
                 # get iterators
                 train_data_iters = [iter(td.dataset) for td in self.train_data]
-                
+
                 # train
                 t0 = time.time()
-                prog_bar = tf.keras.utils.Progbar(len(self.dataset_indexes))  # Create Keras Progbar
+                prog_bar = tf.keras.utils.Progbar(
+                    len(self.dataset_indexes)
+                )  # Create Keras Progbar
                 for didx, di in enumerate(self.dataset_indexes):
                     x, y = safe_next(train_data_iters[di])
                     if self.strategy is None:
@@ -481,12 +479,12 @@ class Trainer:
                         print("Successful first step!", flush=True)
                         first_step = False
                     prog_bar.add(1)
-                    
-                    if (ei == epoch_start) and (didx < 1000) and (didx%100 == 1): 
-                        mem=gpu_memory_callback.on_batch_end()
-                        file = open(file_path, 'a')
-                        file.write("%d\t%d\t%.2f\n"%(ei, didx, mem))
-                
+
+                    if (ei == epoch_start) and (didx < 1000) and (didx % 100 == 1):
+                        mem = gpu_memory_callback.on_batch_end()
+                        file = open(file_path, "a")
+                        file.write("%d\t%d\t%.2f\n" % (ei, didx, mem))
+
                 print("Epoch %d - %ds" % (ei, (time.time() - t0)))
                 for di in range(self.num_datasets):
                     print("  Data %d" % di, end="")
@@ -567,7 +565,6 @@ class Trainer:
                     valid_r[di].reset_states()
                     valid_r2[di].reset_states()
 
-    
     def fit_tape(self, seqnn_model):
         """Train the model using a custom tf.GradientTape loop."""
         if not self.compiled:
@@ -586,23 +583,26 @@ class Trainer:
         if self.strategy is None:
 
             if self.loss_scale:
-                
+
                 @tf.function
                 def train_step(x, y):
                     with tf.GradientTape() as tape:
                         pred = model(x, training=True)
                         loss = self.loss_fn(y, pred) + sum(model.losses)
-                        scaled_loss = self.optimizer.get_scaled_loss(loss)                        
+                        scaled_loss = self.optimizer.get_scaled_loss(loss)
                     train_loss(loss)
                     train_r(y, pred)
                     train_r2(y, pred)
-                    scaled_gradients = tape.gradient(scaled_loss, model.trainable_variables)
+                    scaled_gradients = tape.gradient(
+                        scaled_loss, model.trainable_variables
+                    )
                     gradients = self.optimizer.get_unscaled_gradients(scaled_gradients)
                     self.optimizer.apply_gradients(
                         zip(gradients, model.trainable_variables)
-                    )                    
+                    )
+
             else:
-                
+
                 @tf.function
                 def train_step(x, y):
                     with tf.GradientTape() as tape:
@@ -695,9 +695,9 @@ class Trainer:
 
         # training loop
         gpu_memory_callback = GPUMemoryUsageCallback()
-        file_path='%s/gpu_mem.txt' % self.out_dir
-        with open(file_path, 'w') as file:
-            file.write('epoch\tbatch\tgpu_mem(GB)\n')
+        file_path = "%s/gpu_mem.txt" % self.out_dir
+        with open(file_path, "w") as file:
+            file.write("epoch\tbatch\tgpu_mem(GB)\n")
 
         for ei in range(epoch_start, self.train_epochs_max):
             if ei >= self.train_epochs_min and unimproved > self.patience:
@@ -716,10 +716,10 @@ class Trainer:
                         print("Successful first step!", flush=True)
 
                     # print gpu memory usage
-                    if (ei == epoch_start) and (si < 1000) and (si%100 == 1): 
-                        mem=gpu_memory_callback.on_batch_end()
-                        with open(file_path, 'a') as file:
-                            file.write("%d\t%d\t%.2f\n"%(ei, si, mem))
+                    if (ei == epoch_start) and (si < 1000) and (si % 100 == 1):
+                        mem = gpu_memory_callback.on_batch_end()
+                        with open(file_path, "a") as file:
+                            file.write("%d\t%d\t%.2f\n" % (ei, si, mem))
 
                 # evaluate
                 for x, y in self.eval_data[0].dataset:
@@ -875,7 +875,7 @@ class Trainer:
                 global_clipnorm=global_clipnorm,
                 amsgrad=False,
             )  # reduces performance in my experience
-            
+
         elif optimizer_type in ["sgd", "momentum"]:
             self.optimizer = tf.keras.optimizers.SGD(
                 learning_rate=lr_schedule,
@@ -1114,19 +1114,19 @@ def CheckGradientNA(gradients):
     for grad in gradients:
         if grad is not None:
             if tf.reduce_any(tf.math.is_nan(grad)):
-                raise ValueError("NaN gradient detected.")                
+                raise ValueError("NaN gradient detected.")
+
 
 # Define a custom callback class to track GPU memory usage
 class GPUMemoryUsageCallback(tf.keras.callbacks.Callback):
     def on_train_begin(self, logs=None):
         # Enable memory growth to avoid GPU memory allocation issues
-        physical_devices = tf.config.experimental.list_physical_devices('GPU')
+        physical_devices = tf.config.experimental.list_physical_devices("GPU")
         if physical_devices:
             for device in physical_devices:
                 tf.config.experimental.set_memory_growth(device, True)
 
     def on_batch_end(self, logs=None):
-        gpu_memory = tf.config.experimental.get_memory_info('GPU:0')
-        current_memory = gpu_memory['peak'] / 1e9  # Convert to GB
+        gpu_memory = tf.config.experimental.get_memory_info("GPU:0")
+        current_memory = gpu_memory["peak"] / 1e9  # Convert to GB
         return current_memory
-

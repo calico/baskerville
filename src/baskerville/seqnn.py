@@ -25,7 +25,8 @@ from baskerville import blocks
 from baskerville import dataset
 from baskerville import layers
 from baskerville import metrics
-from baskerville.helpers import transfer_helper
+from baskerville.helpers import transfer
+
 
 class SeqNN:
     """Sequence neural network model.
@@ -198,9 +199,9 @@ class SeqNN:
         for ho in self.head_output:
             self.models.append(tf.keras.Model(inputs=sequence, outputs=ho))
         self.model = self.models[0]
-   
+
         # add adapter
-        if hasattr(self, 'adapter'):
+        if hasattr(self, "adapter"):
             for hi, head in enumerate(self.heads):
                 self.models[hi] = self.insert_adapter(self.models[hi])
             self.model = self.models[0]
@@ -229,9 +230,11 @@ class SeqNN:
     def append_activation(self):
         """add additional activation to convert float16 output to float32, required for mixed precision"""
         model_0 = self.model
-        new_outputs = tf.keras.layers.Activation('linear', dtype='float32')(model_0.layers[-1].output)
+        new_outputs = tf.keras.layers.Activation("linear", dtype="float32")(
+            model_0.layers[-1].output
+        )
         self.model = tf.keras.Model(inputs=model_0.layers[0].input, outputs=new_outputs)
-    
+
     def build_ensemble(self, ensemble_rc: bool = False, ensemble_shifts=[0]):
         """Build ensemble of models computing on augmented input sequences."""
         shift_bool = len(ensemble_shifts) > 1 or ensemble_shifts[0] != 0
@@ -1108,15 +1111,16 @@ class SeqNN:
 
     # method for inserting adapter for transfer learning
     def insert_adapter(self, model):
-        if self.adapter=='houlsby':
-            output_model = transfer_helper.add_houlsby(model, 
-                                                       self.strand_pair[0], 
-                                                       latent_size=self.adapter_latent)
-        elif self.adapter=='houlsby_se':
-            output_model = transfer_helper.add_houlsby_se(model, 
-                                                          self.strand_pair[0], 
-                                                          houlsby_latent=self.adapter_latent,
-                                                          conv_select=self.conv_select,
-                                                          se_rank=self.se_rank)
+        if self.adapter == "houlsby":
+            output_model = transfer.add_houlsby(
+                model, self.strand_pair[0], latent_size=self.adapter_latent
+            )
+        elif self.adapter == "houlsby_se":
+            output_model = transfer.add_houlsby_se(
+                model,
+                self.strand_pair[0],
+                houlsby_latent=self.adapter_latent,
+                conv_select=self.conv_select,
+                se_rank=self.se_rank,
+            )
         return output_model
-                    

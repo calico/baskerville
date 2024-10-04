@@ -18,6 +18,7 @@ import json
 import os
 import shutil
 import re
+import sys
 
 import numpy as np
 import pandas as pd
@@ -28,7 +29,7 @@ from baskerville import dataset
 from baskerville import seqnn
 from baskerville import trainer
 from baskerville import layers
-from baskerville.helpers import transfer_helper
+from baskerville.helpers import transfer
 
 """
 hound_transfer.py
@@ -36,6 +37,7 @@ hound_transfer.py
 Modified from hound_train.py.
 Additional argument to allow for transfer learning from existing Hound model.
 """
+
 
 def main():
     parser = argparse.ArgumentParser(description="Train a model.")
@@ -64,7 +66,7 @@ def main():
         "--log_dir",
         default="log_out",
         help="Tensorboard log directory [Default: %(default)s]",
-    )    
+    )
     parser.add_argument(
         "--restore",
         default=None,
@@ -76,47 +78,6 @@ def main():
         default=False,
         help="Restore only model trunk [Default: %(default)s]",
     )
-    parser.add_argument(
-        "--transfer_mode",
-        default="full",
-        help="transfer method. [full, linear, adapter]",
-    )
-    parser.add_argument(
-        "--att_adapter",
-        default=None,
-        type=str,
-        help="attention layer module [adapterHoulsby, lora, lora_full, ia3, locon]",
-    )
-    parser.add_argument(
-        "--att_latent",
-        type=int,
-        default=8,
-        help="attention adapter latent size.",
-    )
-    parser.add_argument(
-        "--lora_alpha",
-        type=int,
-        default=16,
-        help="lora alpha.",
-    )
-    parser.add_argument(
-        "--conv_select",
-        default=None,
-        type=int,
-        help="# of conv layers to insert locon/se.",
-    )
-    parser.add_argument(
-        "--conv_rank",
-        type=int,
-        default=4,
-        help="locon/se rank.",
-    )    
-    parser.add_argument(
-        "--locon_alpha",
-        type=int,
-        default=1,
-        help="locon_alpha.",
-    )    
     parser.add_argument(
         "--tfr_train",
         default=None,
@@ -142,14 +103,27 @@ def main():
     if args.params_file != "%s/params.json" % args.out_dir:
         shutil.copy(args.params_file, "%s/params.json" % args.out_dir)
 
-    if args.transfer_mode not in ['full','linear','sparse']:
-        raise ValueError("transfer mode must be one of full, linear, sparse")
-      
-    # read model parameters
+    # model parameters
     with open(args.params_file) as params_open:
         params = json.load(params_open)
+
     params_model = params["model"]
+
+    # train parameters
     params_train = params["train"]
+
+    # transfer parameters
+    params_transfer = params["transfer"]
+    transfer_mode = params_transfer.get("mode", "full")
+    transfer_adapter = params_transfer.get("adapter", None)
+    transfer_latent = params_transfer.get("latent", 8)
+    transfer_conv_select = params_transfer.get("conv_select", 4)
+    transfer_conv_rank = params_transfer.get("conv_latent", 4)
+    transfer_lora_alpha = params_transfer.get("lora_alpha", 16)
+    transfer_locon_alpha = params_transfer.get("locon_alpha", 1)
+
+    if transfer_mode not in ["full", "linear", "adapter"]:
+        raise ValueError("transfer mode must be one of full, linear, adapter")
 
     # read datasets
     train_data = []
@@ -184,79 +158,93 @@ def main():
                 tfr_pattern=args.tfr_eval,
             )
         )
-    
+
     params_model["strand_pair"] = strand_pairs
 
     if args.mixed_precision:
-        mixed_precision.set_global_policy('mixed_float16')
-    
+        mixed_precision.set_global_policy("mixed_float16")
+
     if params_train.get("num_gpu", 1) == 1:
         ########################################
         # one GPU
 
         # initialize model
-        params_model['verbose']=False
+        params_model["verbose"] = False
         seqnn_model = seqnn.SeqNN(params_model)
-    
+
         # restore
         if args.restore:
             seqnn_model.restore(args.restore, trunk=args.trunk)
 
         # head params
-        print('params in new head: %d' %transfer_helper.param_count(seqnn_model.model.layers[-2]))
+        print(
+            "params in new head: %d"
+            % transfer.param_count(seqnn_model.model.layers[-2])
+        )
 
         ####################
         # transfer options #
         ####################
-        if args.transfer_mode=='full':
-            seqnn_model.model.trainable=True
-        
-        elif args.transfer_mode=='linear':
-            seqnn_model.model_trunk.trainable=False
+        if transfer_mode == "full":
+            seqnn_model.model.trainable = True
+
+        elif transfer_mode == "linear":
+            seqnn_model.model_trunk.trainable = False
 
         ############
         # adapters #
         ############
-        elif args.transfer_mode=='sparse':
+        elif transfer_mode == "adapter":
 
             # attention adapter
-            if args.att_adapter is not None:
-                if args.att_adapter=='adapterHoulsby':
-                    seqnn_model.model = transfer_helper.add_houlsby(seqnn_model.model, 
-                                                                    strand_pairs[0], 
-                                                                    latent_size=args.att_latent)
-                elif args.att_adapter=='lora':
-                    transfer_helper.add_lora(seqnn_model.model, 
-                                             rank=args.att_latent, 
-                                             alpha=args.lora_alpha,
-                                             mode='default')
-                    
-                elif args.att_adapter=='lora_full':
-                    transfer_helper.add_lora(seqnn_model.model, 
-                                             rank=args.att_latent, 
-                                             alpha=args.lora_alpha,
-                                             mode='full')
-                
-                elif args.att_adapter=='ia3':
-                    seqnn_model.model = transfer_helper.add_ia3(seqnn_model.model, 
-                                                                strand_pairs[0])
+            if transfer_adapter is not None:
+                if transfer_adapter == "houlsby":
+                    seqnn_model.model = transfer.add_houlsby(
+                        seqnn_model.model, strand_pairs[0], latent_size=transfer_latent
+                    )
+                elif transfer_adapter == "lora":
+                    transfer.add_lora(
+                        seqnn_model.model,
+                        rank=transfer_latent,
+                        alpha=transfer_lora_alpha,
+                        mode="default",
+                    )
 
-                elif args.att_adapter=='locon': # lora on conv+att
-                    seqnn_model.model = transfer_helper.add_locon(seqnn_model.model, 
-                                                                  strand_pairs[0],
-                                                                  conv_select=args.conv_select, 
-                                                                  rank=args.conv_rank, 
-                                                                  alpha=args.locon_alpha)
+                elif transfer_adapter == "lora_full":
+                    transfer.add_lora(
+                        seqnn_model.model,
+                        rank=transfer_latent,
+                        alpha=transfer_lora_alpha,
+                        mode="full",
+                    )
 
-                elif args.att_adapter=='lora_conv': # lora on att, unfreeze_conv
-                    transfer_helper.add_lora_conv(seqnn_model.model, conv_select=args.conv_select)
+                elif transfer_adapter == "ia3":
+                    seqnn_model.model = transfer.add_ia3(
+                        seqnn_model.model, strand_pairs[0]
+                    )
 
-                elif args.att_adapter=='houlsby_se': # adapter on conv+att
-                    seqnn_model.model = transfer_helper.add_houlsby_se(seqnn_model.model, 
-                                                                       strand_pair=strand_pairs[0], 
-                                                                       conv_select=args.conv_select,
-                                                                       se_rank=args.conv_rank)
-                    
+                elif transfer_adapter == "locon":  # lora on conv+att
+                    seqnn_model.model = transfer.add_locon(
+                        seqnn_model.model,
+                        strand_pairs[0],
+                        conv_select=transfer_conv_select,
+                        rank=transfer_conv_rank,
+                        alpha=transfer_locon_alpha,
+                    )
+
+                elif transfer_adapter == "lora_conv":  # lora on att, unfreeze_conv
+                    transfer.add_lora_conv(
+                        seqnn_model.model, conv_select=transfer_conv_select
+                    )
+
+                elif transfer_adapter == "houlsby_se":  # adapter on conv+att
+                    seqnn_model.model = transfer.add_houlsby_se(
+                        seqnn_model.model,
+                        strand_pair=strand_pairs[0],
+                        conv_select=transfer_conv_select,
+                        se_rank=transfer_conv_rank,
+                    )
+
         #################
         # final summary #
         #################
@@ -267,13 +255,18 @@ def main():
             seqnn_model.append_activation()
             # run with loss scaling
             seqnn_trainer = trainer.Trainer(
-                params_train, train_data, eval_data, args.out_dir, args.log_dir, loss_scale=True
+                params_train,
+                train_data,
+                eval_data,
+                args.out_dir,
+                args.log_dir,
+                loss_scale=True,
             )
         else:
             seqnn_trainer = trainer.Trainer(
                 params_train, train_data, eval_data, args.out_dir, args.log_dir
             )
-            
+
         # compile model
         seqnn_trainer.compile(seqnn_model)
 
@@ -287,55 +280,58 @@ def main():
                 seqnn_trainer.fit2(seqnn_model)
 
         #############################
-        # post-training adjustments # 
+        # post-training adjustments #
         #############################
-        if args.transfer_mode=='sparse':
-            
-            # for: adapterHoulsby and houlsby_se, overwrite json file
-            if args.att_adapter=='adapterHoulsby':            
-                transfer_helper.modify_json(input_json=args.params_file,
-                                            output_json='%s/params.json'%args.out_dir,
-                                            adapter=args.att_adapter,
-                                            latent=args.att_latent)
+        if transfer_mode == "adapter":
 
-            if args.att_adapter=='houlsby_se':
-                transfer_helper.modify_json(input_json=args.params_file,
-                                            output_json='%s/params.json'%args.out_dir,
-                                            adapter=args.att_adapter,
-                                            conv_select=args.conv_select,
-                                            se_rank=args.conv_rank
-                                            )
-            
+            # for: houlsby and houlsby_se, overwrite json file
+            if transfer_adapter == "houlsby":
+                transfer.modify_json(
+                    input_json=args.params_file,
+                    output_json="%s/params.json" % args.out_dir,
+                    adapter=transfer_adapter,
+                    latent=transfer_latent,
+                )
+
+            if transfer_adapter == "houlsby_se":
+                transfer.modify_json(
+                    input_json=args.params_file,
+                    output_json="%s/params.json" % args.out_dir,
+                    adapter=transfer_adapter,
+                    conv_select=transfer_conv_select,
+                    se_rank=transfer_conv_rank,
+                )
+
             # for lora, ia3, locon, save weight to: model_best.mergeW.h5
-            if args.att_adapter in ['lora', 'lora_full', 'lora_conv']:
-                seqnn_model.model.load_weights('%s/model_best.h5'%args.out_dir)
-                transfer_helper.merge_lora(seqnn_model.model)
-                seqnn_model.save('%s/model_best.mergeW.h5'%args.out_dir)
-                transfer_helper.var_reorder('%s/model_best.mergeW.h5'%args.out_dir)
-            
-            if args.att_adapter=='ia3':
+            if transfer_adapter in ["lora", "lora_full", "lora_conv"]:
+                seqnn_model.model.load_weights("%s/model_best.h5" % args.out_dir)
+                transfer.merge_lora(seqnn_model.model)
+                seqnn_model.save("%s/model_best.mergeW.h5" % args.out_dir)
+                transfer.var_reorder("%s/model_best.mergeW.h5" % args.out_dir)
+
+            if transfer_adapter == "ia3":
                 # ia3 model
                 ia3_model = seqnn_model.model
-                ia3_model.load_weights('%s/model_best.h5'%args.out_dir)                
+                ia3_model.load_weights("%s/model_best.h5" % args.out_dir)
                 # original model
                 seqnn_model2 = seqnn.SeqNN(params_model)
                 seqnn_model2.restore(args.restore, trunk=args.trunk)
                 original_model = seqnn_model2.model
                 # merge weights into original model
-                transfer_helper.merge_ia3(original_model, ia3_model)
-                original_model.save('%s/model_best.mergeW.h5'%args.out_dir)
+                transfer.merge_ia3(original_model, ia3_model)
+                original_model.save("%s/model_best.mergeW.h5" % args.out_dir)
 
-            if args.att_adapter=='locon':
+            if transfer_adapter == "locon":
                 # locon model
                 locon_model = seqnn_model.model
-                locon_model.load_weights('%s/model_best.h5'%args.out_dir)                
+                locon_model.load_weights("%s/model_best.h5" % args.out_dir)
                 # original model
                 seqnn_model2 = seqnn.SeqNN(params_model)
                 seqnn_model2.restore(args.restore, trunk=args.trunk)
                 original_model = seqnn_model2.model
                 # merge weights into original model
-                transfer_helper.merge_locon(original_model, locon_model)
-                original_model.save('%s/model_best.mergeW.h5'%args.out_dir)
+                transfer.merge_locon(original_model, locon_model)
+                original_model.save("%s/model_best.mergeW.h5" % args.out_dir)
 
     else:
         ########################################

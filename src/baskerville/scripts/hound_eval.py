@@ -150,8 +150,8 @@ def main():
     # mixed precision #
     ###################
     if args.f16:
-        mixed_precision.set_global_policy('mixed_float16') # first set global policy
-        seqnn_model = seqnn.SeqNN(params_model) # then create model
+        mixed_precision.set_global_policy("mixed_float16")  # first set global policy
+        seqnn_model = seqnn.SeqNN(params_model)  # then create model
         seqnn_model.restore(args.model_file, args.head_i)
         seqnn_model.append_activation()  # add additional activation to cast float16 output to float32
     else:

@@ -195,7 +195,7 @@ def conv_dna(
         kernel_initializer=kernel_initializer,
         kernel_regularizer=tf.keras.regularizers.l2(l2_scale),
     )(current)
-   
+
     # squeeze-excite
     if se:
         current = squeeze_excite(current)
@@ -1109,8 +1109,6 @@ def transformer(
     qkv_width=1,
     mha_initializer="he_normal",
     kernel_initializer="he_normal",
-    adapter=None,
-    latent=16,
     seqlen_train=None,
     **kwargs,
 ):
@@ -1143,17 +1141,13 @@ def transformer(
         initializer=mha_initializer,
         l2_scale=mha_l2_scale,
         qkv_width=qkv_width,
-        seqlen_train=seqlen_train
+        seqlen_train=seqlen_train,
     )(current)
 
     # dropout
     if dropout > 0:
         current = tf.keras.layers.Dropout(dropout)(current)
 
-    # add houlsby-adapter
-    if adapter=='houlsby':
-        current = layers.AdapterHoulsby(latent_size=latent)(current)
-    
     # residual
     current = tf.keras.layers.Add()([inputs, current])
 
@@ -1161,7 +1155,7 @@ def transformer(
         final = current
     else:
         final = transformer_dense(
-            current, out_size, dense_expansion, l2_scale, dropout, kernel_initializer, adapter, latent
+            current, out_size, dense_expansion, l2_scale, dropout, kernel_initializer
         )
 
     return final
@@ -1273,8 +1267,7 @@ def transformer_split(
 
 
 def transformer_dense(
-    inputs, out_size, dense_expansion, l2_scale, dropout, kernel_initializer,
-    adapter=None, latent=16
+    inputs, out_size, dense_expansion, l2_scale, dropout, kernel_initializer
 ):
     """Transformer block dense portion."""
     # layer norm
@@ -1305,9 +1298,6 @@ def transformer_dense(
     # dropout
     if dropout > 0:
         current = tf.keras.layers.Dropout(dropout)(current)
-
-    if adapter=='houlsby':
-        current = layers.AdapterHoulsby(latent_size=latent)(current)
 
     # residual
     final = tf.keras.layers.Add()([inputs, current])
@@ -1451,20 +1441,21 @@ def squeeze_excite(
     additive=False,
     norm_type=None,
     bn_momentum=0.9,
-    kernel_initializer='glorot_uniform',
+    kernel_initializer="glorot_uniform",
     use_bias=True,
-    scale_fun='sigmoid',
+    scale_fun="sigmoid",
     **kwargs,
 ):
     return layers.SqueezeExcite(
-        activation=activation, 
-        additive=additive, 
-        bottleneck_ratio=bottleneck_ratio, 
-        norm_type=norm_type, 
-        bn_momentum=bn_momentum, 
-        kernel_initializer=kernel_initializer, 
+        activation=activation,
+        additive=additive,
+        bottleneck_ratio=bottleneck_ratio,
+        norm_type=norm_type,
+        bn_momentum=bn_momentum,
+        kernel_initializer=kernel_initializer,
         scale_fun=scale_fun,
-        use_bias=use_bias)(inputs)
+        use_bias=use_bias,
+    )(inputs)
 
 
 def wheeze_excite(inputs, pool_size, **kwargs):

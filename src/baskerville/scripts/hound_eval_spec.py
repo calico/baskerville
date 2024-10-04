@@ -43,7 +43,7 @@ def main():
     parser.add_option(
         "-c",
         dest="class_min",
-        default=5,
+        default=80,
         type="int",
         help="Minimum target class size to consider [Default: %default]",
     )
@@ -77,7 +77,7 @@ def main():
     )
     parser.add_option(
         "--f16",
-        dest="f16",        
+        dest="f16",
         default=False,
         action="store_true",
         help="use mixed precision for inference",
@@ -170,9 +170,11 @@ def main():
         targets_df["class"] = target_classes
         target_classes = sorted(set(target_classes))
     else:
-        targets_df["class"] = targets_df['description'].str.replace(':.*','',regex=True)
-        target_classes = options.target_classes.split(',')
-    
+        targets_df["class"] = targets_df["description"].str.replace(
+            ":.*", "", regex=True
+        )
+        target_classes = options.target_classes.split(",")
+
     print(target_classes)
 
     #######################################################
@@ -202,10 +204,10 @@ def main():
     # mixed precision #
     ###################
     if options.f16:
-        mixed_precision.set_global_policy('mixed_float16') # set global policy
-        seqnn_model = seqnn.SeqNN(params_model) # create model
+        mixed_precision.set_global_policy("mixed_float16")  # set global policy
+        seqnn_model = seqnn.SeqNN(params_model)  # create model
         seqnn_model.restore(model_file, options.head_i)
-        seqnn_model.append_activation() # add additional activation to cast float16 output to float32
+        seqnn_model.append_activation()  # add additional activation to cast float16 output to float32
     else:
         # initialize model
         seqnn_model = seqnn.SeqNN(params_model)
