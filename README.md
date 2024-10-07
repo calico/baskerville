@@ -22,6 +22,20 @@ Documentation page: https://calico.github.io/baskerville/index.html
 `cd baskerville`
 `pip install .`
 
+To set up the required environment variables:
+`cd baskerville`
+`conda activate <conda_env>`
+`./env_vars.sh`
+
+*Note:* Change the two lines of code at the top of './env_vars.sh' to your username and local path.
+
+Alternatively, the environment variables can be set manually:
+```sh
+export BASKERVILLE_DIR=/home/<user_path>/baskerville
+export PATH=$BASKERVILLE_DIR/src/baskerville/scripts:$PATH
+export PYTHONPATH=$BASKERVILLE_DIR/src/baskerville/scripts:$PYTHONPATH
+```
+
 ---
 
 #### Contacts
