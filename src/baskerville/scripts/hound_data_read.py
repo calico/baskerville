@@ -188,7 +188,7 @@ def main():
         if options.crop_bp > 0:
             seq_cov_nt = seq_cov_nt[options.crop_bp : -options.crop_bp]
     
-        #apply original transform (from borzoi manuscript)
+        # apply original transform (from borzoi manuscript)
         if options.transform_old:
             # sum pool
             seq_cov = seq_cov_nt.reshape(target_length, options.pool_width)
