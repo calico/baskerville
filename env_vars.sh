@@ -2,7 +2,7 @@
 
 # set these variables before running the script
 LOCAL_BASKERVILLE_PATH="/home/jlinder/baskerville"
-LOCAL_USER="jlinder"
+LOCAL_CONDA_PATH="/home/jlinder/anaconda3/etc/profile.d/conda.sh"
 
 # create env_vars sh scripts in local conda env
 mkdir -p "$CONDA_PREFIX/etc/conda/activate.d"
@@ -23,7 +23,7 @@ echo "export BASKERVILLE_DIR=$LOCAL_BASKERVILLE_PATH" >> $file_vars_act
 echo 'export PATH=$BASKERVILLE_DIR/src/baskerville/scripts:$PATH' >> $file_vars_act
 echo 'export PYTHONPATH=$BASKERVILLE_DIR/src/baskerville/scripts:$PYTHONPATH' >> $file_vars_act
 
-echo "export BASKERVILLE_CONDA=/home/$LOCAL_USER/anaconda3/etc/profile.d/conda.sh" >> $file_vars_act
+echo "export BASKERVILLE_CONDA=$LOCAL_CONDA_PATH" >> $file_vars_act
 
 # append env variable unsets to /deactivate.d/env_vars.sh
 echo 'unset BASKERVILLE_DIR' >> $file_vars_deact
