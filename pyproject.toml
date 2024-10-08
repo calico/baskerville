@@ -34,6 +34,7 @@ dependencies = [
     "tabulate~=0.8.10",
     "tensorflow~=2.15.0",
     "tqdm~=4.65.0",
+    "pyfaidx~=0.7.1",
 ]
 
 [project.optional-dependencies]
