@@ -43,7 +43,7 @@ def main():
     parser.add_option(
         "-c",
         dest="class_min",
-        default=80,
+        default=10,
         type="int",
         help="Minimum target class size to consider [Default: %default]",
     )

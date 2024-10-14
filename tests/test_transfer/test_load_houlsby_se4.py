@@ -4,8 +4,8 @@ import pandas as pd
 from baskerville import seqnn
 
 model_file = "/home/yuanh/analysis/Borzoi_transfer/exp_10_10_23/hayflick/houlsby_se/se2/train/f0c0/train/model_best.h5"
-targets_file = "/home/yuanh/programs/source/python_packages/baskerville/tests/data/transfer/targets.txt"
-params_file = "model_se2.json"
+targets_file = "tests/data/transfer/targets.txt"
+params_file = "tests/data/transfer/json/model_se4.json"
 
 # model params
 with open(params_file) as params_open:

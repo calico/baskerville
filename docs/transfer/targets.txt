@@ -1,0 +1,5 @@
+identifier	file	clip	clip_soft	scale	sum_stat	strand_pair	description
+0	PDL_TP1_A+	/home/yuanh/analysis/Borzoi_transfer/tutorial/data/w5/PDL20_TP1_A.filter+.w5	768	384	0.3	sum_sqrt	1	RNA:PDL_TP1_A+
+1	PDL_TP1_A-	/home/yuanh/analysis/Borzoi_transfer/tutorial/data/w5/PDL20_TP1_A.filter-.w5	768	384	0.3	sum_sqrt	0	RNA:PDL_TP1_A-
+2	PDL_TP7_C+	/home/yuanh/analysis/Borzoi_transfer/tutorial/data/w5/PDL50_TP7_C.filter+.w5	768	384	0.3	sum_sqrt	3	RNA:PDL_TP7_C+
+3	PDL_TP7_C-	/home/yuanh/analysis/Borzoi_transfer/tutorial/data/w5/PDL50_TP7_C.filter-.w5	768	384	0.3	sum_sqrt	2	RNA:PDL_TP7_C-
