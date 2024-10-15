@@ -29,9 +29,9 @@ from baskerville import seqnn
 from baskerville import snps
 
 """
-hound_ism_bed.py
+hound_isd_bed.py
 
-Perform an in silico saturation mutagenesis of sequences in a BED file.
+Perform an in silico deletion mutagenesis of sequences in a BED file.
 """
 
 
@@ -207,7 +207,7 @@ def main():
     scores_h5.create_dataset("seqs", dtype="bool", shape=(num_seqs, options.mut_len, 4))
     for snp_stat in options.snp_stats:
         scores_h5.create_dataset(
-            snp_stat, dtype="float16", shape=(num_seqs, options.mut_len, 4, num_targets)
+            snp_stat, dtype="float16", shape=(num_seqs, options.mut_len, 1, num_targets)
         )
 
     # store mutagenesis sequence coordinates
@@ -264,8 +264,8 @@ def main():
             )
             ref_preds.append(ref_preds_shift)
 
-        # for mutation positions
-        for mi in range(mut_start, mut_end):
+        # increment by deletion size
+        for mi in range(mut_start, mut_end, options.del_len):
             # for each nucleotide
             # copy and modify
             alt_1hot = np.copy(ref_1hot)
