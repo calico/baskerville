@@ -25,7 +25,7 @@ from baskerville import blocks
 from baskerville import dataset
 from baskerville import layers
 from baskerville import metrics
-from baskerville.helpers import transfer
+from baskerville import transfer
 
 
 class SeqNN:

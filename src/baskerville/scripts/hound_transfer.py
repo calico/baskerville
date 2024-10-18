@@ -29,7 +29,7 @@ from baskerville import dataset
 from baskerville import seqnn
 from baskerville import trainer
 from baskerville import layers
-from baskerville.helpers import transfer
+from baskerville import transfer
 
 """
 hound_transfer.py
