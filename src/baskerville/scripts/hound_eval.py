@@ -37,6 +37,16 @@ Evaluate the accuracy of a trained model on held-out sequences.
 """
 
 
+# method for inserting adapter for transfer learning
+def merge_mean_task(model_0):
+    outputs = model_0.layers[-1].output
+    task_other = outputs[:,:,:-1]
+    task_mean = tf.expand_dims(outputs[:,:,-1], axis=2)
+    new_task = task_other + task_mean
+    new_outputs = tf.keras.layers.ReLU()(new_task)
+    new_model = tf.keras.Model(inputs=model_0.layers[0].input, outputs=new_outputs)
+    return new_model
+
 def main():
     parser = argparse.ArgumentParser(description="Evaluate a trained model.")
     parser.add_argument(
@@ -133,9 +143,24 @@ def main():
     params_model = params["model"]
     params_train = params["train"]
 
+    # add task if reduce mean = True
+    params_transfer = params["transfer"]
+    transfer_reduce_mean = params_transfer.get("reduce_mean", False)
+    if transfer_reduce_mean:
+        params_model['head_human']['units'] += 1
+
     # set strand pairs
     if "strand_pair" in targets_df.columns:
-        params_model["strand_pair"] = [np.array(targets_df.strand_pair)]
+        tmp = np.array(targets_df.strand_pair)
+
+        # add additional targets when reduce_mean
+        if transfer_reduce_mean: 
+            if all(tmp == targets_df.index): # unstranded
+                tmp = np.append(tmp, len(tmp))
+            else: # stranded
+                tmp = np.append(tmp, [len(tmp)+1, len(tmp)])
+            
+        params_model["strand_pair"] = [tmp]
 
     # construct eval data
     eval_data = dataset.SeqDataset(
@@ -160,7 +185,9 @@ def main():
         seqnn_model.restore(args.model_file, args.head_i)
 
     seqnn_model.build_ensemble(args.rc, args.shifts)
-
+    if transfer_reduce_mean:
+        seqnn_model.ensemble = merge_mean_task(seqnn_model.ensemble)
+    
     #######################################################
     # evaluate
     loss_label = params_train.get("loss", "poisson").lower()
@@ -168,6 +195,8 @@ def main():
     loss_fn = trainer.parse_loss(loss_label, spec_weight=spec_weight)
 
     # evaluate
+    print(seqnn_model.ensemble.output_shape[-1])
+    
     test_loss, test_metric1, test_metric2 = seqnn_model.evaluate(
         eval_data, loss_label=loss_label, loss_fn=loss_fn
     )

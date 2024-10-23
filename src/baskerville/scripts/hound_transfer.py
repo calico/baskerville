@@ -121,7 +121,8 @@ def main():
     transfer_conv_rank = params_transfer.get("conv_latent", 4)
     transfer_lora_alpha = params_transfer.get("lora_alpha", 16)
     transfer_locon_alpha = params_transfer.get("locon_alpha", 1)
-
+    transfer_reduce_mean = params_transfer.get("reduce_mean", False)
+    
     if transfer_mode not in ["full", "linear", "adapter"]:
         raise ValueError("transfer mode must be one of full, linear, adapter")
 
@@ -133,8 +134,18 @@ def main():
     for data_dir in args.data_dirs:
         # set strand pairs
         targets_df = pd.read_csv("%s/targets.txt" % data_dir, sep="\t", index_col=0)
+        
         if "strand_pair" in targets_df.columns:
-            strand_pairs.append(np.array(targets_df.strand_pair))
+            tmp = np.array(targets_df.strand_pair)
+            # add additional targets when reduce_mean
+            if transfer_reduce_mean: 
+                if all(tmp == targets_df.index): # unstranded
+                    tmp = np.append(tmp, [len(tmp)])
+                else: # stranded
+                    tmp = np.append(tmp, [len(tmp)+1, len(tmp)])
+            
+            strand_pairs.append(tmp)
+            print(strand_pairs)
 
         # load train data
         train_data.append(
@@ -145,6 +156,7 @@ def main():
                 shuffle_buffer=params_train.get("shuffle_buffer", 128),
                 mode="train",
                 tfr_pattern=args.tfr_train,
+                reduce_mean=transfer_reduce_mean
             )
         )
 
@@ -156,6 +168,7 @@ def main():
                 batch_size=params_train["batch_size"],
                 mode="eval",
                 tfr_pattern=args.tfr_eval,
+                reduce_mean=transfer_reduce_mean
             )
         )
 
@@ -170,6 +183,10 @@ def main():
 
         # initialize model
         params_model["verbose"] = False
+
+        if transfer_reduce_mean:
+            params_model['head_human']['units'] += 1
+        
         seqnn_model = seqnn.SeqNN(params_model)
 
         # restore
