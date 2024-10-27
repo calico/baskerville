@@ -1109,6 +1109,7 @@ def transformer(
     qkv_width=1,
     mha_initializer="he_normal",
     kernel_initializer="he_normal",
+    seqlen_train=None,
     **kwargs,
 ):
     """Construct a transformer block.
@@ -1140,6 +1141,7 @@ def transformer(
         initializer=mha_initializer,
         l2_scale=mha_l2_scale,
         qkv_width=qkv_width,
+        seqlen_train=seqlen_train,
     )(current)
 
     # dropout
@@ -1439,10 +1441,20 @@ def squeeze_excite(
     additive=False,
     norm_type=None,
     bn_momentum=0.9,
+    kernel_initializer="glorot_uniform",
+    use_bias=True,
+    scale_fun="sigmoid",
     **kwargs,
 ):
     return layers.SqueezeExcite(
-        activation, additive, bottleneck_ratio, norm_type, bn_momentum
+        activation=activation,
+        additive=additive,
+        bottleneck_ratio=bottleneck_ratio,
+        norm_type=norm_type,
+        bn_momentum=bn_momentum,
+        kernel_initializer=kernel_initializer,
+        scale_fun=scale_fun,
+        use_bias=use_bias,
     )(inputs)
 
 

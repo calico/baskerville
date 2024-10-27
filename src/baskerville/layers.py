@@ -290,6 +290,7 @@ class MultiheadAttention(tf.keras.layers.Layer):
         initializer="he_normal",
         l2_scale=0,
         qkv_width=1,
+        seqlen_train=None,
     ):
         """Creates a MultiheadAttention module.
            Original version written by Ziga Avsec.
@@ -322,6 +323,7 @@ class MultiheadAttention(tf.keras.layers.Layer):
         self._gated = gated
         self._relative_position_symmetric = relative_position_symmetric
         self._relative_position_functions = relative_position_functions
+        self.seqlen_train = seqlen_train
         if num_position_features is None:
             # num_position_features needs to be divisible by the number of
             # relative positional functions *2 (for symmetric & asymmetric version).
@@ -438,12 +440,14 @@ class MultiheadAttention(tf.keras.layers.Layer):
             shape=[1, self._num_heads, 1, self._key_size],
             initializer=self._initializer,
             dtype=tf.float32,
+            trainable=True,
         )
         self._r_r_bias = self.add_weight(
             "%s/r_r_bias" % self.name,
             shape=[1, self._num_heads, 1, self._key_size],
             initializer=self._initializer,
             dtype=tf.float32,
+            trainable=True,
         )
 
     def _multihead_output(self, linear_layer, inputs):
@@ -474,20 +478,33 @@ class MultiheadAttention(tf.keras.layers.Layer):
             q *= self._key_size**-0.5
 
         # [B, H, T', T]
-        content_logits = tf.matmul(q + self._r_w_bias, k, transpose_b=True)
+        # content_logits = tf.matmul(q + self._r_w_bias, k, transpose_b=True)
+        content_logits = tf.matmul(
+            q + tf.cast(self._r_w_bias, dtype=inputs.dtype), k, transpose_b=True
+        )
 
         if self._num_position_features == 0:
             logits = content_logits
         else:
             # Project positions to form relative keys.
             distances = tf.range(-seq_len + 1, seq_len, dtype=tf.float32)[tf.newaxis]
-            positional_encodings = positional_features(
-                positions=distances,
-                feature_size=self._num_position_features,
-                seq_length=seq_len,
-                symmetric=self._relative_position_symmetric,
-            )
-            # [1, 2T-1, Cr]
+
+            if self.seqlen_train is None:
+                positional_encodings = positional_features(
+                    positions=distances,
+                    feature_size=self._num_position_features,
+                    seq_length=seq_len,
+                    symmetric=self._relative_position_symmetric,
+                )
+                # [1, 2T-1, Cr]
+            else:
+                positional_encodings = positional_features(
+                    positions=distances,
+                    feature_size=self._num_position_features,
+                    seq_length=self.seqlen_train,
+                    symmetric=self._relative_position_symmetric,
+                )
+                # [1, 2T-1, Cr]
 
             if training:
                 positional_encodings = tf.nn.dropout(
@@ -500,10 +517,18 @@ class MultiheadAttention(tf.keras.layers.Layer):
             # Add shifted relative logits to content logits.
             if self._content_position_bias:
                 # [B, H, T', 2T-1]
-                relative_logits = tf.matmul(q + self._r_r_bias, r_k, transpose_b=True)
+                # relative_logits = tf.matmul(q + self._r_r_bias, r_k, transpose_b=True)
+                relative_logits = tf.matmul(
+                    q + tf.cast(self._r_r_bias, dtype=inputs.dtype),
+                    r_k,
+                    transpose_b=True,
+                )
             else:
                 # [1, H, 1, 2T-1]
-                relative_logits = tf.matmul(self._r_r_bias, r_k, transpose_b=True)
+                # relative_logits = tf.matmul(self._r_r_bias, r_k, transpose_b=True)
+                relative_logits = tf.matmul(
+                    tf.cast(self._r_r_bias, dtype=inputs.dtype), r_k, transpose_b=True
+                )
                 # [1, H, T', 2T-1]
                 relative_logits = tf.broadcast_to(
                     relative_logits,
@@ -590,16 +615,24 @@ class SqueezeExcite(tf.keras.layers.Layer):
         self,
         activation="relu",
         additive=False,
-        bottleneck_ratio=8,
+        rank=8,
         norm_type=None,
         bn_momentum=0.9,
+        use_bias=True,
+        kernel_initializer="glorot_uniform",
+        bias_initializer="zeros",
+        scale_fun="sigmoid",
     ):
         super(SqueezeExcite, self).__init__()
         self.activation = activation
         self.additive = additive
         self.norm_type = norm_type
         self.bn_momentum = bn_momentum
-        self.bottleneck_ratio = bottleneck_ratio
+        self.rank = rank
+        self.kernel_initializer = kernel_initializer
+        self.bias_initializer = bias_initializer
+        self.use_bias = use_bias
+        self.scale_fun = scale_fun
 
     def build(self, input_shape):
         self.num_channels = input_shape[-1]
@@ -617,27 +650,37 @@ class SqueezeExcite(tf.keras.layers.Layer):
             )
             exit(1)
 
-        self.dense1 = tf.keras.layers.Dense(
-            units=self.num_channels // self.bottleneck_ratio, activation="relu"
-        )
-        self.dense2 = tf.keras.layers.Dense(units=self.num_channels, activation=None)
+        if self.scale_fun == "sigmoid":
+            self.scale_f = tf.keras.activations.sigmoid
+        elif self.scale_fun == "tanh":  # set to tanh for transfer
+            self.scale_f = tf.keras.activations.tanh
+        else:
+            print(
+                "scale function must be sigmoid or tanh",
+                file=sys.stderr,
+            )
+            exit(1)
 
-        # normalize
-        # if self.norm_type == 'batch-sync':
-        #   self.norm = tf.keras.layers.experimental.SyncBatchNormalization(
-        #     momentum=self.bn_momentum, gamma_initializer='zeros')
-        # elif self.norm_type == 'batch':
-        #   self.norm = tf.keras.layers.BatchNormalization(
-        #     momentum=self.bn_momentum, gamma_initializer='zeros')
-        # elif self.norm_type == 'layer':
-        #   self.norm = tf.keras.layers.LayerNormalization(
-        #     gamma_initializer='zeros')
-        # else:
-        #   self.norm = None
+        self.dense1 = tf.keras.layers.Dense(
+            units=self.rank,
+            activation="relu",
+            use_bias=self.use_bias,
+            kernel_initializer=self.kernel_initializer,
+            bias_initializer=self.bias_initializer,
+        )
+
+        self.dense2 = tf.keras.layers.Dense(
+            units=self.num_channels,
+            use_bias=self.use_bias,
+            kernel_initializer=self.kernel_initializer,
+            bias_initializer=self.bias_initializer,
+            activation=None,
+        )
 
     def call(self, x):
         # activate
-        x = activate(x, self.activation)
+        if self.activation is not None:
+            x = activate(x, self.activation)
 
         # squeeze
         squeeze = self.gap(x)
@@ -645,8 +688,6 @@ class SqueezeExcite(tf.keras.layers.Layer):
         # excite
         excite = self.dense1(squeeze)
         excite = self.dense2(excite)
-        # if self.norm is not None:
-        #   excite = self.norm(excite)
 
         # scale
         if self.one_or_two == "one":
@@ -657,7 +698,7 @@ class SqueezeExcite(tf.keras.layers.Layer):
         if self.additive:
             xs = x + excite
         else:
-            excite = tf.keras.activations.sigmoid(excite)
+            excite = self.scale_f(excite)
             xs = x * excite
 
         return xs
@@ -668,9 +709,10 @@ class SqueezeExcite(tf.keras.layers.Layer):
             {
                 "activation": self.activation,
                 "additive": self.additive,
+                "use_bias": self.use_bias,
                 "norm_type": self.norm_type,
                 "bn_momentum": self.bn_momentum,
-                "bottleneck_ratio": self.bottleneck_ratio,
+                "rank": self.rank,
             }
         )
         return config
