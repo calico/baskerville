@@ -181,9 +181,20 @@ def score_snps(params_file, model_file, vcf_file, worker_index, options):
                 sc1 = snp_clusters[ci + 1]
                 s1l = executor.submit(sc1.get_1hots, genome_open)
 
+            # add left/right shifts for singleton cluster deletions
+            ref_shifts = options.shifts
+            singleton_cluster = len(sc.snps) == 1
+            if singleton_cluster:
+                indel_size = sc.snps[0].indel_size()
+                if indel_size < 0:
+                    ref_shifts = []
+                    for shift in options.shifts:
+                        ref_shifts.append(shift)
+                        ref_shifts.append(shift + indel_size)
+
             # predict reference
             ref_preds = []
-            for shift in options.shifts:
+            for shift in ref_shifts:
                 ref_1hot_shift = dna.hot1_augment(ref_1hot, shift=shift)
                 ref_preds_shift = seqnn_model(ref_1hot_shift)[0]
 
@@ -199,7 +210,17 @@ def score_snps(params_file, model_file, vcf_file, worker_index, options):
 
                 # add left/right shifts for indels
                 indel_size = sc.snps[ai].indel_size()
-                if indel_size == 0:
+                if singleton_cluster:
+                    # compensation shift only insertions
+                    if indel_size <= 0:
+                        compen_shift = False
+                    else:
+                        compen_shift = True
+                else:
+                    # compensation shift all indels
+                    if indel_size != 0:
+                        compen_shift = True
+                if not compen_shift:
                     alt_shifts = options.shifts
                 else:
                     alt_shifts = []
@@ -231,19 +252,28 @@ def score_snps(params_file, model_file, vcf_file, worker_index, options):
                 if indel_size != 0 and options.indel_stitch:
                     snp_seq_pos = sc.snps[ai].pos - sc.start - model_crop
                     snp_seq_bin = snp_seq_pos // model_stride
-                    alt_preds = stitch_preds(alt_preds, options.shifts, snp_seq_bin)
 
-                # flip reference and alternate
-                if snps[si].flipped:
-                    rp_snp = np.array(alt_preds)
-                    ap_snp = np.array(ref_preds)
-                else:
-                    rp_snp = np.array(ref_preds)
-                    ap_snp = np.array(alt_preds)
+                    if singleton_cluster and indel_size < 0:
+                        # shift reference
+                        ref_preds = stitch_preds(ref_preds, options.shifts, snp_seq_bin)
+                    else:
+                        # shift alternate
+                        alt_preds = stitch_preds(alt_preds, options.shifts, snp_seq_bin)
+
+                # freeze into arrays (before repeat, so reference isn't repeated multiple times)
+                rp_snp = np.array(ref_preds)
+                ap_snp = np.array(alt_preds)
 
                 # repeat reference predictions for indels w/o stitching
                 if indel_size != 0 and not options.indel_stitch:
-                    rp_snp = np.repeat(rp_snp, 2, axis=0)
+                    if singleton_cluster and indel_size < 0:
+                        ap_snp = np.repeat(ap_snp, 2, axis=0)
+                    else:
+                        rp_snp = np.repeat(rp_snp, 2, axis=0)
+
+                # flip reference and alternate
+                if snps[si].flipped:
+                    rp_snp, ap_snp = ap_snp, rp_snp
 
                 # write SNP
                 if sum_length:
