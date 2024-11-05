@@ -15,6 +15,7 @@
 import pdb
 import numpy as np
 import tensorflow as tf
+import sys
 from tensorflow.python.keras import backend as K
 from tensorflow.python.keras.utils import losses_utils
 from tensorflow.python.keras.losses import LossFunctionWrapper
@@ -119,6 +120,7 @@ def poisson_multinomial(
     weight_exp: int = 4,
     epsilon: float = 1e-7,
     rescale: bool = False,
+    spec_weight: float = None,
 ):
     """Possion decomposition with multinomial specificity term.
 
@@ -128,7 +130,7 @@ def poisson_multinomial(
         rescale (bool): Rescale loss after re-weighting.
     """
     seq_len = y_true.shape[1]
-
+    
     if weight_range < 1:
         raise ValueError("Poisson Multinomial weight_range must be >=1")
     elif weight_range == 1:
@@ -147,8 +149,8 @@ def poisson_multinomial(
     y_pred = tf.math.multiply(y_pred, position_weights)
 
     # sum across lengths
-    s_true = tf.math.reduce_sum(y_true, axis=-2)  # B x T
-    s_pred = tf.math.reduce_sum(y_pred, axis=-2)  # B x T
+    s_true = tf.math.reduce_sum(y_true, axis=-2) # B x T
+    s_pred = tf.math.reduce_sum(y_pred, axis=-2) # B x T
 
     # total count poisson loss, mean across targets
     poisson_term = poisson(s_true, s_pred)  # B x T
@@ -159,16 +161,40 @@ def poisson_multinomial(
     y_pred += epsilon
 
     # normalize to sum to one
-    p_pred = y_pred / tf.expand_dims(s_pred, axis=-2)  # B x L x T
+    p_pred = y_pred / tf.expand_dims(s_pred, axis=-2) # B x L x T
 
     # multinomial loss
     pl_pred = tf.math.log(p_pred)  # B x L x T
     multinomial_dot = -tf.math.multiply(y_true, pl_pred)  # B x L x T
     multinomial_term = tf.math.reduce_sum(multinomial_dot, axis=-2)  # B x T
     multinomial_term /= tf.reduce_sum(position_weights)
+    
+    multinomial_term_pair = None
+    
+    # optional cross-track specficity loss (within-group sampled track pairs)
+    if spec_weight is not None and spec_weight > 0. :
+        
+        # get sampled pairs
+        spec_ind = tf.random.categorical(tf.math.log((1. / y_pred.shape[-1]) * tf.ones((y_pred.shape[0], y_pred.shape[-1]), dtype=tf.float32)), y_pred.shape[-1], dtype=tf.int32)
+        
+        # joint multinomial
+        y_true_pair = tf.concat([y_true, tf.gather(y_true, spec_ind, axis=-1, batch_dims=1)], axis=-2) # B x 2L x T
+        y_pred_pair = tf.concat([y_pred, tf.gather(y_pred, spec_ind, axis=-1, batch_dims=1)], axis=-2) # B x 2L x T
+
+        # normalize pairs to jointly sum to one across positions
+        p_pred_pair = y_pred_pair / tf.expand_dims(tf.math.reduce_sum(y_pred_pair, axis=-2), axis=-2) # B x 2L x T
+
+        # multinomial loss
+        pl_pred_pair = tf.math.log(p_pred_pair)  # B x 2L x T
+        multinomial_dot_pair = -tf.math.multiply(y_true_pair, pl_pred_pair)  # B x 2L x T
+        multinomial_term_pair = tf.math.reduce_sum(multinomial_dot_pair, axis=-2)  # B x T
+        multinomial_term_pair /= (2. * tf.reduce_sum(position_weights))
 
     # normalize to scale of 1:1 term ratio
     loss_raw = multinomial_term + total_weight * poisson_term
+    if multinomial_term_pair is not None :
+        loss_raw += spec_weight * multinomial_term_pair
+    
     if rescale:
         loss_rescale = loss_raw * 2 / (1 + total_weight)
     else:
@@ -189,11 +215,12 @@ class PoissonMultinomial(LossFunctionWrapper):
         total_weight: float = 1,
         weight_range: float = 1,
         weight_exp: int = 4,
+        spec_weight: float = 1,
         reduction=losses_utils.ReductionV2.AUTO,
         name: str = "poisson_multinomial",
     ):
         pois_mn = lambda yt, yp: poisson_multinomial(
-            yt, yp, total_weight, weight_range, weight_exp
+            yt, yp, total_weight, weight_range, weight_exp, spec_weight=spec_weight
         )
         super(PoissonMultinomial, self).__init__(
             pois_mn, name=name, reduction=reduction
