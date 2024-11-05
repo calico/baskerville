@@ -135,3 +135,6 @@ dmypy.json
 src/baskerville/scripts/borzoi_test_genes.py
 src/baskerville/pygene.py
 src/baskerville/snps_old.py
+
+# backup
+**/*.py~
