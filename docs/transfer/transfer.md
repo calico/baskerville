@@ -137,7 +137,6 @@ Similar to Borzoi training, arguments for training learning is also indicated in
     "transfer": {
         "mode": "adapter",
         "adapter": "locon",
-        "adapter_latent": 8,
         "conv_select": 4
     },
 ```

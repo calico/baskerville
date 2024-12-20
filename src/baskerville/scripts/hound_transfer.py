@@ -116,7 +116,7 @@ def main():
     params_transfer = params["transfer"]
     transfer_mode = params_transfer.get("mode", "full")
     transfer_adapter = params_transfer.get("adapter", None)
-    transfer_latent = params_transfer.get("latent", 8)
+    transfer_latent = params_transfer.get("adapter_latent", 8)
     transfer_conv_select = params_transfer.get("conv_select", 4)
     transfer_conv_rank = params_transfer.get("conv_latent", 4)
     transfer_lora_alpha = params_transfer.get("lora_alpha", 16)
