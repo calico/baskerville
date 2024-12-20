@@ -163,17 +163,25 @@ Similar to Borzoi training, arguments for training learning is also indicated in
 
 ### Step 6. Train model
 
+Run hound_transfer.py on one fold:
+
+```bash
+hound_transfer.py -o train/f0c0/train \
+    --restore ${data_path}/pretrain_trunks/f0c0.h5 \
+    --trunk params.json \
+    train/f0c0/data0
+```
+
 Use westminster_train_folds.py with `--transfer` option to perform transfer learning on the dataset. 
 
 ```bash
 westminster_train_folds.py -e 'tf2.12' \
   -q nvidia_geforce_rtx_4090 \
   --name "locon" \
-  --rc --shifts "0,1" -o train -f 4 --step 8 --eval_train_off \
+  -o train -f 4 \
   --restore ${data_path}/pretrain_trunks \
   --trunk \
   --transfer \
-  --train_f3 \
   --weight_file model_best.mergeW.h5 \
   params.json \
   ${data_path}/tfr
