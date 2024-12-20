@@ -27,6 +27,7 @@ def parse_loss(
     loss_label,
     strategy=None,
     keras_fit: bool = True,
+    spec: str = None,    
     spec_weight: float = 1,
     total_weight: float = 1,
     weight_range: float = 1,
@@ -81,6 +82,8 @@ def parse_loss(
             loss_fn = metrics.PoissonKL(spec_weight)
         elif loss_label == "poisson_mn":
             loss_fn = metrics.PoissonMultinomial(
+                spec = spec,
+                spec_weight = spec_weight,                
                 total_weight=total_weight,
                 weight_range=weight_range,
                 weight_exp=weight_exp,
@@ -162,10 +165,12 @@ class Trainer:
         self.weight_range = self.params.get("weight_range", 1)
         self.weight_exp = self.params.get("weight_exp", 1)
         self.loss = self.params.get("loss", "poisson").lower()
+        self.spec = self.params.get("spec", None)
         self.loss_fn = parse_loss(
             self.loss,
             self.strategy,
             keras_fit,
+            self.spec,
             self.spec_weight,
             self.total_weight,
             self.weight_range,

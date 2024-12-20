@@ -106,11 +106,9 @@ class PoissonKL(LossFunctionWrapper):
         pois_kl = lambda yt, yp: poisson_kl(yt, yp, self.kl_weight)
         super(PoissonKL, self).__init__(pois_kl, name=name, reduction=reduction)
 
-
 def poisson(yt, yp, epsilon: float = 1e-7):
     """Poisson loss, without mean reduction."""
     return yp - yt * tf.math.log(yp + epsilon)
-
 
 def poisson_multinomial(
     y_true,
@@ -120,7 +118,8 @@ def poisson_multinomial(
     weight_exp: int = 4,
     epsilon: float = 1e-7,
     rescale: bool = False,
-    spec_weight: float = None,
+    spec: str = None, 
+    spec_weight: float = 1,
 ):
     """Possion decomposition with multinomial specificity term.
 
@@ -130,6 +129,8 @@ def poisson_multinomial(
         rescale (bool): Rescale loss after re-weighting.
     """
     seq_len = y_true.shape[1]
+    y_true = tf.cast(y_true, "float32")
+    y_pred = tf.cast(y_pred, "float32")
     
     if weight_range < 1:
         raise ValueError("Poisson Multinomial weight_range must be >=1")
@@ -154,7 +155,7 @@ def poisson_multinomial(
 
     # total count poisson loss, mean across targets
     poisson_term = poisson(s_true, s_pred)  # B x T
-    poisson_term /= tf.reduce_sum(position_weights)
+    poisson_term /= tf.reduce_sum(position_weights) # divide poisson_loss_term (for each task) by L
 
     # add epsilon to protect against tiny values
     y_true += epsilon
@@ -167,41 +168,42 @@ def poisson_multinomial(
     pl_pred = tf.math.log(p_pred)  # B x L x T
     multinomial_dot = -tf.math.multiply(y_true, pl_pred)  # B x L x T
     multinomial_term = tf.math.reduce_sum(multinomial_dot, axis=-2)  # B x T
-    multinomial_term /= tf.reduce_sum(position_weights)
-    
-    multinomial_term_pair = None
-    
-    # optional cross-track specficity loss (within-group sampled track pairs)
-    if spec_weight is not None and spec_weight > 0. :
+    multinomial_term /= tf.reduce_sum(position_weights) # divide multinomial_loss_term (for each task) by L
         
-        # get sampled pairs
-        spec_ind = tf.random.categorical(tf.math.log((1. / y_pred.shape[-1]) * tf.ones((y_pred.shape[0], y_pred.shape[-1]), dtype=tf.float32)), y_pred.shape[-1], dtype=tf.int32)
-        
-        # joint multinomial
-        y_true_pair = tf.concat([y_true, tf.gather(y_true, spec_ind, axis=-1, batch_dims=1)], axis=-2) # B x 2L x T
-        y_pred_pair = tf.concat([y_pred, tf.gather(y_pred, spec_ind, axis=-1, batch_dims=1)], axis=-2) # B x 2L x T
-
-        # normalize pairs to jointly sum to one across positions
-        p_pred_pair = y_pred_pair / tf.expand_dims(tf.math.reduce_sum(y_pred_pair, axis=-2), axis=-2) # B x 2L x T
-
-        # multinomial loss
-        pl_pred_pair = tf.math.log(p_pred_pair)  # B x 2L x T
-        multinomial_dot_pair = -tf.math.multiply(y_true_pair, pl_pred_pair)  # B x 2L x T
-        multinomial_term_pair = tf.math.reduce_sum(multinomial_dot_pair, axis=-2)  # B x T
-        multinomial_term_pair /= (2. * tf.reduce_sum(position_weights))
+    loss_raw = tf.math.reduce_mean(multinomial_term + total_weight * poisson_term, axis=-1) # B
 
     # normalize to scale of 1:1 term ratio
-    loss_raw = multinomial_term + total_weight * poisson_term
-    if multinomial_term_pair is not None :
-        loss_raw += spec_weight * multinomial_term_pair
-    
     if rescale:
-        loss_rescale = loss_raw * 2 / (1 + total_weight)
+        loss_raw = loss_raw * 2 / (1 + total_weight)
     else:
-        loss_rescale = loss_raw
+        loss_raw = loss_raw
+    
+    #############
+    # spec loss #
+    #############
+    loss_total = loss_raw
+    aux_term = 0
 
-    return loss_rescale
+    if spec == 'paired_multinomial':
+        multinomial_term_pair = spec_paired_multinomial(y_true, y_pred) # BxT
+        multinomial_term_pair /= (2. * tf.reduce_sum(position_weights)) # BxT, divide by L
+        aux_term = tf.math.reduce_mean(multinomial_term_pair, axis=-1) # B
 
+    if spec == 'bin_multinomial':
+        aux_term = bin_multinomial(y_true, y_pred) #BxL
+        aux_term = tf.math.reduce_sum(aux_term, axis=-1) / tf.reduce_sum(position_weights) # scale by L
+
+    if spec == 'udot':
+        aux_term = spec_udot(y_true, y_pred) # BxL
+        aux_term = tf.math.reduce_sum(aux_term, axis=-1) / tf.reduce_sum(position_weights) # scale by L
+    
+    if spec == 'mse':
+        aux_term = spec_mse(y_true, y_pred) # BxL
+        aux_term = tf.math.reduce_sum(aux_term, axis=-1) / tf.reduce_sum(position_weights) # scale by L
+    
+    loss_total = loss_raw + spec_weight * aux_term
+
+    return loss_total
 
 class PoissonMultinomial(LossFunctionWrapper):
     """Possion decomposition with multinomial specificity term.
@@ -215,17 +217,62 @@ class PoissonMultinomial(LossFunctionWrapper):
         total_weight: float = 1,
         weight_range: float = 1,
         weight_exp: int = 4,
+        spec: str = None,
         spec_weight: float = 1,
         reduction=losses_utils.ReductionV2.AUTO,
         name: str = "poisson_multinomial",
     ):
         pois_mn = lambda yt, yp: poisson_multinomial(
-            yt, yp, total_weight, weight_range, weight_exp, spec_weight=spec_weight
+            yt, yp, total_weight, weight_range, weight_exp, spec=spec, spec_weight=spec_weight
         )
         super(PoissonMultinomial, self).__init__(
             pois_mn, name=name, reduction=reduction
         )
 
+
+##############################
+# specificity auxillary loss #
+##############################
+
+def spec_mse(y_true, y_pred):
+    yn_true = y_true - tf.math.reduce_mean(y_true, axis=-1, keepdims=True)
+    yn_pred = y_pred - tf.math.reduce_mean(y_pred, axis=-1, keepdims=True)
+    mse_term = tf.keras.losses.mean_squared_error(yn_true, yn_pred)
+    return mse_term  # BxL
+    
+def spec_udot(y_true, y_pred):
+    yn_true = y_true - tf.math.reduce_mean(y_true, axis=-1, keepdims=True)
+    yn_pred = y_pred - tf.math.reduce_mean(y_pred, axis=-1, keepdims=True)    
+    norm_true = tf.norm(yn_true, ord='euclidean', axis=-1)
+    norm_pred = tf.norm(yn_pred, ord='euclidean', axis=-1)
+    udot_term = norm_true - tf.reduce_sum(yn_true * yn_pred, axis=-1)/norm_pred # |y_true|*(1-cos(y_true, y_pred))
+    # |y_true||y_pred|*(1-cos(y_true, y_pred))
+    return udot_term  # BxL
+    
+def spec_paired_multinomial(y_true, y_pred):
+    spec_ind = tf.random.categorical(tf.math.log((1. / y_pred.shape[-1]) * tf.ones((y_pred.shape[0], y_pred.shape[-1]), dtype=tf.float32)), y_pred.shape[-1], dtype=tf.int32)
+        
+    y_true_pair = tf.concat([y_true, tf.gather(y_true, spec_ind, axis=-1, batch_dims=1)], axis=-2) # B x 2L x T
+    y_pred_pair = tf.concat([y_pred, tf.gather(y_pred, spec_ind, axis=-1, batch_dims=1)], axis=-2) # B x 2L x T
+
+    # normalize pairs to jointly sum to one across positions
+    p_pred_pair = y_pred_pair / tf.expand_dims(tf.math.reduce_sum(y_pred_pair, axis=-2), axis=-2) # B x 2L x T
+
+    # multinomial loss
+    pl_pred_pair = tf.math.log(p_pred_pair)  # B x 2L x T
+    multinomial_dot_pair = -tf.math.multiply(y_true_pair, pl_pred_pair)  # B x 2L x T
+    multinomial_term_pair = tf.math.reduce_sum(multinomial_dot_pair, axis=-2)  # B x T
+    return multinomial_term_pair
+
+def bin_multinomial (y_true, y_pred):
+    s_pred = tf.reduce_sum(y_pred, axis=-1) # B x L
+    p_pred = y_pred / tf.expand_dims(s_pred, axis=-1) # B x L x T
+    
+    # multinomial loss
+    pl_pred = tf.math.log(p_pred)  # B x L x T
+    multinomial_dot = -tf.math.multiply(y_true, pl_pred)  # B x L x T
+    multinomial_term = tf.math.reduce_sum(multinomial_dot, axis=-1)  # B x L
+    return multinomial_term
 
 ################################################################################
 # Metrics

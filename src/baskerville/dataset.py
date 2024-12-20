@@ -61,7 +61,6 @@ class SeqDataset:
         mode: str = "eval",
         tfr_pattern: str = None,
         targets_slice_file: str = None,
-        reduce_mean = False,
     ):
         self.data_dir = data_dir
         self.split_label = split_label
@@ -70,7 +69,6 @@ class SeqDataset:
         self.seq_length_crop = seq_length_crop
         self.mode = mode
         self.tfr_pattern = tfr_pattern
-        self.reduce_mean = reduce_mean
 
         # read data parameters
         data_stats_file = "%s/statistics.json" % self.data_dir
@@ -149,8 +147,6 @@ class SeqDataset:
                 targets = tf.cast(targets, tf.float32)
                 if self.targets_slice is not None:
                     targets = targets[:, self.targets_slice]
-                if self.reduce_mean:
-                    targets = target_reduce_mean(targets)
 
             return sequence, targets
 
@@ -260,6 +256,7 @@ class SeqDataset:
         step=1,
         target_slice=None,
         dtype="float16",
+        raw=True,
     ):
         """Convert TFR inputs and/or outputs to numpy arrays."""
         with tf.name_scope("numpy"):
@@ -274,7 +271,7 @@ class SeqDataset:
 
             # read TF Records
             dataset = dataset.flat_map(file_to_records)
-            dataset = dataset.map(self.generate_parser(raw=True))
+            dataset = dataset.map(self.generate_parser(raw=raw))
             dataset = dataset.batch(1)
 
         # initialize inputs and outputs
@@ -427,24 +424,3 @@ def untransform_preds1(preds, targets_df, unscale=False, unclip=True):
         preds = preds * scale
 
     return preds
-
-def target_reduce_mean(tensor):
-    """
-    This function computes the row-wise mean of a 2D tensor, 
-    subtracts the mean from each element in the respective row, 
-    and appends the mean as an additional column.
-
-    Args:
-        tensor (tf.Tensor): Input tensor of shape (target_length, num_targets)
-    
-    Returns:
-        tf.Tensor: Output tensor of shape (target_length, num_targets+1), 
-                   where the last column is the row-wise mean.
-    """
-
-    mean_tensor = tf.reduce_mean(tensor, axis=1)  # Shape (target_length,)
-    mean_tensor_expanded = tf.reshape(mean_tensor, (-1, 1))  # Shape (target_length, 1)
-    difference_tensor = tensor - mean_tensor_expanded  # Shape (target_length, num_targets)
-    result_tensor = tf.concat([difference_tensor, mean_tensor_expanded], axis=1)  # Shape (target_length, num_targets+1)
-
-    return result_tensor
