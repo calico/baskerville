@@ -1025,7 +1025,9 @@ class SeqNN:
         if trunk:
             self.model_trunk.load_weights(model_file)
         elif pretrain:
-            self.models[head_i].load_weights(model_file, by_name=True, skip_mismatch=True)
+            self.models[head_i].load_weights(
+                model_file, by_name=True, skip_mismatch=True
+            )
             self.model = self.models[head_i]
         else:
             self.models[head_i].load_weights(model_file)

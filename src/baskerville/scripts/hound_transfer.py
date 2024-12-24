@@ -184,7 +184,7 @@ def main():
             seqnn_model.restore(args.restore, trunk=args.trunk)
         else:
             seqnn_model.restore(args.restore, pretrain=True)
-                
+
         # head params
         print(
             "params in new head: %d"
@@ -281,7 +281,7 @@ def main():
 
         if args.skip_train:
             exit(0)
-        
+
         # train model
         if args.keras_fit:
             seqnn_trainer.fit_keras(seqnn_model)
