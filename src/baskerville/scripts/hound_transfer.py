@@ -70,7 +70,7 @@ def main():
     parser.add_argument(
         "--restore",
         default=None,
-        help="Restore model and continue training [Default: %(default)s]",
+        help="pre-trained weights.h5 [Default: %(default)s]",
     )
     parser.add_argument(
         "--trunk",
@@ -90,8 +90,15 @@ def main():
     )
 
     parser.add_argument("params_file", help="JSON file with model parameters")
+
     parser.add_argument(
         "data_dirs", nargs="+", help="Train/valid/test data directorie(s)"
+    )
+    parser.add_argument(
+        "--skip_train",
+        action="store_true",
+        default=False,
+        help="report trainable params and skip training [Default: %(default)s]",
     )
     args = parser.parse_args()
 
@@ -173,9 +180,11 @@ def main():
         seqnn_model = seqnn.SeqNN(params_model)
 
         # restore
-        if args.restore:
+        if args.trunk:
             seqnn_model.restore(args.restore, trunk=args.trunk)
-
+        else:
+            seqnn_model.restore(args.restore, pretrain=True)
+                
         # head params
         print(
             "params in new head: %d"
@@ -270,6 +279,9 @@ def main():
         # compile model
         seqnn_trainer.compile(seqnn_model)
 
+        if args.skip_train:
+            exit(0)
+        
         # train model
         if args.keras_fit:
             seqnn_trainer.fit_keras(seqnn_model)

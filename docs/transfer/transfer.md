@@ -10,6 +10,7 @@
 Set data_path to your preferred directory:
 
 ```bash
+baskerville_path='/home/yuanh/programs/source/python_packages/baskerville'
 data_path='/home/yuanh/analysis/Borzoi_transfer/tutorial/data'
 bam_folder=${data_path}/bam
 bw_folder=${data_path}/bw
@@ -18,13 +19,18 @@ w5_folder=${data_path}/w5
 mkdir -p ${data_path}
 ```
 
-Download Borzoi pre-trained model weights:
+Download four replicate Borzoi pre-trained models (with identical train, validation and test splits (test = fold3, validation = fold4):
 
 ```bash
-gsutil cp -r gs://scbasset_tutorial_data/baskerville_transfer/pretrain_trunks/ ${data_path}
+mkdir -p ${data_path}/weights
+wget --progress=bar:force "https://storage.googleapis.com/seqnn-share/borzoi/f0/model0_best.h5" -O ${data_path}/weights/borzoi_r0.h5
+wget --progress=bar:force "https://storage.googleapis.com/seqnn-share/borzoi/f1/model0_best.h5" -O ${data_path}/weights/borzoi_r1.h5
+wget --progress=bar:force "https://storage.googleapis.com/seqnn-share/borzoi/f2/model0_best.h5" -O ${data_path}/weights/borzoi_r2.h5
+wget --progress=bar:force "https://storage.googleapis.com/seqnn-share/borzoi/f3/model0_best.h5" -O ${data_path}/weights/borzoi_r3.h5
 ```
 
 Download hg38 reference information, and train-validation-test-split information:
+
 ```bash
 gsutil cp -r gs://scbasset_tutorial_data/baskerville_transfer/hg38/ ${data_path}
 gsutil cp -r gs://scbasset_tutorial_data/baskerville_transfer/trainsplit/ ${data_path}
@@ -71,7 +77,7 @@ mkdir ${w5_folder}
 for file in ${bw_folder}/*.bw
 do
   bw=$(basename "${file}")
-  scripts/utils/bw_w5.py ${bw_folder}/${bw} ${w5_folder}/${bw/.bw/.w5}
+  ${baskerville_path}/src/baskerville/scripts/utils/bw_w5.py ${bw_folder}/${bw} ${w5_folder}/${bw/.bw/.w5}
   echo ${bw}
 done
 ```
@@ -96,7 +102,7 @@ Create *targets.txt*:
 **Note on 'scale':** A scaling factor is applied when creating the TFRecord data. Borzoi models use Poisson and multinomial losses. Input BigWig/W5 tracks are scaled so that one fragment is counted as one event, with each bp position of the fragment contributing 1/(frag length). As a result, the total coverage across the genome should sum to the read depth of the sample.
 
 - If you start with BAM files, you can make BigWig files with option `--normalizeUsing None` in `bamCoverage`. Find out the fragment length by `samtools stats x.bam|grep "average length"` And then set the scaling factor to 1/(frag length).
-- For standard BigWig tracks that are TPM normalized, it sums up to (frag length) * 1e6. When fragment length and library size are unknown for your RNA-seq data (e.g. when you only have RPM normalized BigWig data), we typically assume fragment length of 100, and library size of 33 million reads. Thus, for RPM normalized BigWig files, we set a scaling factor of 33/100 = 0.3.
+- For standard BigWig tracks that are TPM normalized, it sums up to (frag length) * 1e6. When fragment length and library size are unknown for your RNA-seq data (e.g. when you only have RPM normalized BigWig data), we typically assume fragment length of 100, and library size of 30 million reads. Thus, for RPM normalized BigWig files, we set a scaling factor of 30/100 = 0.3.
 
 
 ### Step 4. Create TFRecords
@@ -107,7 +113,7 @@ Create *targets.txt*:
 
 ### Step 5. Parameter Json File
 
-Similar to Borzoi training, arguments for training learning is also indicated in the params.json file. Add a additional `transfer` section in the parameter json file to allow transfer learning. For transfer learning rate, we suggest lowering the lr to 1e-5 for fine-tuning, and keeping the original lr for other methods. For batch size, we suggest a batch size of 1 to reduce GPU memory for linear probing or adapter-based methods. Here's the `transfer` arguments for different transfer methods. You can also find the params.json file for Locon4 in the `data/params.json`.
+Similar to Borzoi training, arguments for training learning is specified in the params.json file. Add a additional `transfer` section in the parameter json file to allow transfer learning. For transfer learning rate, we suggest lowering the lr to 1e-5 for full fine-tuning, and keeping the original lr for other methods. For batch size, we suggest a batch size of 1 to reduce GPU memory for linear probing or adapter-based methods. Here's the `transfer` arguments for different transfer methods. You can also find the params.json file for Locon4 in the `params.json`.
 
 **Full fine-tuning**:
 ```
@@ -163,26 +169,21 @@ Similar to Borzoi training, arguments for training learning is also indicated in
 
 ### Step 6. Train model
 
-Run hound_transfer.py on one fold:
+Run westminster_train_folds.py `--setup` to setup directory structures:
 
 ```bash
-hound_transfer.py -o train/f0c0/train \
-    --restore ${data_path}/pretrain_trunks/f0c0.h5 \
-    --trunk params.json \
-    train/f0c0/data0
-```
-
-Use westminster_train_folds.py with `--transfer` option to perform transfer learning on the dataset. 
-
-```bash
-westminster_train_folds.py -e 'tf2.12' \
-  -q nvidia_geforce_rtx_4090 \
-  --name "locon" \
+westminster_train_folds.py \
   -o train -f 4 \
-  --restore ${data_path}/pretrain_trunks \
-  --trunk \
-  --transfer \
-  --weight_file model_best.mergeW.h5 \
+  --setup \
   params.json \
   ${data_path}/tfr
+```
+
+Run hound_transfer.py on fold3 data for 4 replicate models:
+
+```bash
+hound_transfer.py -o train/f0c0/train --restore ${data_path}/weights/borzoi_r0.h5 params.json train/f3c0/data0
+hound_transfer.py -o train/f1c0/train --restore ${data_path}/weights/borzoi_r1.h5 params.json train/f3c0/data0
+hound_transfer.py -o train/f2c0/train --restore ${data_path}/weights/borzoi_r2.h5 params.json train/f3c0/data0
+hound_transfer.py -o train/f3c0/train --restore ${data_path}/weights/borzoi_r3.h5 params.json train/f3c0/data0
 ```

@@ -17,7 +17,6 @@
     "transfer": {
         "mode": "adapter",
         "adapter": "locon",
-        "adapter_latent": 8,
         "conv_select": 4
     },    
     "model": {
