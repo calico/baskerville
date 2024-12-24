@@ -14,6 +14,8 @@ Baskerville provides researchers with tools to:
 
 Documentation page: https://calico.github.io/baskerville/index.html
 
+[Document page for transfer learning](docs/transfer/transfer.md)
+
 ---
 
 ### Installation

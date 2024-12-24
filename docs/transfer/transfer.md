@@ -108,12 +108,19 @@ Create *targets.txt*:
 ### Step 4. Create TFRecords
 
 ```bash
+cd baskerville/docs/transfer
+# change data_path in make_tfr.sh
 ./make_tfr.sh
 ```
 
 ### Step 5. Parameter Json File
 
-Similar to Borzoi training, arguments for training learning is specified in the params.json file. Add a additional `transfer` section in the parameter json file to allow transfer learning. For transfer learning rate, we suggest lowering the lr to 1e-5 for full fine-tuning, and keeping the original lr for other methods. For batch size, we suggest a batch size of 1 to reduce GPU memory for linear probing or adapter-based methods. Here's the `transfer` arguments for different transfer methods. You can also find the params.json file for Locon4 in the `params.json`.
+Similar to Borzoi training, arguments for training learning is specified in the params.json file. Add a additional `transfer` section in the parameter json file to allow transfer learning. For transfer learning rate, we suggest lowering the lr to 1e-5 for full fine-tuning, and keeping the original lr for other methods. For batch size, we suggest a batch size of 1 to reduce GPU memory for linear probing or adapter-based methods. Here's the `transfer` arguments for different transfer methods. 
+
+Example params.json files for transfer learning of Borzoi-lite are located: baskerville/tests/data/transfer/json/borzoilite_\*.json
+
+Example params.json files for transfer learning of full Borzoi are located: baskerville/tests/data/transfer/json/borzoi_\*.json
+
 
 **Full fine-tuning**:
 ```
@@ -166,7 +173,6 @@ Similar to Borzoi training, arguments for training learning is specified in the 
         "conv_latent": 16
     },
 ```
-
 ### Step 6. Train model
 
 Run westminster_train_folds.py `--setup` to setup directory structures:
@@ -182,8 +188,14 @@ westminster_train_folds.py \
 Run hound_transfer.py on fold3 data for 4 replicate models:
 
 ```bash
-hound_transfer.py -o train/f0c0/train --restore ${data_path}/weights/borzoi_r0.h5 params.json train/f3c0/data0
-hound_transfer.py -o train/f1c0/train --restore ${data_path}/weights/borzoi_r1.h5 params.json train/f3c0/data0
-hound_transfer.py -o train/f2c0/train --restore ${data_path}/weights/borzoi_r2.h5 params.json train/f3c0/data0
-hound_transfer.py -o train/f3c0/train --restore ${data_path}/weights/borzoi_r3.h5 params.json train/f3c0/data0
+hound_transfer.py -o train_rep0 --restore ${data_path}/weights/borzoi_r0.h5 params.json train/f3c0/data0
+hound_transfer.py -o train_rep1 --restore ${data_path}/weights/borzoi_r1.h5 params.json train/f3c0/data0
+hound_transfer.py -o train_rep2 --restore ${data_path}/weights/borzoi_r2.h5 params.json train/f3c0/data0
+hound_transfer.py -o train_rep3 --restore ${data_path}/weights/borzoi_r3.h5 params.json train/f3c0/data0
 ```
+
+### Step 7. Load models
+
+We apply weight merging for lora, ia3, and locon weights, and so there is no architecture changes once the model is trained. You can use the same params.json file, and load the train_rep0/model_best.mergeW.h5 weight file.
+
+For houlsby and houlsby_se, model architectures change due to the insertion of adapter modules. New architecture json file can be found in train_rep0/params.json.
