@@ -6,7 +6,7 @@ conda activate baskerville
 data_path='/home/yuanh/analysis/Borzoi_transfer/tutorial/data'
 OUT=${data_path}/tfr
 HG38=${data_path}/hg38
-CONTIGDATA==${data_path}/trainsplit
+CONTIGDATA=${data_path}/trainsplit
 FASTA_HUMAN=$HG38/hg38.ml.fa
 UMAP_HUMAN=$HG38/umap_k36_t10_l32.bed
 BLACK_HUMAN=$HG38/blacklist_hg38_all.bed
