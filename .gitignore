@@ -130,3 +130,13 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# additional untracked files
+src/baskerville/scripts/borzoi_test_genes.py
+src/baskerville/pygene.py
+src/baskerville/snps_old.py
+tests/test_transfer/
+
+
+# backup
+**/*.py~

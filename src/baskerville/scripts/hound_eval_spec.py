@@ -25,6 +25,7 @@ import pandas as pd
 from qnorm import quantile_normalize
 from scipy.stats import pearsonr
 import tensorflow as tf
+from tensorflow.keras import mixed_precision
 
 from baskerville import dataset
 from baskerville import seqnn
@@ -42,7 +43,7 @@ def main():
     parser.add_option(
         "-c",
         dest="class_min",
-        default=80,
+        default=10,
         type="int",
         help="Minimum target class size to consider [Default: %default]",
     )
@@ -75,6 +76,13 @@ def main():
         help="Step across positions [Default: %default]",
     )
     parser.add_option(
+        "--f16",
+        dest="f16",
+        default=False,
+        action="store_true",
+        help="use mixed precision for inference",
+    )
+    parser.add_option(
         "--save",
         dest="save",
         default=False,
@@ -93,6 +101,13 @@ def main():
         default=None,
         type="str",
         help="File specifying target indexes and labels in table format",
+    )
+    parser.add_option(
+        "--target_classes",
+        dest="target_classes",
+        default=None,
+        type="str",
+        help="comma separated string of target classes",
     )
     parser.add_option(
         "--split",
@@ -139,19 +154,27 @@ def main():
 
     # classify
     target_classes = []
-    for ti in range(num_targets):
-        description = targets_df.iloc[ti].description
-        if description.find(":") == -1:
-            tc = "*"
-        else:
-            desc_split = description.split(":")
-            if desc_split[0] == "CHIP":
-                tc = "/".join(desc_split[:2])
+
+    if options.target_classes is None:
+        for ti in range(num_targets):
+            description = targets_df.iloc[ti].description
+            if description.find(":") == -1:
+                tc = "*"
             else:
-                tc = desc_split[0]
-        target_classes.append(tc)
-    targets_df["class"] = target_classes
-    target_classes = sorted(set(target_classes))
+                desc_split = description.split(":")
+                if desc_split[0] == "CHIP":
+                    tc = "/".join(desc_split[:2])
+                else:
+                    tc = desc_split[0]
+            target_classes.append(tc)
+        targets_df["class"] = target_classes
+        target_classes = sorted(set(target_classes))
+    else:
+        targets_df["class"] = targets_df["description"].str.replace(
+            ":.*", "", regex=True
+        )
+        target_classes = options.target_classes.split(",")
+
     print(target_classes)
 
     #######################################################
@@ -177,8 +200,19 @@ def main():
     )
 
     # initialize model
-    seqnn_model = seqnn.SeqNN(params_model)
-    seqnn_model.restore(model_file, options.head_i)
+    ###################
+    # mixed precision #
+    ###################
+    if options.f16:
+        mixed_precision.set_global_policy("mixed_float16")  # set global policy
+        seqnn_model = seqnn.SeqNN(params_model)  # create model
+        seqnn_model.restore(model_file, options.head_i)
+        seqnn_model.append_activation()  # add additional activation to cast float16 output to float32
+    else:
+        # initialize model
+        seqnn_model = seqnn.SeqNN(params_model)
+        seqnn_model.restore(model_file, options.head_i)
+
     seqnn_model.build_slice(targets_df.index)
     if options.step > 1:
         seqnn_model.step(options.step)
