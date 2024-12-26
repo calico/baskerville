@@ -70,7 +70,7 @@ def main():
     parser.add_argument(
         "--restore",
         default=None,
-        help="pre-trained weights.h5 [Default: %(default)s]",
+        help="model trunk h5 file [Default: %(default)s]",
     )
     parser.add_argument(
         "--trunk",
@@ -180,10 +180,8 @@ def main():
         seqnn_model = seqnn.SeqNN(params_model)
 
         # restore
-        if args.trunk:
+        if args.restore:
             seqnn_model.restore(args.restore, trunk=args.trunk)
-        else:
-            seqnn_model.restore(args.restore, pretrain=True)
 
         # head params
         print(
@@ -364,7 +362,7 @@ def main():
 
             # restore
             if args.restore:
-                seqnn_model.restore(args.restore, args.trunk)
+                seqnn_model.restore(args.restore, trunk=args.trunk)
 
             # initialize trainer
             seqnn_trainer = trainer.Trainer(
