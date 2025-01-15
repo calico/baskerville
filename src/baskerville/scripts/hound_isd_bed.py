@@ -29,9 +29,9 @@ from baskerville import seqnn
 from baskerville import snps
 
 """
-hound_isd_bed.py
+hound_ism_bed.py
 
-Perform an in silico deletion mutagenesis of sequences in a BED file.
+Perform an in silico saturation mutagenesis of sequences in a BED file.
 """
 
 
@@ -68,7 +68,7 @@ def main():
     parser.add_option(
         "-o",
         dest="out_dir",
-        default="sat_del",
+        default="sat_mut",
         help="Output directory [Default: %default]",
     )
     parser.add_option(
@@ -207,7 +207,7 @@ def main():
     scores_h5.create_dataset("seqs", dtype="bool", shape=(num_seqs, options.mut_len, 4))
     for snp_stat in options.snp_stats:
         scores_h5.create_dataset(
-            snp_stat, dtype="float16", shape=(num_seqs, options.mut_len, 1, num_targets)
+            snp_stat, dtype="float16", shape=(num_seqs, options.mut_len, 4, num_targets)
         )
 
     # store mutagenesis sequence coordinates
@@ -264,12 +264,12 @@ def main():
             )
             ref_preds.append(ref_preds_shift)
 
-        # increment by deletion size
-        for mi in range(mut_start, mut_end, options.del_len):
+        # for mutation positions
+        for mi in range(mut_start, mut_end):
             # for each nucleotide
             # copy and modify
             alt_1hot = np.copy(ref_1hot)
-
+            
             # left-matched shift: delete 1 nucleotide at position mi
             dna.hot1_delete(alt_1hot[0], mi, options.del_len)
 
@@ -291,7 +291,7 @@ def main():
             out_seq_center = out_seq_len // 2
 
             # stitch reference predictions at the mutated nucleotide
-            snp_seq_bin = out_seq_center + (mi - options.mut_up) // model_stride
+            snp_seq_bin = mi // model_stride
 
             ref_preds_stitch = snps.stitch_preds(ref_preds, options.shifts, snp_seq_bin)
             ref_preds_stitch = np.array(ref_preds_stitch)
@@ -300,7 +300,9 @@ def main():
                 ref_preds_stitch, alt_preds, options.snp_stats, None
             )
             for snp_stat in options.snp_stats:
-                scores_h5[snp_stat][si, mi - mut_start, 0] = ism_scores[snp_stat]
+                scores_h5[snp_stat][si, mi - mut_start, 0] = ism_scores[
+                    snp_stat
+                ]
 
     # close output HDF5
     scores_h5.close()
