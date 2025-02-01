@@ -330,21 +330,20 @@ def main():
         scores_start = []
         scores_end = []
         scores_strand = []
+        del_loci = []
         for seq_chr, seq_start, seq_end, seq_strand in seqs_coords[isq]:
             scores_chr.append(seq_chr)
             scores_strand.append(seq_strand)
-            if seq_strand == "+":
-                score_start = seq_start + mut_start
-                score_end = score_start + ism_lengths[isq]
-            else:
-                score_end = seq_end - mut_start
-                score_start = score_end - ism_lengths[isq]
+            score_start = seq_start
+            score_end = seq_end
+            del_loci.append(seq_start+seq_mid)
             scores_start.append(score_start)
             scores_end.append(score_end)
 
         scores_h5.create_dataset("chr", data=np.array(scores_chr, dtype="S"))
         scores_h5.create_dataset("start", data=np.array(scores_start))
         scores_h5.create_dataset("end", data=np.array(scores_end))
+        scores_h5.create_dataset("del_loci", data=np.array(del_loci))
         scores_h5.create_dataset("strand", data=np.array(scores_strand, dtype="S"))
 
         #################################################################
@@ -384,7 +383,7 @@ def main():
             alt_1hot = np.copy(ref_1hot)
 
             # left-matched shift: delete 1 nucleotide at position mi
-            dna.hot1_delete(alt_1hot[0], mut_start+si, options.del_len)
+            dna.hot1_delete(alt_1hot[0], seq_mid, options.del_len)
 
             # predict alternate
             alt_preds = []
