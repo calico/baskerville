@@ -182,6 +182,12 @@ def main():
         help="GTF for gene definition [Default %default]",
     )
     parser.add_option(
+        "--target_genes",
+        dest="target_genes",
+        default=None,
+        help="List of target genes in .tsv format, length must match input bed entries [Default %default]",
+    )
+    parser.add_option(
         "--span",
         dest="span",
         default=False,
@@ -258,6 +264,10 @@ def main():
         parser.error("Must provide targets file to clarify stranded datasets")
     targets_df = pd.read_csv(options.targets_file, sep="\t", index_col=0)
 
+    if options.target_genes is not None:
+        target_genes = pd.read_csv(options.target_genes, sep="\t", index_col=None, header=None)
+        target_genes.columns = ['gene_id']
+
     # handle strand pairs
     if "strand_pair" in targets_df.columns:
         # prep strand
@@ -316,6 +326,7 @@ def main():
             os.remove(scores_h5_file)
         scores_h5 = h5py.File(scores_h5_file, "w")
         scores_h5.create_dataset("seqs", dtype="bool", shape=(len(seqs_dna[isq]), ism_lengths[isq], 4))
+        print("Seqs shape:", (len(seqs_dna[isq]), ism_lengths[isq], 4))
         for snp_stat in options.snp_stats:
             scores_h5.create_dataset(
                 snp_stat, dtype="float16", shape=(len(seqs_dna[isq]), num_targets)
@@ -363,7 +374,8 @@ def main():
             ref_1hot = np.expand_dims(ref_1hot, axis=0)
 
             # save sequence: always centered on the current snp
-            scores_h5["seqs"][si] = ref_1hot[0, mut_start:mut_end].astype("bool")
+            print("current seqs shape:", np.shape(ref_1hot[0, mut_start:mut_end+1]))
+            scores_h5["seqs"][si] = ref_1hot[0, mut_start:mut_end+1].astype("bool")
 
             # predict reference
             ref_preds = []
@@ -418,6 +430,11 @@ def main():
             # slicing all genes in the window
             gene_slice_all = []
             # for each overlapping gene
+            if options.target_genes is not None:
+                for gene_id, gene_slice in delseq_gene_slice.items():
+                    if str(target_genes.iloc[isq]['gene_id']) in gene_id:
+                        print(f"Found gene {str(target_genes.iloc[isq]['gene_id'])} in {gene_id}!")
+                        gene_slice_all.extend(gene_slice)
             for gene_id, gene_slice in delseq_gene_slice.items():
                 gene_slice_all.extend(gene_slice)
 
@@ -435,23 +452,30 @@ def main():
             alt_preds_log = np.log2(alt_preds_gene+1)
 
             # sum across length
-            ref_preds_sum = ref_preds_gene.sum(axis=(0, 1)) / num_shifts
-            alt_preds_sum = alt_preds_gene.sum(axis=(0, 1)) / num_shifts
+            ref_preds_gene_sum = ref_preds_gene.sum(axis=(0, 1)) / num_shifts
+            alt_preds_gene_sum = alt_preds_gene.sum(axis=(0, 1)) / num_shifts
+
+            ref_preds_sum = ref_preds_stitch.sum(axis=(0, 1)) / num_shifts
+            alt_preds_sum = alt_preds.sum(axis=(0, 1)) / num_shifts
 
             # SED/logSED are handled outside of snps.compute_scores
             if 'SED' in options.snp_stats:
-                sed = alt_preds_sum - ref_preds_sum
+                sed = alt_preds_gene_sum - ref_preds_gene_sum
                 scores_h5['SED'][si, :] = clip_float(sed).astype('float16')
             if 'logSED' in options.snp_stats:
-                log_sed = np.log2(alt_preds_sum + 1) - np.log2(ref_preds_sum + 1)
+                log_sed = np.log2(alt_preds_gene_sum + 1) - np.log2(ref_preds_gene_sum + 1)
+                print("logSED shape:", log_sed.shape)
                 scores_h5['logSED'][si, :] = log_sed.astype('float16')
+            if 'SUMlog' in options.snp_stats:
+                sum_log = np.log2(alt_preds_sum + 1) - np.log2(ref_preds_sum + 1)
+                scores_h5['SUMlog'][si, :] = sum_log.astype('float16')
 
             # compute sed here
             ism_scores = snps.compute_scores(
                 ref_preds_stitch, alt_preds, options.snp_stats, None
             )
             for snp_stat in options.snp_stats:
-                if snp_stat == "SED" or snp_stat == "logSED":
+                if snp_stat == "SED" or snp_stat == "logSED" or snp_stat == "SUMlog":
                     continue
                 scores_h5[snp_stat][si, :] = ism_scores[snp_stat]
 
