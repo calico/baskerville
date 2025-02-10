@@ -212,10 +212,10 @@ def score_snps(params_file, model_file, vcf_file, worker_index, options):
                 indel_size = sc.snps[ai].indel_size()
                 if singleton_cluster:
                     # compensation shift only insertions
-                    compen_shift = (indel_size > 0)
+                    compen_shift = indel_size > 0
                 else:
                     # compensation shift all indels
-                    compen_shift = (indel_size != 0)
+                    compen_shift = indel_size != 0
 
                 if not compen_shift:
                     alt_shifts = options.shifts
