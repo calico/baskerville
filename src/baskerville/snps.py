@@ -212,14 +212,11 @@ def score_snps(params_file, model_file, vcf_file, worker_index, options):
                 indel_size = sc.snps[ai].indel_size()
                 if singleton_cluster:
                     # compensation shift only insertions
-                    if indel_size <= 0:
-                        compen_shift = False
-                    else:
-                        compen_shift = True
+                    compen_shift = (indel_size > 0)
                 else:
                     # compensation shift all indels
-                    if indel_size != 0:
-                        compen_shift = True
+                    compen_shift = (indel_size != 0)
+
                 if not compen_shift:
                     alt_shifts = options.shifts
                 else:
@@ -254,17 +251,17 @@ def score_snps(params_file, model_file, vcf_file, worker_index, options):
                     snp_seq_bin = snp_seq_pos // model_stride
 
                     if singleton_cluster and indel_size < 0:
-                        # shift reference
+                        # stitch reference
                         ref_preds = stitch_preds(ref_preds, options.shifts, snp_seq_bin)
                     else:
-                        # shift alternate
+                        # stitch alternate
                         alt_preds = stitch_preds(alt_preds, options.shifts, snp_seq_bin)
 
                 # freeze into arrays (before repeat, so reference isn't repeated multiple times)
                 rp_snp = np.array(ref_preds)
                 ap_snp = np.array(alt_preds)
 
-                # repeat reference predictions for indels w/o stitching
+                # repeat un-compensated predictions for indels w/o stitching
                 if indel_size != 0 and not options.indel_stitch:
                     if singleton_cluster and indel_size < 0:
                         ap_snp = np.repeat(ap_snp, 2, axis=0)
