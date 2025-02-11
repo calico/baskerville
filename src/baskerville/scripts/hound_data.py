@@ -81,9 +81,7 @@ def main():
         help="Generate cross fold split [Default: %default]",
     )
     parser.add_option(
-        "-g",
-        dest="gaps_file",
-        help="Genome assembly gaps BED [Default: %default]"
+        "-g", dest="gaps_file", help="Genome assembly gaps BED [Default: %default]"
     )
     parser.add_option(
         "-i",
@@ -196,11 +194,7 @@ def main():
         type="str",
         help="Proportion of the data for testing [Default: %default]",
     )
-    parser.add_option(
-        "-u",
-        dest="umap_bed",
-        help="Unmappable regions in BED format"
-    )
+    parser.add_option("-u", dest="umap_bed", help="Unmappable regions in BED format")
     parser.add_option(
         "--umap_t",
         dest="umap_t",

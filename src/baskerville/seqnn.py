@@ -426,10 +426,10 @@ class SeqNN:
         pos_mask_denom=None,
         chunk_size=None,
         batch_size=1,
-        track_scale=1.,
-        track_transform=1.,
+        track_scale=1.0,
+        track_transform=1.0,
         clip_soft=None,
-        pseudo_count=0.,
+        pseudo_count=0.0,
         untransform_old=False,
         no_untransform=False,
         use_mean=False,
@@ -547,11 +547,7 @@ class SeqNN:
                     )
 
             # batching parameters
-            num_batches = int(
-                np.ceil(
-                    actual_chunk_size / batch_size
-                )
-            )
+            num_batches = int(np.ceil(actual_chunk_size / batch_size))
 
             # loop over batches
             grad_batches = []
@@ -641,10 +637,10 @@ class SeqNN:
         pos_mask=None,
         pos_slice_denom=None,
         pos_mask_denom=True,
-        track_scale=1.,
-        track_transform=1.,
+        track_scale=1.0,
+        track_transform=1.0,
         clip_soft=None,
-        pseudo_count=0.,
+        pseudo_count=0.0,
         untransform_old=False,
         no_untransform=False,
         use_mean=False,
@@ -670,24 +666,27 @@ class SeqNN:
                     # undo clip_soft
                     if clip_soft is not None:
                         preds = tf.where(
-                            preds > clip_soft, (preds - clip_soft) ** 2 + clip_soft, preds
+                            preds > clip_soft,
+                            (preds - clip_soft) ** 2 + clip_soft,
+                            preds,
                         )
 
                     # undo sqrt
-                    preds = preds ** (1. / track_transform)
+                    preds = preds ** (1.0 / track_transform)
                 else:
                     # undo clip_soft
                     if clip_soft is not None:
                         preds = tf.where(
-                            preds > clip_soft, (preds - clip_soft + 1) ** 2 + clip_soft - 1, preds
+                            preds > clip_soft,
+                            (preds - clip_soft + 1) ** 2 + clip_soft - 1,
+                            preds,
                         )
-                    
+
                     # undo sqrt
-                    preds = -1 + (preds + 1) ** (1. / track_transform)
-                    
+                    preds = -1 + (preds + 1) ** (1.0 / track_transform)
+
                     # scale
                     preds = preds / track_scale
-                    
 
             # aggregate over tracks (average)
             preds = tf.reduce_mean(preds, axis=-1)
@@ -741,7 +740,7 @@ class SeqNN:
                     score_ratios = tf.math.log(
                         ((preds_agg + pseudo_count) / (preds_agg_denom + pseudo_count))
                         / (
-                            1.
+                            1.0
                             - (
                                 (preds_agg + pseudo_count)
                                 / (preds_agg_denom + pseudo_count)

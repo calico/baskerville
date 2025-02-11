@@ -187,49 +187,48 @@ def main():
         # crop
         if options.crop_bp > 0:
             seq_cov_nt = seq_cov_nt[options.crop_bp : -options.crop_bp]
-    
+
         # apply original transform (from borzoi manuscript)
         if options.transform_old:
             # sum pool
             seq_cov = seq_cov_nt.reshape(target_length, options.pool_width)
-            if options.sum_stat == 'sum':
-                seq_cov = seq_cov.sum(axis=1, dtype='float32')
-            elif options.sum_stat == 'sum_sqrt':
-                seq_cov = seq_cov.sum(axis=1, dtype='float32')
+            if options.sum_stat == "sum":
+                seq_cov = seq_cov.sum(axis=1, dtype="float32")
+            elif options.sum_stat == "sum_sqrt":
+                seq_cov = seq_cov.sum(axis=1, dtype="float32")
                 seq_cov = seq_cov**0.75
-            elif options.sum_stat in ['mean', 'avg']:
-                seq_cov = seq_cov.mean(axis=1, dtype='float32')
-            elif options.sum_stat in ['mean_sqrt', 'avg_sqrt']:
-                seq_cov = seq_cov.mean(axis=1, dtype='float32')
+            elif options.sum_stat in ["mean", "avg"]:
+                seq_cov = seq_cov.mean(axis=1, dtype="float32")
+            elif options.sum_stat in ["mean_sqrt", "avg_sqrt"]:
+                seq_cov = seq_cov.mean(axis=1, dtype="float32")
                 seq_cov = seq_cov**0.75
-            elif options.sum_stat == 'median':
+            elif options.sum_stat == "median":
                 seq_cov = seq_cov.median(axis=1)
-            elif options.sum_stat == 'max':
+            elif options.sum_stat == "max":
                 seq_cov = seq_cov.max(axis=1)
-            elif options.sum_stat == 'peak':
-                seq_cov = seq_cov.mean(axis=1, dtype='float32')
-                seq_cov = np.clip(np.sqrt(seq_cov*4), 0, 1)
+            elif options.sum_stat == "peak":
+                seq_cov = seq_cov.mean(axis=1, dtype="float32")
+                seq_cov = np.clip(np.sqrt(seq_cov * 4), 0, 1)
             else:
                 print(
                     'ERROR: Unrecognized summary statistic "%s".' % options.sum_stat,
-                    file=sys.stderr
+                    file=sys.stderr,
                 )
                 exit(1)
 
             # clip
             if options.clip_soft is not None:
                 clip_mask = seq_cov > options.clip_soft
-                seq_cov[clip_mask] = (
-                    options.clip_soft
-                    + np.sqrt(seq_cov[clip_mask] - options.clip_soft)
+                seq_cov[clip_mask] = options.clip_soft + np.sqrt(
+                    seq_cov[clip_mask] - options.clip_soft
                 )
             if options.clip is not None:
                 seq_cov = np.clip(seq_cov, -options.clip, options.clip)
 
             # scale
             seq_cov = options.scale * seq_cov
-            
-        else : #apply new (updated) transform
+
+        else:  # apply new (updated) transform
 
             # scale
             seq_cov_nt = options.scale * seq_cov_nt

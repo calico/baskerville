@@ -22,9 +22,10 @@ from baskerville import dna
 
 
 class PredStreamGen:
-    """ Interface to acquire predictions via a buffered stream mechanism
-                rather than getting them all at once and using excessive memory.
-                Accepts generator and constructs stream batches from it. """
+    """Interface to acquire predictions via a buffered stream mechanism
+    rather than getting them all at once and using excessive memory.
+    Accepts generator and constructs stream batches from it."""
+
     def __init__(self, model, seqs_gen, batch_size, stream_seqs=32, verbose=False):
         self.model = model
         self.seqs_gen = seqs_gen
@@ -35,7 +36,6 @@ class PredStreamGen:
         self.stream_start = 0
         self.stream_end = 0
         self.stream_preds = []
-
 
     def __getitem__(self, i):
         # acquire predictions, if needed
@@ -51,14 +51,17 @@ class PredStreamGen:
             self.stream_end = self.stream_start + self.stream_preds.shape[0]
 
             if self.verbose:
-                print('Predicting %d-%d' % (self.stream_start, self.stream_end), flush=True)
+                print(
+                    "Predicting %d-%d" % (self.stream_start, self.stream_end),
+                    flush=True,
+                )
 
         return self.stream_preds[i - self.stream_start]
 
     def make_dataset(self):
-        """ Construct Dataset object for this stream chunk. """
+        """Construct Dataset object for this stream chunk."""
         seqs_1hot = []
-        stream_end = self.stream_start+self.stream_seqs
+        stream_end = self.stream_start + self.stream_seqs
         for si in range(self.stream_start, stream_end):
             try:
                 seqs_1hot.append(self.seqs_gen.__next__())
