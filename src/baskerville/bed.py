@@ -97,8 +97,8 @@ def make_bed_seqs(bed_file, fasta_file, seq_len, stranded=False):
 
 
 def make_ntwise_bed_seqs(bed_file, fasta_file, seq_len, stranded=False):
-    """Return BED regions as a list of sequences centered at every nucleotide of the bed entry,
-    and regions as a list of coordinate tuples, extended to a specified length."""
+    """Return BED regions as a list of sequences centered at every nucleotide of the 
+    bed entry, and regions as a list of coordinate tuples, extended to a specified length."""
     """Extract and extend BED sequences to seq_len."""
     fasta_open = pysam.Fastafile(fasta_file)
 

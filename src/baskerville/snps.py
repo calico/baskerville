@@ -181,41 +181,49 @@ def score_snps(params_file, model_file, vcf_file, worker_index, options):
                 sc1 = snp_clusters[ci + 1]
                 s1l = executor.submit(sc1.get_1hots, genome_open)
 
+            # add left/right shifts for singleton cluster deletions
+            ref_shifts = options.shifts
+            singleton_cluster = len(sc.snps) == 1
+            if singleton_cluster:
+                indel_size = sc.snps[0].indel_size()
+                if indel_size < 0:
+                    ref_shifts = []
+                    for shift in options.shifts:
+                        ref_shifts.append(shift)
+                        ref_shifts.append(shift + indel_size)
+
+            # predict reference
+            ref_preds = []
+            for shift in ref_shifts:
+                ref_1hot_shift = dna.hot1_augment(ref_1hot, shift=shift)
+                ref_preds_shift = seqnn_model(ref_1hot_shift)[0]
+
+                # untransform predictions
+                if options.targets_file is None:
+                    ref_preds.append(ref_preds_shift)
+                else:
+                    rpsf = executor.submit(untransform, ref_preds_shift, targets_df)
+                    ref_preds.append(rpsf)
+
             for ai, alt_1hot in enumerate(snp_1hot_list[1:]):
                 alt_1hot = np.expand_dims(alt_1hot, axis=0)
 
                 # add left/right shifts for indels
                 indel_size = sc.snps[ai].indel_size()
-                if indel_size == 0:
+                if singleton_cluster:
+                    # compensation shift only insertions
+                    compen_shift = indel_size > 0
+                else:
+                    # compensation shift all indels
+                    compen_shift = indel_size != 0
+
+                if not compen_shift:
                     alt_shifts = options.shifts
-                    ref_shifts = options.shifts
-                # insertion
-                elif indel_size > 0:
+                else:
                     alt_shifts = []
                     for shift in options.shifts:
                         alt_shifts.append(shift)
                         alt_shifts.append(shift - indel_size)
-                    ref_shifts = options.shifts
-                # deletion
-                else:
-                    ref_shifts = []
-                    for shift in options.shifts:
-                        ref_shifts.append(shift)
-                        ref_shifts.append(shift + indel_size)
-                    alt_shifts = options.shifts
-
-                # predict reference
-                ref_preds = []
-                for shift in ref_shifts:
-                    ref_1hot_shift = dna.hot1_augment(ref_1hot, shift=shift)
-                    ref_preds_shift = seqnn_model(ref_1hot_shift)[0]
-
-                    # untransform predictions
-                    if options.targets_file is None:
-                        ref_preds.append(ref_preds_shift)
-                    else:
-                        rpsf = executor.submit(untransform, ref_preds_shift, targets_df)
-                        ref_preds.append(rpsf)
 
                 # predict alternate
                 alt_preds = []
@@ -241,22 +249,28 @@ def score_snps(params_file, model_file, vcf_file, worker_index, options):
                 if indel_size != 0 and options.indel_stitch:
                     snp_seq_pos = sc.snps[ai].pos - sc.start - model_crop
                     snp_seq_bin = snp_seq_pos // model_stride
-                    if indel_size > 0:
-                        alt_preds = stitch_preds(alt_preds, options.shifts, snp_seq_bin)
-                    else:
+
+                    if singleton_cluster and indel_size < 0:
+                        # stitch reference
                         ref_preds = stitch_preds(ref_preds, options.shifts, snp_seq_bin)
+                    else:
+                        # stitch alternate
+                        alt_preds = stitch_preds(alt_preds, options.shifts, snp_seq_bin)
+
+                # freeze into arrays (before repeat, so reference isn't repeated multiple times)
+                rp_snp = np.array(ref_preds)
+                ap_snp = np.array(alt_preds)
+
+                # repeat un-compensated predictions for indels w/o stitching
+                if indel_size != 0 and not options.indel_stitch:
+                    if singleton_cluster and indel_size < 0:
+                        ap_snp = np.repeat(ap_snp, 2, axis=0)
+                    else:
+                        rp_snp = np.repeat(rp_snp, 2, axis=0)
 
                 # flip reference and alternate
                 if snps[si].flipped:
-                    rp_snp = np.array(alt_preds)
-                    ap_snp = np.array(ref_preds)
-                else:
-                    rp_snp = np.array(ref_preds)
-                    ap_snp = np.array(alt_preds)
-
-                # repeat reference predictions for indels w/o stitching
-                if indel_size != 0 and not options.indel_stitch:
-                    rp_snp = np.repeat(rp_snp, 2, axis=0)
+                    rp_snp, ap_snp = ap_snp, rp_snp
 
                 # write SNP
                 if sum_length:

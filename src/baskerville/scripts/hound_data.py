@@ -230,6 +230,13 @@ def main():
         type="str",
         help="Proportion of the data for validation [Default: %default]",
     )
+    parser.add_option(
+        "--transform_old",
+        dest="transform_old",
+        default=False,
+        action="store_true",
+        help="Apply old target transforms [Default: %default]",
+    )
     (options, args) = parser.parse_args()
 
     if len(args) != 2:
@@ -493,6 +500,8 @@ def main():
                 cmd += " -b %s" % options.blacklist_bed
             if options.interp_nan:
                 cmd += " -i"
+            if options.transform_old:
+                cmd += " --transform_old"
             cmd += " %s" % genome_cov_file
             cmd += " %s" % seqs_bed_file
             cmd += " %s" % seqs_cov_file

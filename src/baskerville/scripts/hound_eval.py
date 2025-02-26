@@ -23,6 +23,7 @@ import pandas as pd
 from scipy.stats import spearmanr
 import tensorflow as tf
 from tqdm import tqdm
+from tensorflow.keras import mixed_precision
 
 from baskerville import bed
 from baskerville import dataset
@@ -86,6 +87,12 @@ def main():
         help="Step across positions [Default: %(default)s]",
     )
     parser.add_argument(
+        "--f16",
+        default=False,
+        action="store_true",
+        help="use mixed precision for inference",
+    )
+    parser.add_argument(
         "-t",
         "--targets_file",
         default=None,
@@ -139,9 +146,19 @@ def main():
         tfr_pattern=args.tfr_pattern,
     )
 
-    # initialize model
-    seqnn_model = seqnn.SeqNN(params_model)
-    seqnn_model.restore(args.model_file, args.head_i)
+    ###################
+    # mixed precision #
+    ###################
+    if args.f16:
+        mixed_precision.set_global_policy("mixed_float16")  # first set global policy
+        seqnn_model = seqnn.SeqNN(params_model)  # then create model
+        seqnn_model.restore(args.model_file, args.head_i)
+        seqnn_model.append_activation()  # add additional activation to cast float16 output to float32
+    else:
+        # initialize model
+        seqnn_model = seqnn.SeqNN(params_model)
+        seqnn_model.restore(args.model_file, args.head_i)
+
     seqnn_model.build_ensemble(args.rc, args.shifts)
 
     #######################################################
