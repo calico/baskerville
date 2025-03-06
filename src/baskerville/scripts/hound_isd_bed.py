@@ -42,115 +42,6 @@ Outputs a separate .h5 file for each .bed entry.
 """
 
 
-def clip_float(x, dtype=np.float16):
-    return np.clip(x, np.finfo(dtype).min, np.finfo(dtype).max)
-
-
-def make_del_bedt(coords, seq_len: int, del_len: int):
-    """Make a BedTool object for all SNP sequences, where seq_len considers cropping."""
-    num_snps = len(coords)
-    left_len = seq_len // 2
-    right_len = seq_len // 2
-
-    snpseq_bed_lines = []
-    seq_mid = (coords[1] + coords[2]) // 2
-    # bound sequence start at 0 (true sequence will be N padded)
-    snpseq_start = max(0, seq_mid - left_len)
-    snpseq_end = seq_mid + right_len
-    # correct end for alternative indels
-    snpseq_end += del_len
-    snpseq_bed_lines.append("%s %d %d %d" % (coords[0], snpseq_start, snpseq_end, 0))
-
-    snpseq_bedt = pybedtools.BedTool("\n".join(snpseq_bed_lines), from_string=True)
-    return snpseq_bedt
-
-
-def map_delseq_genes(
-    coords,
-    seq_len: int,
-    del_len: int,
-    transcriptome,
-    model_stride: int,
-    span: bool,
-    majority_overlap: bool = True,
-    intron1: bool = False,
-):
-    """Intersect SNP sequences with gene exons, constructing a list
-    mapping sequence indexes to dictionaries of gene_ids to their
-    exon-overlapping positions in the sequence.
-
-    Args:
-       snps ([bvcf.SNP]): SNP list.
-       seq_len (int): Sequence length, after model cropping.
-       transcriptome (Transcriptome): Transcriptome.
-       model_stride (int): Model stride.
-       span (bool): If True, use gene span instead of exons.
-       majority_overlap (bool): If True, only consider bins for which
-         the majority of the space overlaps an exon.
-       intron1 (bool): If True, include intron bins adjacent to junctions.
-    """
-
-    # make gene BEDtool
-    if span:
-        genes_bedt = transcriptome.bedtool_span()
-    else:
-        genes_bedt = transcriptome.bedtool_exon()
-
-    # make SNP sequence BEDtool
-    snpseq_bedt = make_del_bedt(coords, seq_len, del_len)
-
-    # map SNPs to genes
-    snpseq_gene_slice = OrderedDict()
-
-    for overlap in genes_bedt.intersect(snpseq_bedt, wo=True):
-
-        # print("Overlap:", overlap)
-        gene_id = overlap[3]
-        gene_start = int(overlap[1])
-        gene_end = int(overlap[2])
-        seq_start = int(overlap[7])
-        seq_end = int(overlap[8])
-        si = int(overlap[9])
-
-        # adjust for left overhang padded
-        seq_len_chop = seq_end - seq_start
-        seq_start -= seq_len - seq_len_chop
-
-        # clip left boundaries
-        gene_seq_start = max(0, gene_start - seq_start)
-        gene_seq_end = max(0, gene_end - seq_start)
-
-        if majority_overlap:
-            # requires >50% overlap
-            bin_start = int(np.round(gene_seq_start / model_stride))
-            bin_end = int(np.round(gene_seq_end / model_stride))
-        else:
-            # any overlap
-            bin_start = int(np.floor(gene_seq_start / model_stride))
-            bin_end = int(np.ceil(gene_seq_end / model_stride))
-
-        if intron1:
-            bin_start -= 1
-            bin_end += 1
-
-        # clip boundaries
-        bin_max = int(seq_len / model_stride)
-        bin_start = min(bin_start, bin_max)
-        bin_end = min(bin_end, bin_max)
-        bin_start = max(0, bin_start)
-        bin_end = max(0, bin_end)
-
-        if bin_end - bin_start > 0:
-            # save gene bin positions
-            snpseq_gene_slice.setdefault(gene_id, []).extend(range(bin_start, bin_end))
-
-    # handle possible overlaps
-    for gene_id, gene_slice in snpseq_gene_slice.items():
-        snpseq_gene_slice[gene_id] = np.unique(gene_slice)
-
-    return snpseq_gene_slice
-
-
 def main():
     usage = "usage: %prog [options] <params_file> <model_file> <bed_file>"
     parser = OptionParser(usage)
@@ -310,7 +201,6 @@ def main():
     seqs_dna, seqs_coords, ism_lengths = bed.make_ntwise_bed_seqs(
         bed_file, options.genome_fasta, params_model["seq_length"], stranded=True
     )
-    num_seqs = len(seqs_dna.keys())
 
     # determine mutation region limits
     seq_mid = params_model["seq_length"] // 2
@@ -492,6 +382,116 @@ def main():
 
         # close output HDF5
         scores_h5.close()
+
+
+def clip_float(x, dtype=np.float16):
+    return np.clip(x, np.finfo(dtype).min, np.finfo(dtype).max)
+
+
+def make_del_bedt(coords, seq_len: int, del_len: int):
+    """Make a BedTool object for all SNP sequences, where seq_len considers cropping."""
+    left_len = seq_len // 2
+    right_len = seq_len // 2
+
+    snpseq_bed_lines = []
+    seq_mid = (coords[1] + coords[2]) // 2
+
+    # bound sequence start at 0 (true sequence will be N padded)
+    snpseq_start = max(0, seq_mid - left_len)
+    snpseq_end = seq_mid + right_len
+
+    # correct end for alternative indels
+    snpseq_end += del_len
+    snpseq_bed_lines.append("%s %d %d %d" % (coords[0], snpseq_start, snpseq_end, 0))
+
+    snpseq_bedt = pybedtools.BedTool("\n".join(snpseq_bed_lines), from_string=True)
+    return snpseq_bedt
+
+
+def map_delseq_genes(
+    coords,
+    seq_len: int,
+    del_len: int,
+    transcriptome,
+    model_stride: int,
+    span: bool,
+    majority_overlap: bool = True,
+    intron1: bool = False,
+):
+    """Intersect SNP sequences with gene exons, constructing a list
+    mapping sequence indexes to dictionaries of gene_ids to their
+    exon-overlapping positions in the sequence.
+
+    Args:
+       snps ([bvcf.SNP]): SNP list.
+       seq_len (int): Sequence length, after model cropping.
+       transcriptome (Transcriptome): Transcriptome.
+       model_stride (int): Model stride.
+       span (bool): If True, use gene span instead of exons.
+       majority_overlap (bool): If True, only consider bins for which
+         the majority of the space overlaps an exon.
+       intron1 (bool): If True, include intron bins adjacent to junctions.
+    """
+
+    # make gene BEDtool
+    if span:
+        genes_bedt = transcriptome.bedtool_span()
+    else:
+        genes_bedt = transcriptome.bedtool_exon()
+
+    # make SNP sequence BEDtool
+    snpseq_bedt = make_del_bedt(coords, seq_len, del_len)
+
+    # map SNPs to genes
+    snpseq_gene_slice = OrderedDict()
+
+    for overlap in genes_bedt.intersect(snpseq_bedt, wo=True):
+
+        # print("Overlap:", overlap)
+        gene_id = overlap[3]
+        gene_start = int(overlap[1])
+        gene_end = int(overlap[2])
+        seq_start = int(overlap[7])
+        seq_end = int(overlap[8])
+        si = int(overlap[9])
+
+        # adjust for left overhang padded
+        seq_len_chop = seq_end - seq_start
+        seq_start -= seq_len - seq_len_chop
+
+        # clip left boundaries
+        gene_seq_start = max(0, gene_start - seq_start)
+        gene_seq_end = max(0, gene_end - seq_start)
+
+        if majority_overlap:
+            # requires >50% overlap
+            bin_start = int(np.round(gene_seq_start / model_stride))
+            bin_end = int(np.round(gene_seq_end / model_stride))
+        else:
+            # any overlap
+            bin_start = int(np.floor(gene_seq_start / model_stride))
+            bin_end = int(np.ceil(gene_seq_end / model_stride))
+
+        if intron1:
+            bin_start -= 1
+            bin_end += 1
+
+        # clip boundaries
+        bin_max = int(seq_len / model_stride)
+        bin_start = min(bin_start, bin_max)
+        bin_end = min(bin_end, bin_max)
+        bin_start = max(0, bin_start)
+        bin_end = max(0, bin_end)
+
+        if bin_end - bin_start > 0:
+            # save gene bin positions
+            snpseq_gene_slice.setdefault(gene_id, []).extend(range(bin_start, bin_end))
+
+    # handle possible overlaps
+    for gene_id, gene_slice in snpseq_gene_slice.items():
+        snpseq_gene_slice[gene_id] = np.unique(gene_slice)
+
+    return snpseq_gene_slice
 
 
 ################################################################################
