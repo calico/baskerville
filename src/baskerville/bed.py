@@ -97,8 +97,9 @@ def make_bed_seqs(bed_file, fasta_file, seq_len, stranded=False):
 
 
 def make_ntwise_bed_seqs(bed_file, fasta_file, seq_len, stranded=False):
-    """Return BED regions as a list of sequences centered at every nucleotide of the 
-    bed entry, and regions as a list of coordinate tuples, extended to a specified length."""
+    """Return BED regions as a list of sequences centered at every nucleotide of the
+    bed entry, and regions as a list of coordinate tuples, extended to a specified length.
+    """
     """Extract and extend BED sequences to seq_len."""
     fasta_open = pysam.Fastafile(fasta_file)
 
@@ -106,7 +107,7 @@ def make_ntwise_bed_seqs(bed_file, fasta_file, seq_len, stranded=False):
     seqs_coords = {}
     ism_lengths = []
 
-    for il,line in enumerate(open(bed_file)):
+    for il, line in enumerate(open(bed_file)):
         a = line.split()
         chrm = a[0]
         start = int(float(a[1]))
@@ -152,7 +153,8 @@ def make_ntwise_bed_seqs(bed_file, fasta_file, seq_len, stranded=False):
             # add N's for right over reach
             if len(seq_dna) < seq_len:
                 print(
-                    "Adding %d Ns to %s:%d-%s" % (seq_len - len(seq_dna), chrm, start, end),
+                    "Adding %d Ns to %s:%d-%s"
+                    % (seq_len - len(seq_dna), chrm, start, end),
                     file=sys.stderr,
                 )
                 seq_dna += "N" * (seq_len - len(seq_dna))

@@ -41,6 +41,7 @@ where predictions are centered on the variant and SED/logSED scores can be calcu
 Outputs a separate .h5 file for each .bed entry. 
 """
 
+
 def clip_float(x, dtype=np.float16):
     return np.clip(x, np.finfo(dtype).min, np.finfo(dtype).max)
 
@@ -52,15 +53,13 @@ def make_del_bedt(coords, seq_len: int, del_len: int):
     right_len = seq_len // 2
 
     snpseq_bed_lines = []
-    seq_mid = (coords[1] + coords[2])//2
+    seq_mid = (coords[1] + coords[2]) // 2
     # bound sequence start at 0 (true sequence will be N padded)
     snpseq_start = max(0, seq_mid - left_len)
     snpseq_end = seq_mid + right_len
     # correct end for alternative indels
     snpseq_end += del_len
-    snpseq_bed_lines.append(
-        "%s %d %d %d" % (coords[0], snpseq_start, snpseq_end, 0)
-    )
+    snpseq_bed_lines.append("%s %d %d %d" % (coords[0], snpseq_start, snpseq_end, 0))
 
     snpseq_bedt = pybedtools.BedTool("\n".join(snpseq_bed_lines), from_string=True)
     return snpseq_bedt
@@ -105,7 +104,7 @@ def map_delseq_genes(
 
     for overlap in genes_bedt.intersect(snpseq_bedt, wo=True):
 
-        #print("Overlap:", overlap)
+        # print("Overlap:", overlap)
         gene_id = overlap[3]
         gene_start = int(overlap[1])
         gene_end = int(overlap[2])
@@ -143,9 +142,7 @@ def map_delseq_genes(
 
         if bin_end - bin_start > 0:
             # save gene bin positions
-            snpseq_gene_slice.setdefault(gene_id, []).extend(
-                range(bin_start, bin_end)
-            )
+            snpseq_gene_slice.setdefault(gene_id, []).extend(range(bin_start, bin_end))
 
     # handle possible overlaps
     for gene_id, gene_slice in snpseq_gene_slice.items():
@@ -266,8 +263,10 @@ def main():
     targets_df = pd.read_csv(options.targets_file, sep="\t", index_col=0)
 
     if options.target_genes is not None:
-        target_genes = pd.read_csv(options.target_genes, sep="\t", index_col=None, header=None)
-        target_genes.columns = ['gene_id']
+        target_genes = pd.read_csv(
+            options.target_genes, sep="\t", index_col=None, header=None
+        )
+        target_genes.columns = ["gene_id"]
 
     # handle strand pairs
     if "strand_pair" in targets_df.columns:
@@ -303,7 +302,7 @@ def main():
     gene_strand = {}
     for gene_id, gene in transcriptome.genes.items():
         gene_strand[gene_id] = gene.strand
-        
+
     #################################################################
     # sequence dataset
 
@@ -312,7 +311,7 @@ def main():
         bed_file, options.genome_fasta, params_model["seq_length"], stranded=True
     )
     num_seqs = len(seqs_dna.keys())
-    
+
     # determine mutation region limits
     seq_mid = params_model["seq_length"] // 2
 
@@ -326,7 +325,9 @@ def main():
         if os.path.isfile(scores_h5_file):
             os.remove(scores_h5_file)
         scores_h5 = h5py.File(scores_h5_file, "w")
-        scores_h5.create_dataset("seqs", dtype="bool", shape=(len(seqs_dna[isq]), ism_lengths[isq], 4))
+        scores_h5.create_dataset(
+            "seqs", dtype="bool", shape=(len(seqs_dna[isq]), ism_lengths[isq], 4)
+        )
         print("Seqs shape:", (len(seqs_dna[isq]), ism_lengths[isq], 4))
         for snp_stat in options.snp_stats:
             scores_h5.create_dataset(
@@ -334,8 +335,8 @@ def main():
             )
 
         # centered on deletion but mutation range length is variable
-        mut_start = seq_mid - ism_lengths[isq]//2
-        mut_end = seq_mid + ism_lengths[isq]//2
+        mut_start = seq_mid - ism_lengths[isq] // 2
+        mut_end = seq_mid + ism_lengths[isq] // 2
 
         # store mutagenesis sequence coordinates
         scores_chr = []
@@ -348,7 +349,7 @@ def main():
             scores_strand.append(seq_strand)
             score_start = seq_start
             score_end = seq_end
-            del_loci.append(seq_start+seq_mid)
+            del_loci.append(seq_start + seq_mid)
             scores_start.append(score_start)
             scores_end.append(score_end)
 
@@ -375,8 +376,8 @@ def main():
             ref_1hot = np.expand_dims(ref_1hot, axis=0)
 
             # save sequence: always centered on the current snp
-            print("current seqs shape:", np.shape(ref_1hot[0, mut_start:mut_end+1]))
-            scores_h5["seqs"][si] = ref_1hot[0, mut_start:mut_end+1].astype("bool")
+            print("current seqs shape:", np.shape(ref_1hot[0, mut_start : mut_end + 1]))
+            scores_h5["seqs"][si] = ref_1hot[0, mut_start : mut_end + 1].astype("bool")
 
             # predict reference
             ref_preds = []
@@ -425,7 +426,12 @@ def main():
             #################################################################
             # map SNP sequences to gene positions
             delseq_gene_slice = map_delseq_genes(
-                seqs_coords[isq][si], out_seq_crop_len, options.del_len, transcriptome, model_stride, options.span
+                seqs_coords[isq][si],
+                out_seq_crop_len,
+                options.del_len,
+                transcriptome,
+                model_stride,
+                options.span,
             )
 
             # slicing all genes in the window
@@ -433,8 +439,10 @@ def main():
             # for each overlapping gene
             if options.target_genes is not None:
                 for gene_id, gene_slice in delseq_gene_slice.items():
-                    if str(target_genes.iloc[isq]['gene_id']) in gene_id:
-                        print(f"Found gene {str(target_genes.iloc[isq]['gene_id'])} in {gene_id}!")
+                    if str(target_genes.iloc[isq]["gene_id"]) in gene_id:
+                        print(
+                            f"Found gene {str(target_genes.iloc[isq]['gene_id'])} in {gene_id}!"
+                        )
                         gene_slice_all.extend(gene_slice)
             for gene_id, gene_slice in delseq_gene_slice.items():
                 gene_slice_all.extend(gene_slice)
@@ -449,8 +457,8 @@ def main():
             num_shifts, seq_length, num_targets = ref_preds_stitch.shape
 
             # log/sqrt
-            ref_preds_log = np.log2(ref_preds_gene+1)
-            alt_preds_log = np.log2(alt_preds_gene+1)
+            ref_preds_log = np.log2(ref_preds_gene + 1)
+            alt_preds_log = np.log2(alt_preds_gene + 1)
 
             # sum across length
             ref_preds_gene_sum = ref_preds_gene.sum(axis=(0, 1)) / num_shifts
@@ -460,16 +468,18 @@ def main():
             alt_preds_sum = alt_preds.sum(axis=(0, 1)) / num_shifts
 
             # SED/logSED are handled outside of snps.compute_scores
-            if 'SED' in options.snp_stats:
+            if "SED" in options.snp_stats:
                 sed = alt_preds_gene_sum - ref_preds_gene_sum
-                scores_h5['SED'][si, :] = clip_float(sed).astype('float16')
-            if 'logSED' in options.snp_stats:
-                log_sed = np.log2(alt_preds_gene_sum + 1) - np.log2(ref_preds_gene_sum + 1)
+                scores_h5["SED"][si, :] = clip_float(sed).astype("float16")
+            if "logSED" in options.snp_stats:
+                log_sed = np.log2(alt_preds_gene_sum + 1) - np.log2(
+                    ref_preds_gene_sum + 1
+                )
                 print("logSED shape:", log_sed.shape)
-                scores_h5['logSED'][si, :] = log_sed.astype('float16')
-            if 'SUMlog' in options.snp_stats:
+                scores_h5["logSED"][si, :] = log_sed.astype("float16")
+            if "SUMlog" in options.snp_stats:
                 sum_log = np.log2(alt_preds_sum + 1) - np.log2(ref_preds_sum + 1)
-                scores_h5['SUMlog'][si, :] = sum_log.astype('float16')
+                scores_h5["SUMlog"][si, :] = sum_log.astype("float16")
 
             # compute sed here
             ism_scores = snps.compute_scores(
