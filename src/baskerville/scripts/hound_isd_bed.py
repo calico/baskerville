@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Copyright 2017 Calico LLC
+# Copyright 2024 Calico LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -52,36 +52,16 @@ def main():
         help="Genome FASTA for sequences [Default: %default]",
     )
     parser.add_option(
-        "-s",
-        dest="del_len",
-        default=1,
-        type="int",
-        help="Deletion size for ISD [Default: %default]",
-    )
-    parser.add_option(
-        "-o",
-        dest="out_dir",
-        default="sat_del",
-        help="Output directory [Default: %default]",
-    )
-    parser.add_option(
         "-g",
         dest="genes_gtf",
         default="/group/fdna/public/genomes/hg38/genes/gencode41/gencode41_basic_nort.gtf",
         help="GTF for gene definition [Default %default]",
     )
     parser.add_option(
-        "--target_genes",
-        dest="target_genes",
-        default=None,
-        help="List of target genes in .tsv format, length must match input bed entries [Default %default]",
-    )
-    parser.add_option(
-        "--span",
-        dest="span",
-        default=False,
-        action="store_true",
-        help="Aggregate entire gene span [Default: %default]",
+        "-o",
+        dest="out_dir",
+        default="sat_del",
+        help="Output directory [Default: %default]",
     )
     parser.add_option(
         "-p",
@@ -104,10 +84,30 @@ def main():
         help="Ensemble prediction shifts [Default: %default]",
     )
     parser.add_option(
+        "--span",
+        dest="span",
+        default=False,
+        action="store_true",
+        help="Aggregate entire gene span [Default: %default]",
+    )
+    parser.add_option(
         "--stats",
         dest="snp_stats",
         default="logSED",
         help="Comma-separated list of stats to save. [Default: %default]",
+    )
+    parser.add_option(
+        "-s",
+        dest="del_size",
+        default=1,
+        type="int",
+        help="Deletion size for ISD [Default: %default]",
+    )
+    parser.add_option(
+        "--target_genes",
+        dest="target_genes",
+        default=None,
+        help="List of target genes in .tsv format, length must match input bed entries [Default %default]",
     )
     parser.add_option(
         "-t",
@@ -259,7 +259,7 @@ def main():
             ref_shifts = []
             for shift in options.shifts:
                 ref_shifts.append(shift)
-                ref_shifts.append(shift - options.del_len)
+                ref_shifts.append(shift - options.del_size)
 
             # 1 hot code DNA
             ref_1hot = dna.dna_1hot(seq_dna)
@@ -287,7 +287,7 @@ def main():
             alt_1hot = np.copy(ref_1hot)
 
             # left-matched shift: delete 1 nucleotide at position mi
-            dna.hot1_delete(alt_1hot[0], seq_mid, options.del_len)
+            dna.hot1_delete(alt_1hot[0], seq_mid, options.del_size)
 
             # predict alternate
             alt_preds = []
@@ -318,7 +318,7 @@ def main():
             delseq_gene_slice = map_delseq_genes(
                 seqs_coords[isq][si],
                 out_seq_crop_len,
-                options.del_len,
+                options.del_size,
                 transcriptome,
                 model_stride,
                 options.span,
@@ -388,7 +388,7 @@ def clip_float(x, dtype=np.float16):
     return np.clip(x, np.finfo(dtype).min, np.finfo(dtype).max)
 
 
-def make_del_bedt(coords, seq_len: int, del_len: int):
+def make_del_bedt(coords, seq_len: int, del_size: int):
     """Make a BedTool object for all SNP sequences, where seq_len considers cropping."""
     left_len = seq_len // 2
     right_len = seq_len // 2
@@ -401,7 +401,7 @@ def make_del_bedt(coords, seq_len: int, del_len: int):
     snpseq_end = seq_mid + right_len
 
     # correct end for alternative indels
-    snpseq_end += del_len
+    snpseq_end += del_size
     snpseq_bed_lines.append("%s %d %d %d" % (coords[0], snpseq_start, snpseq_end, 0))
 
     snpseq_bedt = pybedtools.BedTool("\n".join(snpseq_bed_lines), from_string=True)
@@ -411,7 +411,7 @@ def make_del_bedt(coords, seq_len: int, del_len: int):
 def map_delseq_genes(
     coords,
     seq_len: int,
-    del_len: int,
+    del_size: int,
     transcriptome,
     model_stride: int,
     span: bool,
@@ -440,7 +440,7 @@ def map_delseq_genes(
         genes_bedt = transcriptome.bedtool_exon()
 
     # make SNP sequence BEDtool
-    snpseq_bedt = make_del_bedt(coords, seq_len, del_len)
+    snpseq_bedt = make_del_bedt(coords, seq_len, del_size)
 
     # map SNPs to genes
     snpseq_gene_slice = OrderedDict()
