@@ -202,16 +202,16 @@ def main():
         bed_file, options.genome_fasta, params_model["seq_length"], stranded=True
     )
 
-    # determine mutation region limits
+    # helper variables
     seq_mid = params_model["seq_length"] // 2
-
     model_stride = seqnn_model.model_strides[0]
 
     #################################################################
     # setup output: each seq is a separate file because of different lengths
     # in each file, num_seqs = number of nt-wise deletions in bed range
+
     for isq in seqs_dna.keys():
-        scores_h5_file = "%s/scores_%d.h5" % (options.out_dir, isq)
+        scores_h5_file = f"{options.out_dir}/scores_{isq}.h5"
         if os.path.isfile(scores_h5_file):
             os.remove(scores_h5_file)
         scores_h5 = h5py.File(scores_h5_file, "w")
@@ -253,7 +253,7 @@ def main():
         # predict scores, write output
 
         for si, seq_dna in enumerate(seqs_dna[isq]):
-            print("Predicting %d" % si, flush=True)
+            print(f"Predicting {si}", flush=True)
 
             # make list of shifts for reference stitching
             ref_shifts = []
@@ -282,7 +282,6 @@ def main():
                 )
                 ref_preds.append(ref_preds_shift)
 
-            # increment by deletion size
             # copy and modify
             alt_1hot = np.copy(ref_1hot)
 
@@ -344,11 +343,7 @@ def main():
             alt_preds_gene = alt_preds[:, gene_slice_all, :]
 
             # ref/alt_preds is B x L x T
-            num_shifts, seq_length, num_targets = ref_preds_stitch.shape
-
-            # log/sqrt
-            ref_preds_log = np.log2(ref_preds_gene + 1)
-            alt_preds_log = np.log2(alt_preds_gene + 1)
+            num_shifts, _, _ = ref_preds_stitch.shape
 
             # sum across length
             ref_preds_gene_sum = ref_preds_gene.sum(axis=(0, 1)) / num_shifts

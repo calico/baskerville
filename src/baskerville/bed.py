@@ -34,7 +34,6 @@ from baskerville import dna
 def make_bed_seqs(bed_file, fasta_file, seq_len, stranded=False):
     """Return BED regions as sequences and regions as a list of coordinate
     tuples, extended to a specified length."""
-    """Extract and extend BED sequences to seq_len."""
     fasta_open = pysam.Fastafile(fasta_file)
 
     seqs_dna = []
@@ -100,7 +99,6 @@ def make_ntwise_bed_seqs(bed_file, fasta_file, seq_len, stranded=False):
     """Return BED regions as a list of sequences centered at every nucleotide of the
     bed entry, and regions as a list of coordinate tuples, extended to a specified length.
     """
-    """Extract and extend BED sequences to seq_len."""
     fasta_open = pysam.Fastafile(fasta_file)
 
     seqs_dna = {}
@@ -123,7 +121,6 @@ def make_ntwise_bed_seqs(bed_file, fasta_file, seq_len, stranded=False):
         seqs_coords[il] = []
 
         for ni in range(num_pos):
-
             # determine sequence limits
             mid = start + ni
             seq_start = mid - seq_len // 2
