@@ -33,16 +33,33 @@ from baskerville.gene import Transcriptome
 
 from collections import OrderedDict
 
-"""
-hound_isd_sed.py
-
-Perform an in silico deletion mutagenesis of sequences in a BED file, 
-where predictions are centered on the variant and SED/logSED scores can be calculated.
-Outputs a separate .h5 file for each .bed entry. 
-"""
-
 
 def main():
+
+    """
+    hound_isd_sed.py
+
+    Perform an in silico deletion mutagenesis of sequences in a BED file, 
+    where predictions are centered on the variant and SED/logSED scores can be calculated.
+    Outputs a separate .h5 file for each .bed entry. 
+
+    Usage:
+        hound_isd_sed.py [options] <params_file> <model_file> <bed_file>
+    Options:
+        -f <genome_fasta>    Genome FASTA for sequences
+        -g <genes_gtf>       GTF for gene definition
+        -o <out_dir>        Output directory
+        -p <processes>      Number of processes, passed by multi script
+        --rc                Ensemble forward and reverse complement predictions
+        --shifts            Ensemble prediction shifts
+        --span              Aggregate entire gene span
+        --stats             Comma-separated list of stats to save.
+        -s <del_size>       Deletion size for ISD
+        --target_genes      List of target genes in .tsv format, length must match input bed entries
+        -t <targets_file>   File specifying target indexes and labels in table format
+        --untransform_old   Untransform old models
+    """
+
     usage = "usage: %prog [options] <params_file> <model_file> <bed_file>"
     parser = OptionParser(usage)
     parser.add_option(
