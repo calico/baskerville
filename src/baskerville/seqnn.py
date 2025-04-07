@@ -430,18 +430,16 @@ class SeqNN:
         track_transform=1.0,
         clip_soft=None,
         pseudo_count=0.0,
-        no_transform=False,
+        untransform_old=False,
+        no_untransform=False,
         use_mean=False,
         use_ratio=False,
         use_logodds=False,
         subtract_avg=True,
         input_gate=True,
-        smooth_grad=False,
-        n_samples=5,
-        sample_prob=0.875,
         dtype="float16",
     ):
-        """Compute input gradients for sequences (GPU-friendly)."""
+        """Compute input gradients for sequences."""
 
         # start time
         t0 = time.time()
@@ -528,52 +526,6 @@ class SeqNN:
 
             actual_chunk_size = seq_1hot_chunk.shape[0]
 
-            # sample noisy (discrete) perturbations of the input pattern chunk
-            if smooth_grad:
-                seq_1hot_chunk_corrupted = np.repeat(
-                    np.copy(seq_1hot_chunk), n_samples, axis=0
-                )
-
-                for example_ix in range(seq_1hot_chunk.shape[0]):
-                    for sample_ix in range(n_samples):
-                        corrupt_index = np.nonzero(
-                            np.random.rand(seq_1hot_chunk.shape[1]) >= sample_prob
-                        )[0]
-
-                        rand_nt_index = np.random.choice(
-                            [0, 1, 2, 3], size=(corrupt_index.shape[0],)
-                        )
-
-                        seq_1hot_chunk_corrupted[
-                            example_ix * n_samples + sample_ix, corrupt_index, :
-                        ] = 0.0
-                        seq_1hot_chunk_corrupted[
-                            example_ix * n_samples + sample_ix,
-                            corrupt_index,
-                            rand_nt_index,
-                        ] = 1.0
-
-                seq_1hot_chunk = seq_1hot_chunk_corrupted
-                target_slice_chunk = np.repeat(
-                    np.copy(target_slice_chunk), n_samples, axis=0
-                )
-                pos_slice_chunk = np.repeat(np.copy(pos_slice_chunk), n_samples, axis=0)
-
-                if pos_mask is not None:
-                    pos_mask_chunk = np.repeat(
-                        np.copy(pos_mask_chunk), n_samples, axis=0
-                    )
-
-                if use_ratio and pos_slice_denom is not None:
-                    pos_slice_denom_chunk = np.repeat(
-                        np.copy(pos_slice_denom_chunk), n_samples, axis=0
-                    )
-
-                    if pos_mask_denom is not None:
-                        pos_mask_denom_chunk = np.repeat(
-                            np.copy(pos_mask_denom_chunk), n_samples, axis=0
-                        )
-
             # convert to tf tensors
             seq_1hot_chunk = tf.convert_to_tensor(seq_1hot_chunk, dtype=tf.float32)
             target_slice_chunk = tf.convert_to_tensor(
@@ -595,11 +547,7 @@ class SeqNN:
                     )
 
             # batching parameters
-            num_batches = int(
-                np.ceil(
-                    actual_chunk_size * (n_samples if smooth_grad else 1) / batch_size
-                )
-            )
+            num_batches = int(np.ceil(actual_chunk_size / batch_size))
 
             # loop over batches
             grad_batches = []
@@ -646,7 +594,8 @@ class SeqNN:
                         track_transform,
                         clip_soft,
                         pseudo_count,
-                        no_transform,
+                        untransform_old,
+                        no_untransform,
                         use_mean,
                         use_ratio,
                         use_logodds,
@@ -661,22 +610,6 @@ class SeqNN:
 
             # concat gradient batches
             grads = np.concatenate(grad_batches, axis=0)
-
-            # aggregate noisy gradient perturbations
-            if smooth_grad:
-                grads_smoothed = np.zeros(
-                    (grads.shape[0] // n_samples, grads.shape[1], grads.shape[2]),
-                    dtype="float32",
-                )
-
-                for example_ix in range(grads_smoothed.shape[0]):
-                    for sample_ix in range(n_samples):
-                        grads_smoothed[example_ix, ...] += grads[
-                            example_ix * n_samples + sample_ix, ...
-                        ]
-
-                grads = grads_smoothed / float(n_samples)
-                grads = grads.astype(dtype)
 
             grad_chunks.append(grads)
 
@@ -708,13 +641,15 @@ class SeqNN:
         track_transform=1.0,
         clip_soft=None,
         pseudo_count=0.0,
-        no_transform=False,
+        untransform_old=False,
+        no_untransform=False,
         use_mean=False,
         use_ratio=False,
         use_logodds=False,
         subtract_avg=True,
         input_gate=True,
     ):
+        """Compute gradient of the model prediction with respect to the input sequence."""
         with tf.GradientTape() as tape:
             tape.watch(seq_1hot)
 
@@ -723,18 +658,35 @@ class SeqNN:
                 model(seq_1hot, training=False), target_slice, axis=-1, batch_dims=1
             )
 
-            if not no_transform:
-                # undo scale
-                preds = preds / track_scale
+            if not no_untransform:
+                if untransform_old:
+                    # undo scale
+                    preds = preds / track_scale
 
-                # undo soft_clip
-                if clip_soft is not None:
-                    preds = tf.where(
-                        preds > clip_soft, (preds - clip_soft) ** 2 + clip_soft, preds
-                    )
+                    # undo clip_soft
+                    if clip_soft is not None:
+                        preds = tf.where(
+                            preds > clip_soft,
+                            (preds - clip_soft) ** 2 + clip_soft,
+                            preds,
+                        )
 
-                # undo sqrt
-                preds = preds ** (1.0 / track_transform)
+                    # undo sqrt
+                    preds = preds ** (1.0 / track_transform)
+                else:
+                    # undo clip_soft
+                    if clip_soft is not None:
+                        preds = tf.where(
+                            preds > clip_soft,
+                            (preds - clip_soft + 1) ** 2 + clip_soft - 1,
+                            preds,
+                        )
+
+                    # undo sqrt
+                    preds = -1 + (preds + 1) ** (1.0 / track_transform)
+
+                    # scale
+                    preds = preds / track_scale
 
             # aggregate over tracks (average)
             preds = tf.reduce_mean(preds, axis=-1)
@@ -774,7 +726,7 @@ class SeqNN:
                         preds_agg_denom = tf.reduce_mean(preds_slice_denom, axis=-1)
 
             # compute final statistic to take gradient of
-            if no_transform:
+            if no_untransform:
                 score_ratios = preds_agg
             elif not use_ratio:
                 score_ratios = tf.math.log(preds_agg + pseudo_count + 1e-6)
@@ -807,107 +759,6 @@ class SeqNN:
         # multiply by input
         if input_gate:
             grads = grads * seq_1hot
-
-        return grads
-
-    def gradients_orig(
-        self, seq_1hot, head_i=None, pos_slice=None, batch_size=8, dtype="float16"
-    ):
-        """Compute input gradients for each task.
-
-        Args:
-          seq_1hot (np.array): 1-hot encoded sequence.
-          head_i (int): Model head index.
-          pos_slice ([int]): Sequence positions to consider.
-          batch_size (int): number of tasks to compute gradients for at once.
-          dtype: Returned data type.
-        Returns:
-          Gradients for each task.
-        """
-        # choose model
-        if self.ensemble is not None:
-            model = self.ensemble
-        elif head_i is not None:
-            model = self.models[head_i]
-        else:
-            model = self.model
-
-        # verify tensor shape
-        seq_1hot = seq_1hot.astype("float32")
-        seq_1hot = tf.convert_to_tensor(seq_1hot, dtype=tf.float32)
-        if len(seq_1hot.shape) < 3:
-            seq_1hot = tf.expand_dims(seq_1hot, axis=0)
-
-        # batching parameters
-        num_targets = model.output_shape[-1]
-        num_batches = int(np.ceil(num_targets / batch_size))
-
-        ti_start = 0
-        grads = []
-        for bi in range(num_batches):
-            # sequence input
-            sequence = tf.keras.Input(shape=(self.seq_length, 4), name="sequence")
-
-            # predict
-            predictions = model(sequence)
-
-            # slice
-            ti_end = min(num_targets, ti_start + batch_size)
-            target_slice = np.arange(ti_start, ti_end)
-            predictions_slice = tf.gather(predictions, target_slice, axis=-1)
-
-            # replace model
-            model_batch = tf.keras.Model(inputs=sequence, outputs=predictions_slice)
-
-            # compute gradients
-            t0 = time.time()
-            grads_batch = self.gradients_func(model_batch, seq_1hot, pos_slice)
-            print("Batch gradient computation in %ds" % (time.time() - t0))
-
-            # convert numpy dtype
-            grads_batch = grads_batch.numpy().astype(dtype)
-            grads.append(grads_batch)
-
-            # next batch
-            ti_start += batch_size
-
-        # concat target batches
-        grads = np.concatenate(grads, axis=-1)
-
-        return grads
-
-    @tf.function
-    def gradients_func_orig(self, model, seq_1hot, pos_slice):
-        """Compute input gradients for each task.
-
-        Args:
-          model (tf.keras.Model): Model to compute gradients for.
-          seq_1hot (tf.Tensor): 1-hot encoded sequence.
-          pos_slice ([int]): Sequence positions to consider.
-
-        Returns:
-          grads (tf.Tensor): Gradients for each task.
-        """
-        with tf.GradientTape() as tape:
-            tape.watch(seq_1hot)
-
-            # predict
-            preds = model(seq_1hot, training=False)
-
-            if pos_slice is not None:
-                # slice specified positions
-                preds = tf.gather(preds, pos_slice, axis=-2)
-
-            # sum across positions
-            preds = tf.reduce_sum(preds, axis=-2)
-
-        # compute jacboian
-        grads = tape.jacobian(preds, seq_1hot)
-        grads = tf.squeeze(grads)
-        grads = tf.transpose(grads, [1, 2, 0])
-
-        # zero mean each position
-        grads = grads - tf.reduce_mean(grads, axis=-2, keepdims=True)
 
         return grads
 

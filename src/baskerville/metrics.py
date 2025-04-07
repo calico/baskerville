@@ -168,7 +168,7 @@ def poisson_multinomial(
     multinomial_term /= tf.reduce_sum(position_weights)
 
     # normalize to scale of 1:1 term ratio
-    loss_raw = multinomial_term + total_weight * poisson_term
+    loss_raw = multinomial_term + total_weight * poisson_term  # B x T
     if rescale:
         loss_rescale = loss_raw * 2 / (1 + total_weight)
     else:
