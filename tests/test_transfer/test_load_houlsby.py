@@ -5,7 +5,7 @@ from baskerville import seqnn
 
 model_file = "/home/yuanh/analysis/Borzoi_transfer/exp_10_10_23/hayflick/houlsby/latent_8/train/f0c0/train/model_best.h5"
 targets_file = "tests/data/transfer/targets.txt"
-params_file = "tests/data/transfer/json/model_houlsby.json"
+params_file = "tests/data/transfer/json/load_model_houlsby.json"
 
 # model params
 with open(params_file) as params_open:
