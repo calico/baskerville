@@ -3,7 +3,7 @@
         "batch_size": 1,
 	"shuffle_buffer": 256,
         "optimizer": "adam",
-	"learning_rate": 0.00006,
+	"learning_rate": 0.000006,
 	"loss": "poisson_mn",
 	"total_weight": 0.2,
         "warmup_steps": 20000,
@@ -15,9 +15,7 @@
 	"train_epochs_max": 50
     },
     "transfer": {
-        "mode": "adapter",
-        "adapter": "locon",
-        "conv_select": 4
+        "mode": "full"
     },    
     "model": {
         "seq_length": 524288,

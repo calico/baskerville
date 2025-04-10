@@ -16,8 +16,10 @@
     },
     "transfer": {
         "mode": "adapter",
-        "adapter": "locon",
-        "conv_select": 4
+        "adapter": "houlsby_se",
+        "adapter_latent": 8,
+        "conv_select": 4,
+        "conv_latent": 16
     },    
     "model": {
         "seq_length": 524288,

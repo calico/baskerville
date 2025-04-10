@@ -70,7 +70,7 @@ def main():
     parser.add_argument(
         "--restore",
         default=None,
-        help="Restore model and continue training [Default: %(default)s]",
+        help="model trunk h5 file [Default: %(default)s]",
     )
     parser.add_argument(
         "--trunk",
@@ -90,8 +90,15 @@ def main():
     )
 
     parser.add_argument("params_file", help="JSON file with model parameters")
+
     parser.add_argument(
         "data_dirs", nargs="+", help="Train/valid/test data directorie(s)"
+    )
+    parser.add_argument(
+        "--skip_train",
+        action="store_true",
+        default=False,
+        help="report trainable params and skip training [Default: %(default)s]",
     )
     args = parser.parse_args()
 
@@ -116,7 +123,7 @@ def main():
     params_transfer = params["transfer"]
     transfer_mode = params_transfer.get("mode", "full")
     transfer_adapter = params_transfer.get("adapter", None)
-    transfer_latent = params_transfer.get("latent", 8)
+    transfer_latent = params_transfer.get("adapter_latent", 8)
     transfer_conv_select = params_transfer.get("conv_select", 4)
     transfer_conv_rank = params_transfer.get("conv_latent", 4)
     transfer_lora_alpha = params_transfer.get("lora_alpha", 16)
@@ -270,6 +277,9 @@ def main():
         # compile model
         seqnn_trainer.compile(seqnn_model)
 
+        if args.skip_train:
+            exit(0)
+
         # train model
         if args.keras_fit:
             seqnn_trainer.fit_keras(seqnn_model)
@@ -352,7 +362,7 @@ def main():
 
             # restore
             if args.restore:
-                seqnn_model.restore(args.restore, args.trunk)
+                seqnn_model.restore(args.restore, trunk=args.trunk)
 
             # initialize trainer
             seqnn_trainer = trainer.Trainer(

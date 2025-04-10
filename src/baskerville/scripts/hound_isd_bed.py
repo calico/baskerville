@@ -35,13 +35,12 @@ from collections import OrderedDict
 
 
 def main():
-
     """
     hound_isd_sed.py
 
-    Perform an in silico deletion mutagenesis of sequences in a BED file, 
+    Perform an in silico deletion mutagenesis of sequences in a BED file,
     where predictions are centered on the variant and SED/logSED scores can be calculated.
-    Outputs a separate .h5 file for each .bed entry. 
+    Outputs a separate .h5 file for each .bed entry.
 
     Usage:
         hound_isd_sed.py [options] <params_file> <model_file> <bed_file>

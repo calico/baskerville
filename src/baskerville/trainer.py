@@ -1117,16 +1117,19 @@ def CheckGradientNA(gradients):
                 raise ValueError("NaN gradient detected.")
 
 
-# Define a custom callback class to track GPU memory usage
 class GPUMemoryUsageCallback(tf.keras.callbacks.Callback):
+    def __init__(self):
+        super().__init__()
+        self.gpu_available = tf.config.experimental.list_physical_devices("GPU")
+
     def on_train_begin(self, logs=None):
-        # Enable memory growth to avoid GPU memory allocation issues
-        physical_devices = tf.config.experimental.list_physical_devices("GPU")
-        if physical_devices:
-            for device in physical_devices:
+        if self.gpu_available:
+            for device in self.gpu_available:
                 tf.config.experimental.set_memory_growth(device, True)
 
     def on_batch_end(self, logs=None):
-        gpu_memory = tf.config.experimental.get_memory_info("GPU:0")
-        current_memory = gpu_memory["peak"] / 1e9  # Convert to GB
-        return current_memory
+        if self.gpu_available:
+            gpu_memory = tf.config.experimental.get_memory_info("GPU:0")
+            current_memory = gpu_memory["peak"] / 1e9  # Convert to GB
+            return current_memory
+        return 0  # No GPU, return 0
