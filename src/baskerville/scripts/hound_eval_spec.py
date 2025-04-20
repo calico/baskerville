@@ -170,9 +170,10 @@ def main():
     params_model = params["model"]
     params_train = params["train"]
 
-    # set strand pairs
-    if "strand_pair" in targets_df.columns:
-        params_model["strand_pair"] = [np.array(targets_df.strand_pair)]
+    # update strand pairs for new indexing
+    orig_new_index = dict(zip(targets_df.index, np.arange(targets_df.shape[0])))
+    targets_strand_pair = [orig_new_index[ti] for ti in targets_df.strand_pair]
+    params_model["strand_pair"] = [np.array(targets_strand_pair)]
 
     # construct eval data
     eval_data = dataset.SeqDataset(
@@ -193,11 +194,11 @@ def main():
         # initialize model
         seqnn_model = seqnn.SeqNN(params_model)
         seqnn_model.restore(args.model_file, args.head_i)
-
     seqnn_model.build_slice(targets_df.index)
+    seqnn_model.build_ensemble(args.rc, args.shifts)
     if args.step > 1:
         seqnn_model.step(args.step)
-    seqnn_model.build_ensemble(args.rc, args.shifts)
+        step_i = np.arange(0, eval_data.target_length, args.step)
 
     #######################################################
     # targets/predictions
@@ -216,7 +217,6 @@ def main():
         y = y.numpy().astype("float16")
         y = y[:, :, np.array(targets_df.index)]
         if args.step > 1:
-            step_i = np.arange(0, eval_data.target_length, args.step)
             y = y[:, step_i, :]
         eval_targets.append(y)
 
