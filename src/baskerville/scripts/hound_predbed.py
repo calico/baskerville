@@ -17,13 +17,13 @@ import argparse
 import json
 import os
 import pdb
-import pickle
 
 import h5py
 import numpy as np
 import pandas as pd
 import pyBigWig
 import tensorflow as tf
+from tqdm import tqdm
 
 from baskerville import bed
 from baskerville import dataset
@@ -98,12 +98,6 @@ def main():
         help="Average the fwd and rc predictions [Default: %(default)s]",
     )
     parser.add_argument(
-        "--save",
-        default=False,
-        action="store_true",
-        help="Save predictions to file [Default: %(default)s]",
-    )
-    parser.add_argument(
         "-s",
         "--sum",
         default=False,
@@ -123,10 +117,16 @@ def main():
     )
     parser.add_argument(
         "-u",
+        "--untransform",
+        default=False,
+        action="store_true",
+        help="Untransform predictions [Default: %default]",
+    )
+    parser.add_argument(
         "--untransform_old",
         default=False,
         action="store_true",
-        help="Untransform old models [Default: %default]",
+        help="Untransform predictions, using the original recipe [Default: %default]",
     )
     parser.add_argument("params_file", help="Parameters file")
     parser.add_argument("model_file", help="Model file")
@@ -159,6 +159,11 @@ def main():
     else:
         targets_df = pd.read_table(args.targets_file, index_col=0)
         target_slice = targets_df.index
+
+        # update strand pairs for new indexing
+        orig_new_index = dict(zip(targets_df.index, np.arange(targets_df.shape[0])))
+        targets_strand_pair = [orig_new_index[ti] for ti in targets_df.strand_pair]
+        params_model["strand_pair"] = [np.array(targets_strand_pair)]
 
     #################################################################
     # setup model
@@ -234,25 +239,14 @@ def main():
 
     #################################################################
     # predict scores, write output
-    """
-    # define sequence generator
-    def seqs_gen():
-        for seq_dna in model_seqs_dna:
-            yield dna.dna_1hot(seq_dna)
 
-    # predict
-    preds_stream = stream.PredStreamGen(
-        seqnn_model, seqs_gen(), params["train"]["batch_size"]
-    )
-    """
-
-    for si, seq_dna in enumerate(model_seqs_dna):
+    for si, seq_dna in tqdm(enumerate(model_seqs_dna)):
         seq_1hot = np.expand_dims(dna.dna_1hot(seq_dna), axis=0)
         preds_seq = seqnn_model.predict(seq_1hot)[0]
 
         if args.untransform_old:
             preds_seq = dataset.untransform_preds1(preds_seq, targets_df)
-        else:
+        elif args.untransform:
             preds_seq = dataset.untransform_preds(preds_seq, targets_df)
 
         # slice site
