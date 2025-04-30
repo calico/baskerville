@@ -133,6 +133,7 @@ def main():
     )
     (options, args) = parser.parse_args()
 
+    print("Debug: before adding more options, gcs is ", options.gcs)
     if options.gcs:
         """Assume that output_dir will be gcs"""
         gcs_output_dir = options.out_dir
@@ -163,6 +164,7 @@ def main():
         if options.gcs:
             options_pkl_file = download_rename_inputs(options_pkl_file, temp_dir)
         options = load_extra_options(options_pkl_file, options)
+        print("Debug: after load_extra_options: options.gcs is ", options.gcs)
         # update output directory
         options.out_dir = out_dir
 
