@@ -217,6 +217,8 @@ def main():
 
     #################################################################
     # download input files from gcs to a local file
+    print("Downloading input files from GCS")
+    print("options.gcs: ", options.gcs)
     if options.gcs:
         params_file = download_rename_inputs(params_file, temp_dir)
         vcf_file = download_rename_inputs(vcf_file, temp_dir)
@@ -229,6 +231,10 @@ def main():
             options.targets_file = download_rename_inputs(
                 options.targets_file, temp_dir
             )
+    print("debug: params_file: ", params_file)
+    print("debug: model_file: ", model_file)
+    print("debug: vcf_file: ", vcf_file)
+    print("debug: genome_fasta: ", options.genome_fasta)
 
     #################################################################
     # calculate SAD scores:
