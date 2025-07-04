@@ -5,7 +5,7 @@
 
 ### Prepare Files
 
-To prepare the tracks to w5 file, see the [Document page for transfer learning to hg38 tracks](docs/transfer_human/transfer.md).
+To prepare the tracks to w5 file, see the [Document page for transfer learning to hg38 tracks](../transfer_human/transfer.md).
 
 Set data_path to your preferred directory:
 
