@@ -14,8 +14,8 @@ Baskerville provides researchers with tools to:
 
 Documentation page: https://calico.github.io/baskerville/index.html
 
-[Document page for transfer learning](docs/transfer/transfer.md)
-
+[Document page for transfer learning to hg38 tracks](docs/transfer_human/transfer.md)
+[Document page for transfer learning to mm10 tracks](docs/transfer_mouse/transfer_mouse.md)
 ---
 
 ### Installation

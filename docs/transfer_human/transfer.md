@@ -1,7 +1,8 @@
-## Transfer Learning Tutorial
+## Transfer Learning Tutorial (Human hg38 tracks)
 
 ### Required Software
 - baskerville
+- westminster_train_folds.py from [westminster](https://github.com/calico/westminster/tree/main). We use westminster_train_folds.py just to set-up folder structure for training. It works as a stand-alone file. You can also just copy over this file into baskerville repo.
 - bamCoverage from [deepTools](https://github.com/deeptools/deepTools/tree/master) is required to make BigWig files.
 
 ### Download Tutorial Data
@@ -10,8 +11,8 @@
 Set data_path to your preferred directory:
 
 ```bash
-baskerville_path='/home/yuanh/programs/source/python_packages/baskerville'
-data_path='/home/yuanh/analysis/Borzoi_transfer/tutorial/data'
+baskerville_path='/path/to/your/baskerville'  # Update this to your baskerville installation path
+data_path='/path/to/your/data'  # Update this to your preferred data directory
 bam_folder=${data_path}/bam
 bw_folder=${data_path}/bw
 w5_folder=${data_path}/w5
@@ -57,7 +58,7 @@ do
   echo ${bam}
 done
 ```
-`Note`: when working with 10x scRNA data, the strands are flipped. Now `--filterRNAstrand forward` refers to the reverse strand, and `--filterRNAstrand reverse` refers to the forward strand.
+`Note`: When working with 10x single-cell RNA-seq data, the strands are flipped. In this case, `--filterRNAstrand forward` refers to the reverse strand, and `--filterRNAstrand reverse` refers to the forward strand.
 
 Or created unstranded BigWig files:
 ```bash
@@ -109,14 +110,16 @@ Create *targets.txt*:
 ### Step 4. Create TFRecords
 
 ```bash
-cd baskerville/docs/transfer
-# change data_path in make_tfr.sh
+cp ${baskerville_path}/docs/transfer_human/make_tfr.sh ./
+# Update data_path variable in make_tfr.sh to match your data directory
 ./make_tfr.sh
 ```
 
+Note: Make sure to edit the `data_path` variable in `make_tfr.sh` to match your directory structure before running.
+
 ### Step 5. Parameter Json File
 
-Similar to Borzoi training, arguments for training learning is specified in the params.json file. Add a additional `transfer` section in the parameter json file to allow transfer learning. For transfer learning rate, we suggest lowering the lr to 1e-5 for full fine-tuning, and keeping the original lr for other methods. For batch size, we suggest a batch size of 1 to reduce GPU memory for linear probing or adapter-based methods. Here's the `transfer` arguments for different transfer methods. 
+Similar to Borzoi training, arguments for transfer learning are specified in the params.json file. Add an additional `transfer` section in the parameter json file to allow transfer learning. For the transfer learning rate, we suggest lowering the lr to 1e-5 for full fine-tuning, and keeping the original lr for other methods. For batch size, we suggest a batch size of 1 to reduce GPU memory for linear probing or adapter-based methods. Here's the `transfer` arguments for different transfer methods. 
 
 Example params.json files for transfer learning of Borzoi-lite are located: baskerville/tests/data/transfer/json/borzoilite_\*.json
 
@@ -177,6 +180,7 @@ Example params.json files for transfer learning of full Borzoi are located: bask
 ### Step 6. Train model
 
 Run westminster_train_folds.py `--setup` to setup directory structures:
+Note: westminster_train_folds.py is from [westminster](https://github.com/calico/westminster/tree/main). We use westminster_train_folds.py just to set-up folder structure for training. It works as a stand-alone file. You can also just copy over this file into baskerville repo.
 
 ```bash
 westminster_train_folds.py \
@@ -189,10 +193,10 @@ westminster_train_folds.py \
 Run hound_transfer.py on training data in fold3 folder (identical to pre-train split) for four replicate models:
 
 ```bash
-hound_transfer.py -o train_rep0 --trunk --restore ${data_path}/pretrain_trunks/borzoi_r0.h5 params.json train/f3c0/data0
-hound_transfer.py -o train_rep1 --trunk --restore ${data_path}/pretrain_trunks/borzoi_r1.h5 params.json train/f3c0/data0
-hound_transfer.py -o train_rep2 --trunk --restore ${data_path}/pretrain_trunks/borzoi_r2.h5 params.json train/f3c0/data0
-hound_transfer.py -o train_rep3 --trunk --restore ${data_path}/pretrain_trunks/borzoi_r3.h5 params.json train/f3c0/data0
+hound_transfer.py -o train_rep0 --trunk --restore ${data_path}/pretrain_trunks/trunk_r0.h5 params.json train/f3c0/data0
+hound_transfer.py -o train_rep1 --trunk --restore ${data_path}/pretrain_trunks/trunk_r1.h5 params.json train/f3c0/data0
+hound_transfer.py -o train_rep2 --trunk --restore ${data_path}/pretrain_trunks/trunk_r2.h5 params.json train/f3c0/data0
+hound_transfer.py -o train_rep3 --trunk --restore ${data_path}/pretrain_trunks/trunk_r3.h5 params.json train/f3c0/data0
 ```
 
 Note: we recommend loading the model trunk only. While it is possible to load full Borzoi model and ignore last dense layer by model.load_weights(weight_file, skip_mismatch=True, by_name=True), Tensorflow requires loading layer weight by name in this way. If layer name don't match, weights of the layer will not be loaded and no warning message will be given.
