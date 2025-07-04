@@ -38,7 +38,6 @@ gunzip ${data_path}/mm10/mm10.ml.fa.gz
 ### Make Target File
 
 Prepare track.w5 files the same way we described in the transfer-to-human-track tutorial.
-Then prepare target file the same way we described in the transfer-to-human-track tutorial.
 For parameters of clip, clip_soft, scale, sum_stat etc for diferent modalities, see original Borzoi targets_mouse.txt file as an example:
 ```bash
 gsutil cp -r gs://scbasset_tutorial_data/baskerville_transfer_mouse/borzoi_targets_mouse.txt ${data_path}
