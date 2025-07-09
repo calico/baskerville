@@ -1,10 +1,10 @@
 # Baskerville Hound Scripts Documentation
 
-This document describes the main functionality and differences between five key prediction scripts in the Baskerville suite.
+This document describes the main functionality and differences between key scripts in the Baskerville suite.
 
 ## Overview
 
-The Baskerville package includes several "hound" scripts for making genomic predictions using trained deep learning models. Each script serves a specific purpose in the genomic prediction pipeline, from basic sequence prediction to variant effect analysis.
+The Baskerville package includes several "hound" scripts for making genomic predictions using trained deep learning models. Each script serves a specific purpose in the genomic prediction pipeline, from basic sequence prediction to variant effect analysis and mutagenesis studies.
 
 | Script | Input Type | Analysis Focus | Output Type | Parallelization |
 |--------|------------|----------------|-------------|-----------------|
@@ -13,6 +13,9 @@ The Baskerville package includes several "hound" scripts for making genomic pred
 | `hound_snp_slurm.py` | VCF variants | Variant effects | Effect statistics | SLURM cluster |
 | `hound_snp.py` | VCF variants | Variant effects | Effect statistics | Single/multi-worker |
 | `hound_snpgene.py` | VCF + GTF | Gene-context effects | Gene-level statistics | Single/multi-worker |
+| `hound_ism_bed.py` | BED regions | Saturation mutagenesis | Position × nucleotide effects | Single process |
+| `hound_ism_snp.py` | VCF variants | Saturation mutagenesis | Position × nucleotide effects | Single process |
+| `hound_isd_bed.py` | BED regions + GTF | Deletion mutagenesis | Gene-context deletion effects | Single process |
 
 
 ## Script Descriptions
@@ -64,34 +67,13 @@ The Baskerville package includes several "hound" scripts for making genomic pred
 
 ---
 
-### 3. `hound_snp_slurm.py` - Cluster-Parallelized SNP Analysis
-
-**Purpose**: Orchestrates parallel computation of variant effect predictions across a SLURM cluster.
-
-**Key Features**:
-- Distributes SNP analysis across multiple compute nodes
-- Manages job submission and monitoring via SLURM
-- Handles result aggregation from parallel workers
-- Optimized for large-scale variant effect studies
-
-**Input**:
-- Same inputs as `hound_snp.py`
-- Additional SLURM configuration parameters
-- Number of parallel processes to spawn
-
-**Output**:
-- Aggregated results from all parallel workers
-- Job management and monitoring files
-- Same final output format as `hound_snp.py`
-
----
-
-### 4. `hound_snp.py` - SNP Variant Effect Prediction
+### 3. `hound_snp.py` - SNP Variant Effect Prediction
 
 **Purpose**: Computes variant effect predictions for SNPs in a VCF file using various statistical measures.
 
 **Key Features**:
 - Calculates multiple variant effect statistics (logSUM, SAD, D1, D2, JS, etc.)
+- metric summarized along the sequence length axis
 - Supports SNP clustering to reduce redundant predictions
 - Handles both single-worker and multi-worker execution modes
 - Comprehensive suite of distance and information-theory based metrics
@@ -115,12 +97,35 @@ The Baskerville package includes several "hound" scripts for making genomic pred
 
 ---
 
+### 4. `hound_snp_slurm.py` - Cluster-Parallelized SNP Analysis
+
+**Purpose**: Orchestrates parallel computation of variant effect predictions across a SLURM cluster.
+
+**Key Features**:
+- Distributes SNP analysis across multiple compute nodes
+- Manages job submission and monitoring via SLURM
+- Handles result aggregation from parallel workers
+- Optimized for large-scale variant effect studies
+
+**Input**:
+- Same inputs as `hound_snp.py`
+- Additional SLURM configuration parameters
+- Number of parallel processes to spawn
+
+**Output**:
+- Aggregated results from all parallel workers
+- Job management and monitoring files
+- Same final output format as `hound_snp.py`
+
+---
+
 ### 5. `hound_snpgene.py` - Gene-Context SNP Analysis
 
 **Purpose**: Computes variant effect predictions for SNPs with respect to gene exons defined in a GTF file.
 
 **Key Features**:
 - Focuses variant analysis on gene regions (exons)
+- metric computed for each variant-gene pair
 - Integrates GTF gene annotations
 - Supports gene span aggregation
 - Gene clustering to optimize predictions
@@ -133,15 +138,76 @@ The Baskerville package includes several "hound" scripts for making genomic pred
 - Genome FASTA file
 - Targets file
 
-## Common Parameters
+---
 
-All scripts share several common parameters:
-- `--rc`: Average forward and reverse complement predictions
-- `--shifts`: Ensemble prediction shifts
-- `--targets_file`: Specify target indexes and labels
-- `--untransform_old`: Apply legacy untransformation
-- `--float16`: Use mixed precision for memory efficiency
-- `--gcs`: Support for Google Cloud Storage input/output
+### 6. `hound_ism_bed.py` - In Silico Saturation Mutagenesis (BED)
+
+**Purpose**: Performs systematic in silico saturation mutagenesis of sequences from BED file regions.
+
+**Key Features**:
+- Mutates every position in a specified region to all 4 possible nucleotides (A, C, G, T)
+- Configurable mutation window around sequence center
+- Measures regulatory effects of all possible single nucleotide changes
+- Supports ensemble predictions with multiple shifts
+
+**Input**:
+- BED file with genomic regions to mutate
+- Model parameters and weights
+- Genome FASTA file
+- Targets file for prediction tracks
+
+**Output**:
+- HDF5 file with mutation effect scores
+- 4D array: [sequences × positions × nucleotides × targets]
+- Identifies critical regulatory positions and nucleotides
+
+---
+
+### 7. `hound_ism_snp.py` - In Silico Saturation Mutagenesis (VCF)
+
+**Purpose**: Performs systematic in silico saturation mutagenesis around variants from VCF files.
+
+**Key Features**:
+- Centers mutagenesis around known variants from VCF
+- Systematically tests all nucleotide changes in variant neighborhoods
+- Default 200bp mutation window around variants
+- Same mutagenesis approach as `hound_ism_bed.py` but variant-focused
+
+**Input**:
+- VCF file with variants of interest
+- Model parameters and weights
+- Genome FASTA file
+- Targets file for prediction tracks
+
+**Output**:
+- HDF5 file with mutation effect scores
+- 4D array: [variants × positions × nucleotides × targets]
+- Variant metadata and sequence labels
+
+---
+
+### 8. `hound_isd_bed.py` - In Silico Deletion Mutagenesis (Gene-Context)
+
+**Purpose**: Performs systematic in silico deletion mutagenesis of sequences with gene annotation context.
+
+**Key Features**:
+- Systematically deletes nucleotides (default 1bp) across BED regions
+- Integrates gene annotations to focus on gene-relevant regions
+- Supports both exon-only and gene span analysis
+- Uses stitching to handle deletion compensation shifts
+- Gene-aware analysis with strand-specific effects
+
+**Input**:
+- BED file with genomic regions
+- GTF file with gene annotations
+- Model parameters and weights
+- Genome FASTA file
+- Targets file and optional target genes list
+
+**Output**:
+- Separate HDF5 files for each BED entry
+- Deletion effect scores focused on gene regions
+- SED/logSED statistics for measuring regulatory impact
 
 ## Choosing the Right Script
 
@@ -150,11 +216,6 @@ All scripts share several common parameters:
 - **Use `hound_snp.py`** for variant effect analysis with statistical summaries
 - **Use `hound_snp_slurm.py`** for large-scale variant studies requiring cluster computing
 - **Use `hound_snpgene.py`** when focusing on variant effects within gene contexts
-
-## Technical Notes
-
-- All scripts support GPU acceleration and mixed precision
-- VCF-based scripts currently focus on SNPs (limited INDEL support)
-- BigWig output is only available in `hound_predbed.py`
-- Gene-context analysis requires properly formatted GTF files
-- Cluster parallelization requires SLURM job scheduler setup 
+- **Use `hound_ism_bed.py`** for comprehensive mutagenesis analysis of regulatory regions
+- **Use `hound_ism_snp.py`** for detailed mutagenesis analysis around specific variants
+- **Use `hound_isd_bed.py`** for deletion-based mutagenesis with gene context
