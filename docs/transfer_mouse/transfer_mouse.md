@@ -7,6 +7,8 @@
 
 To prepare the tracks to w5 file, see the [Document page for transfer learning to hg38 tracks](../transfer_human/transfer.md).
 
+- setup_folds.py from [transfer_human directory](../transfer_human/) - used to set up folder structure for training.
+
 Set data_path to your preferred directory:
 
 ```bash
@@ -64,12 +66,10 @@ In the json file, change the final head output units to the number of tracks in 
 ### Transfer learning
 
 The transfer script will be the same as transfer-to-human-track tutorial.
-Note: westminster_train_folds.py is from [westminster](https://github.com/calico/westminster/tree/main). We use westminster_train_folds.py just to set-up folder structure for training. It works as a stand-alone file. You can also just copy over this file into baskerville repo.
 
 ```bash
-westminster_train_folds.py \
+../transfer_human/setup_folds.py \
   -o train -f 4 \
-  --setup \
   params.json \
   ${data_path}/tfr
 ```

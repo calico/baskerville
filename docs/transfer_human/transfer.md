@@ -2,7 +2,6 @@
 
 ### Required Software
 - baskerville
-- westminster_train_folds.py from [westminster](https://github.com/calico/westminster/tree/main). We use westminster_train_folds.py just to set-up folder structure for training. It works as a stand-alone file. You can also just copy over this file into baskerville repo.
 - bamCoverage from [deepTools](https://github.com/deeptools/deepTools/tree/master) is required to make BigWig files.
 
 ### Download Tutorial Data
@@ -179,13 +178,11 @@ Example params.json files for transfer learning of full Borzoi are located: bask
 ```
 ### Step 6. Train model
 
-Run westminster_train_folds.py `--setup` to setup directory structures:
-Note: westminster_train_folds.py is from [westminster](https://github.com/calico/westminster/tree/main). We use westminster_train_folds.py just to set-up folder structure for training. It works as a stand-alone file. You can also just copy over this file into baskerville repo.
+Run setup_folds.py to setup directory structures:
 
 ```bash
-westminster_train_folds.py \
+./setup_folds.py \
   -o train -f 4 \
-  --setup \
   params.json \
   ${data_path}/tfr
 ```
