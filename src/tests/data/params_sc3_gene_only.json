@@ -1,0 +1,46 @@
+{
+  "train": {
+    "batch_size": 16,
+    "optimizer": "adamw",
+    "beta1": 0.9,
+    "beta2": 0.99,
+    "learning_rate": 0.02,
+    "warmup_steps": 4,
+    "train_epochs_max": 3,
+    "weight_decay": 1.0e-2,
+    "global_clipnorm": 1.0,
+    "loss_gene": "poisson",
+    "mix_dtype": "bfloat16",
+    "num_workers": 0
+  },
+  "model": {
+    "seq_length": 16384,
+    "act_func": "silu",
+    "trunk": [
+      {
+        "name": "ConvDNA",
+        "out_channels": 16,
+        "kernel_size": 7,
+        "pool_size": 2
+      },
+      {
+        "name": "ConvTower",
+        "in_channels": 16,
+        "out_channels": 32,
+        "kernel_size": 3,
+        "divisible_by": 4,
+        "norm_type": "batch",
+        "pool_size": 2,
+        "repeat": 4
+      }
+    ],
+    "heads_gene": [
+      {
+        "name": "FinalGene",
+        "in_channels": 32,
+        "num_targets": 2,
+        "aggregation": "sum"
+      }
+    ]
+  }
+}

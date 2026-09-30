@@ -1,0 +1,9 @@
+##fileformat=VCFv4.2
+##contig=<ID=chrI,length=230218>
+##reference=sc3.fa.gz
+##INFO=<ID=AF,Number=A,Type=Float,Description="Allele Frequency">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO
+chrI	1000	rs1000	A	C	60	PASS	AF=0.5
+chrI	2000	rs2000	T	G	60	PASS	AF=0.5
+chrI	3000	rs3000	T	A	60	PASS	AF=0.5
+chrI	4000	rs4000	T	C	60	PASS	AF=0.5

@@ -1,0 +1,67 @@
+{
+  "model": {
+    "seq_length": 524288,
+    "act_func": "gelu",
+    "untransform": "borzoi",
+    "trunk": [
+      {
+        "name": "ConvDNA",
+        "out_channels": 512,
+        "kernel_size": 15,
+        "pool_size": 2,
+        "norm_type": null,
+        "act_func": "linear"
+      },
+      {
+        "name": "ConvTower",
+        "in_channels": 512,
+        "out_channels": 1536,
+        "divisible_by": 32,
+        "kernel_size": 5,
+        "pool_size": 2,
+        "repeat": 6,
+        "norm_type": "batch",
+        "act_func": "gelu",
+        "conv_bias": true
+      },
+      {
+        "name": "TransformerTower",
+        "type": "enformer",
+        "channels": 1536,
+        "heads": 8,
+        "key_len": 64,
+        "pos_features": 32,
+        "pos_dropout": 0.01,
+        "attn_dropout": 0.05,
+        "ff_dropout": 0.2,
+        "act_func": "relu",
+        "norm_type": "layer",
+        "shift_method": "original",
+        "repeat": 8
+      },
+      {
+        "name": "UnetTower",
+        "channels": 1536,
+        "unet_channels": [1536, 1280, 1056],
+        "type": "borzoi",
+        "kernel_size": 3,
+        "repeat": 3,
+        "skip_match": false,
+        "upsample_conv": true,
+        "norm_type": "batch",
+        "act_func": "gelu"
+      },
+      {
+        "name": "Crop",
+        "crop_size": 10240
+      }
+    ],
+    "head_mouse": {
+      "name": "Final",
+      "in_channels": 1536,
+      "num_targets": 1774,
+      "norm_type": null,
+      "act_func": "gelu"
+    }
+  }
+}

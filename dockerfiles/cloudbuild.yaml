@@ -1,0 +1,20 @@
+# Cloud Build recipe for the gcprunner image; see docs/gcprunner.md §8.2.
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - dockerfiles/baskerville.Dockerfile
+      - -t
+      - $_IMAGE:commit-$_SHA
+      - -t
+      - $_IMAGE:latest
+      - .
+images:
+  - $_IMAGE:commit-$_SHA
+  - $_IMAGE:latest
+options:
+  machineType: E2_HIGHCPU_8
+  diskSizeGb: 200
+  logging: CLOUD_LOGGING_ONLY
+timeout: 7200s

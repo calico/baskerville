@@ -1,0 +1,9 @@
+# Keep .git: setuptools_scm derives the package version from it.
+.venv/
+**/__pycache__/
+*.egg-info/
+build/
+dist/
+releases/*/models_*/
+data/
+notebooks/

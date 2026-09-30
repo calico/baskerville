@@ -1,0 +1,121 @@
+[build-system]
+requires = ["setuptools>=69.0.3", "setuptools_scm>=8.0.4"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "baskerville"
+authors = [
+    {name = "David Kelley", email = "drk@calicolabs.com"}
+]
+readme = "README.md"
+requires-python = ">=3.11, <3.15"
+classifiers = ["License :: OSI Approved :: Apache Software License"]
+dynamic = ["version"]
+
+dependencies = [
+    "einops~=0.8",
+    "google-cloud-batch>=0.19,<1",
+    "google-cloud-storage>=3.9,<4",
+    "h5py>=3.12,<4",
+    "intervaltree~=3.1",
+    "logomaker~=0.8",
+    "matplotlib>=3.9,<4",
+    "natsort~=8.4",
+    "networkx>3.0,<4",
+    # Cap <2.6: qnorm -> numba, and numba 0.67 declares numpy<2.6. Allowing 2.6
+    # makes the resolver backtrack numba to the ancient 0.53.1, whose llvmlite
+    # 0.36 fails to build on Python 3.11+. Bump when numba ships numpy 2.6
+    # support.
+    "numpy>=2.3,<2.6",
+    "pandas>=3.0,<4",
+    "pybedtools~=0.12",
+    "pybigwig~=0.3",
+    "pyranges~=0.1",
+    "pysam~=0.23",
+    "qnorm~=0.9",
+    "seaborn~=0.13",
+    "scikit-learn>=1.5,<2",
+    "scipy>=1.14,<2",
+    "schedulefree~=1.4",
+    "statsmodels~=0.14",
+    # Limit torch to tested versions.
+    "torch>=2.11,<2.14",
+    "torchmetrics==1.6.1",
+    "tqdm>=4.67,<5",
+    "zarr>=3.0,<4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest~=9.0",
+    "ruff~=0.15",
+]
+hdwig = [
+    # Not on PyPI. Only hound_data_read needs it, only for .hw coverage, and
+    # it imports lazily: the base install stays resolvable.
+    # TODO: update the URL once hdwig's public home is decided; it likely
+    # won't be under calico/.
+    "hdwig @ git+https://github.com/calico/hdwig.git",
+]
+cuda = [
+    # Refresh dockerfiles/patches when changing this pin.
+    "mamba-ssm==2.3.2.post1",
+]
+notebooks = [
+    "ipywidgets~=8.1",
+    "ipympl~=0.9",
+    "plotly~=6.1",
+]
+
+[project.scripts]
+hound_data = "baskerville.scripts.hound_data:main"
+hound_data_align = "baskerville.scripts.hound_data_align:main"
+hound_data_distill = "baskerville.scripts.hound_data_distill:main"
+hound_data_qc = "baskerville.scripts.hound_data_qc:main"
+hound_data_read = "baskerville.scripts.hound_data_read:main"
+hound_data_read_gene = "baskerville.scripts.hound_data_read_gene:main"
+hound_data_write = "baskerville.scripts.hound_data_write:main"
+hound_distill_folds = "baskerville.scripts.hound_distill_folds:main"
+hound_eval = "baskerville.scripts.hound_eval:main"
+hound_eval_folds = "baskerville.scripts.hound_eval_folds:main"
+hound_eval_genes = "baskerville.scripts.hound_eval_genes:main"
+hound_eval_genes_folds = "baskerville.scripts.hound_eval_genes_folds:main"
+hound_eval_spec = "baskerville.scripts.hound_eval_spec:main"
+hound_grad = "baskerville.scripts.hound_grad:main"
+hound_grad_folds = "baskerville.scripts.hound_grad_folds:main"
+hound_ism_bed = "baskerville.scripts.hound_ism_bed:main"
+hound_ism_bed_folds = "baskerville.scripts.hound_ism_bed_folds:main"
+hound_ism_snp = "baskerville.scripts.hound_ism_snp:main"
+hound_ism_snp_folds = "baskerville.scripts.hound_ism_snp_folds:main"
+hound_predbed = "baskerville.scripts.hound_predbed:main"
+hound_snp = "baskerville.scripts.hound_snp:main"
+hound_snp_folds = "baskerville.scripts.hound_snp_folds:main"
+hound_train = "baskerville.scripts.hound_train:main"
+hound_train_distill = "baskerville.scripts.hound_train_distill:main"
+hound_train_folds = "baskerville.scripts.hound_train_folds:main"
+hound_updatenorm = "baskerville.scripts.hound_updatenorm:main"
+hound_verify = "baskerville.scripts.hound_verify:main"
+
+[project.urls]
+Homepage = "https://github.com/calico/baskerville"
+"Bug Tracker" = "https://github.com/calico/baskerville/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["baskerville*", "gcprunner*"]
+
+[tool.setuptools.package-data]
+gcprunner = ["entry.sh"]
+
+[tool.pytest.ini_options]
+testpaths = ["src/tests"]
+norecursedirs = ["manual", ".*", "_*"]
+markers = [
+    "slow: full 524288-bp CPU forward (deselect with -m 'not slow')",
+]
+
+[tool.setuptools_scm]
+
+[tool.ruff]
+# `ruff format --check` runs in CI; the Python target comes from requires-python.
+line-length = 88
