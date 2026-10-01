@@ -1,6 +1,6 @@
-# hound_train_distill
+# Online Distillation
 
-Train a student model using knowledge distillation with on-the-fly teacher predictions.
+Train a student model with `hound_train_distill`, which computes teacher predictions on the fly.
 
 ## Overview
 

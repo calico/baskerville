@@ -1,10 +1,8 @@
 # baskerville
 
-A PyTorch implementation of Baskerville (Borzoi), a deep learning model for predicting regulatory activity from DNA sequences.
+PyTorch tools for training deep neural networks, such as Borzoi, that predict regulatory activity (e.g. chromatin accessibility and gene expression) from DNA sequence.
 
-## Overview
-
-Baskerville is a convolutional neural network architecture designed to predict chromatin accessibility and gene expression from DNA sequences. This implementation provides a PyTorch version.
+> The TensorFlow version of baskerville, used by [borzoi](https://github.com/calico/borzoi), has moved to [baskerville-tf](https://github.com/calico/baskerville-tf).
 
 ## Installation
 
@@ -55,8 +53,8 @@ For detailed instructions on dataset construction, training, and evaluating mode
 - [Training models](docs/train.md)
 - [Cross‑fold training](docs/train_folds.md)
 - [Transfer learning from a pretrained model](docs/transfer.md)
-- [Target distillation](docs/distill.md)
-- [Distillation training (`hound_train_distill`)](docs/train_distill.md)
+- [Ensemble distillation (precomputed targets)](docs/distill.md)
+- [Online distillation (live teacher predictions)](docs/train_distill.md)
 
 **Attribution**
 
@@ -73,6 +71,8 @@ For detailed instructions on dataset construction, training, and evaluating mode
 
 - [Targets table](docs/targets.md)
 - [Updating batch-norm statistics](docs/updatenorm.md)
+- [Pretrained Borzoi trunk block](docs/borzoi_trunk_block.md)
+- [Pretrained Borzoi head block](docs/borzoi_head_block.md)
 - [GCP Batch execution (gcprunner)](docs/gcprunner.md)
 
 ## GCP Batch Execution
@@ -146,7 +146,6 @@ Pretrained weights for two published model families are distributed under
 [`releases/`](releases/).
 
 - **[Borzoi](releases/borzoi/)**
-  **524 kb** input sequences.
 - **[Borzoi Prime](releases/borzoi_prime/)**
 
 Each family ships weights for **4 replicates × {human, mouse}**

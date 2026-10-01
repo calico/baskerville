@@ -1,4 +1,4 @@
-# Training and evaluating models
+# Transfer learning from a pretrained model
 
 ## Introduction
 
