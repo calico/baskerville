@@ -176,4 +176,4 @@ CLAUDE.md
 .codex
 
 # downloaded model weights (only releases/*/verify/ is tracked)
-releases/*/models_*/
+releases/*/models*/

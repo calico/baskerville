@@ -3,9 +3,9 @@
 ``test_published_forward`` is the every-PR guard: for each published config it
 runs a full deterministic forward and compares a compact fingerprint against the
 committed reference. It auto-detects downloaded weights (using them when
-present, otherwise a deterministic synthetic-weights forward) and never skips,
-so the published architecture is always exercised even in CI without the
-multi-hundred-MB checkpoints.
+present, otherwise a deterministic synthetic-weights forward), so the published
+architecture is exercised without the multi-hundred-MB checkpoints. It skips
+only CUDA-only (Hydra) architectures on hosts without a GPU.
 """
 
 import numpy as np
@@ -24,6 +24,8 @@ def test_published_forward(family, species):
             f"missing pinned reference for {family}/{species}; "
             f"run hound_verify --generate"
         )
+    if V.needs_cuda(V.params_path(family, species)) and not torch.cuda.is_available():
+        pytest.skip(f"{family} requires CUDA (Triton scan kernels)")
     fold, res = V.verify(family, species)
     assert res.shape_ok, (
         f"{family}/{species}: output shape {res.cur_shape} != reference {res.ref_shape}"
