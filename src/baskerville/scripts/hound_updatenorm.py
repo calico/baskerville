@@ -88,10 +88,6 @@ def main():
             f"--fold given but {args.data_dirs[0]}/examples/ has no fold*.zarr."
         )
 
-    # Improve memory usage for different dataset sizes
-    if len(args.data_dirs) > 1:
-        os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-
     # Read model parameters
     with open(args.params_file) as params_open:
         params = json.load(params_open)

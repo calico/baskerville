@@ -63,10 +63,6 @@ def main():
     if args.params_file != f"{args.out_dir}/params.json":
         shutil.copy(args.params_file, f"{args.out_dir}/params.json")
 
-    # improves memory usage for different dataset sizes
-    if len(args.data_dirs) > 1:
-        os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-
     # read model parameters
     with open(args.params_file) as params_open:
         params = json.load(params_open)
