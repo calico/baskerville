@@ -1,10 +1,16 @@
 # baskerville
 
-A PyTorch implementation of Baskerville (Borzoi), a deep learning model for predicting regulatory activity from DNA sequences.
+Pretrained models and PyTorch tools for **Cerberus**, along with its predecessors
+Borzoi and Borzoi Prime. These deep neural networks predict regulatory activity
+(e.g. chromatin accessibility and gene expression) from DNA sequence.
 
-## Overview
+Cerberus replaces Borzoi's transformer with bidirectional state space (Hydra)
+blocks. It reads 786 kb of sequence and predicts 8,361 human and 3,102 mouse
+functional genomics tracks at 32 bp resolution, including RNA-seq, CAGE,
+DNase/ATAC, ChIP, CLIP, and 3′ RNA-seq. It is more accurate and cheaper to run
+than Borzoi. See [releases/cerberus](releases/cerberus/).
 
-Baskerville is a convolutional neural network architecture designed to predict chromatin accessibility and gene expression from DNA sequences. This implementation provides a PyTorch version.
+> The TensorFlow version of baskerville, used by [borzoi](https://github.com/calico/borzoi), has moved to [baskerville-tf](https://github.com/calico/baskerville-tf).
 
 ## Installation
 
@@ -17,11 +23,11 @@ cd baskerville
 pip install .
 ```
 
-For a development setup, install in editable mode with the `dev` extras (and the
-`cuda` extra on a GPU host):
+Cerberus needs an NVIDIA GPU and the `cuda` extra (`mamba-ssm`). For a
+development setup, install in editable mode with the `dev` extras:
 
 ```bash
-pip install -e ".[dev]"        # add ,cuda for mamba-ssm on GPU hosts
+pip install -e ".[dev,cuda]"   # drop ,cuda on CPU-only hosts (Borzoi only)
 ```
 
 The `*_folds.py` scripts run jobs locally by default, or on GCP Batch with
@@ -33,14 +39,14 @@ public) is needed only to read `.hw` coverage files in `hound_data`.
 
 ## Quickstart
 
-Download one pretrained Borzoi replicate and check that it reproduces the
-published forward pass (CPU, a few minutes). `hound_verify` reads the weights
-from the clone, so install it editable (`pip install -e .`):
+On a GPU host, download one pretrained Cerberus replicate and check that it
+reproduces the published forward pass. `hound_verify` reads the weights from the
+clone, so install it editable (`pip install -e ".[cuda]"`):
 
 ```bash
-cd releases/borzoi
-./download.sh human 0     # -> models_human/f0c0/model_best.pth
-hound_verify --family borzoi --species human
+cd releases/cerberus
+./download.sh 0           # -> models/f0c0/model_best.pth
+hound_verify --family cerberus
 ```
 
 See [Model releases](#model-releases) for all weights, and the guides below for
@@ -55,8 +61,8 @@ For detailed instructions on dataset construction, training, and evaluating mode
 - [Training models](docs/train.md)
 - [Cross‑fold training](docs/train_folds.md)
 - [Transfer learning from a pretrained model](docs/transfer.md)
-- [Target distillation](docs/distill.md)
-- [Distillation training (`hound_train_distill`)](docs/train_distill.md)
+- [Ensemble distillation (precomputed targets)](docs/distill.md)
+- [Online distillation (live teacher predictions)](docs/train_distill.md)
 
 **Attribution**
 
@@ -73,6 +79,8 @@ For detailed instructions on dataset construction, training, and evaluating mode
 
 - [Targets table](docs/targets.md)
 - [Updating batch-norm statistics](docs/updatenorm.md)
+- [Pretrained Borzoi trunk block](docs/borzoi_trunk_block.md)
+- [Pretrained Borzoi head block](docs/borzoi_head_block.md)
 - [GCP Batch execution (gcprunner)](docs/gcprunner.md)
 
 ## GCP Batch Execution
@@ -142,21 +150,32 @@ For complete setup instructions (IAM, registry configurations, etc.), see [GCP B
 
 ## Model releases
 
-Pretrained weights for two published model families are distributed under
-[`releases/`](releases/).
+Pretrained weights are hosted in a public GCS bucket and distributed via
+[`releases/`](releases/). See each family's README for download commands and
+verification instructions.
 
-- **[Borzoi](releases/borzoi/)**
-  **524 kb** input sequences.
-- **[Borzoi Prime](releases/borzoi_prime/)**
+| Family                                 | Replicates | Species                      |  Input | Output | Tracks (human / mouse) |
+| -------------------------------------- | ---------: | ---------------------------- | -----: | -----: | ---------------------: |
+| **[Cerberus](releases/cerberus/)**     |          8 | one model, human+mouse heads | 786 kb |  32 bp |          8,361 / 3,102 |
+| [Borzoi](releases/borzoi/)             |          4 | separate human, mouse models | 524 kb |  32 bp |          7,611 / 2,608 |
+| [Borzoi Prime](releases/borzoi_prime/) |          4 | separate human, mouse models | 524 kb |  16 bp |          5,431 / 1,774 |
 
-Each family ships weights for **4 replicates × {human, mouse}**
-(`f{0..3}c0/model_best.pth`) plus a shared `params.json`, hosted in a public GCS
-bucket. See the per-family README for the exact download commands and verification
-instructions.
+Cerberus requires a GPU; Borzoi and Borzoi Prime also run on CPU.
 
 ## Citation
 
-If you use this implementation, please cite the Borzoi and/or Borzoi Prime papers:
+If you use Cerberus, please cite:
+
+```bibtex
+@article{kelley2026cerberus,
+  title={Cerberus: bidirectional state space blocks improve accuracy and efficiency of regulatory sequence models},
+  author={Kelley, David R and Yuan, Han and Huang, Xingfan and Linder, Johannes},
+  journal={bioRxiv},
+  year={2026}
+}
+```
+
+If you use Borzoi or Borzoi Prime, please cite:
 
 ```bibtex
 @article{linder2025predicting,
@@ -183,7 +202,7 @@ If you use this implementation, please cite the Borzoi and/or Borzoi Prime paper
 
 ## Contributing
 
-This repository accompanies the Borzoi and Borzoi Prime papers. Bug reports and
+This repository accompanies the Cerberus, Borzoi, and Borzoi Prime papers. Bug reports and
 questions are welcome as GitHub issues; pull requests are reviewed on a
 best-effort basis.
 

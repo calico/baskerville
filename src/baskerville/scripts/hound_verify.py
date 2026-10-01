@@ -20,16 +20,20 @@ Verify that downloaded model weights + the cloned code reproduce the published
 forward pass, and guard against code changes that regress a published
 architecture.
 
-Verify (default) -- for every downloaded fold, run a deterministic CPU forward
-and compare a compact fingerprint against the committed reference. If no weights
-have been downloaded it instead checks the architecture itself (never skips):
+Verify (default) -- for every downloaded fold, run a deterministic forward (CPU;
+CUDA for Hydra models such as Cerberus) and compare a compact fingerprint
+against the committed reference. If no weights have been downloaded it instead
+checks the architecture itself:
 
     python -m baskerville.scripts.hound_verify
     python -m baskerville.scripts.hound_verify --family borzoi --species human
 
 Generate -- (maintainer, run once) recompute and overwrite the pinned params and
-reference fingerprints from a known-good model tree
-(<root>/models_<species>/f<n>c0/train/{params.json,model_best.pth}):
+reference fingerprints from a known-good model tree. Per-species families read
+<root>/models_<species>/f<n>c0/train/{params.json,model_best.pth}. Joint
+families (one multi-species model per fold, e.g. Cerberus) read the bucket
+layout <root>/{params.json,f<n>c0/model_best.pth} and need
+releases/<family>/params.json in place first:
 
     python -m baskerville.scripts.hound_verify --generate \\
         --family borzoi --models-root /path/to/4-17/borzoi
@@ -65,27 +69,30 @@ def run_generate(args):
 
     # plan all forwards up front so the progress bar has a total
     plan = []  # (species, fold|None)  fold None == synthetic
-    src_params = {}
+    src_params, src_weights = {}, {}
     for species in _species(args.species):
-        sp = root / f"models_{species}" / "f0c0" / "train" / "params.json"
+        sp, weights = V.source_tree(root, family, species)
         if not sp.exists():
             print(f"skip {family}/{species}: no params at {sp}")
             continue
-        src_params[species] = sp
+        src_params[species], src_weights[species] = sp, weights
         plan.append((species, None))
-        plan += [(species, f) for f in V.discover_source_folds(root, species)]
+        plan += [(species, f) for f in weights]
     if not plan:
         print("nothing to generate")
         return 1
 
     seq_len = _seq_length(next(iter(src_params.values())))
-    print(f"{family}: {len(plan)} forward(s), 1 sequence x {seq_len} bp each (CPU)")
+    device = "CUDA" if V.needs_cuda(next(iter(src_params.values()))) else "CPU"
+    print(
+        f"{family}: {len(plan)} forward(s), 1 sequence x {seq_len} bp each ({device})"
+    )
     for species, fold in tqdm(plan, desc=f"generate {family}", unit="fwd"):
         pinned = V.params_path(family, species)
         if fold is None:
             pinned.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(src_params[species], pinned)
-            out = V.run_forward(pinned, None)
+            out = V.run_forward(pinned, None, species)
             assert out.std() > 0, "degenerate synthetic output (zero variance)"
             V.save_fingerprint(
                 V.synth_ref_path(family, species),
@@ -93,8 +100,7 @@ def run_generate(args):
                 V.make_meta(family, species, None, "synthetic", out),
             )
         else:
-            w = root / f"models_{species}" / f"f{fold}c0" / "train" / "model_best.pth"
-            out = V.run_forward(pinned, w)
+            out = V.run_forward(pinned, src_weights[species][fold], species)
             V.save_fingerprint(
                 V.real_ref_path(family, species, fold),
                 V.fingerprint(out),
@@ -130,10 +136,11 @@ def run_verify(args):
                 out = V.run_forward(
                     V.params_path(family, species),
                     V.convention_weights(family, species, fold),
+                    species,
                 )
                 ref = V.load_fingerprint(V.real_ref_path(family, species, fold))
             else:
-                out = V.run_forward(V.params_path(family, species), None)
+                out = V.run_forward(V.params_path(family, species), None, species)
                 ref = V.load_fingerprint(V.synth_ref_path(family, species))
             res = V.compare(ref, out, args.r_threshold)
             all_ok &= res.passed
@@ -187,7 +194,7 @@ def main():
     )
     p.add_argument(
         "--models-root",
-        help="for --generate: tree with models_<species>/f<n>c0/train/{params.json,model_best.pth}",
+        help="for --generate: known-good model tree (layout per family, see above)",
     )
     args = p.parse_args()
 
