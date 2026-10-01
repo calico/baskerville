@@ -14,12 +14,13 @@
 # =========================================================================
 """Forward-pass regression / download-integrity verification for published models.
 
-One mechanism, two layers:
+One mechanism, two layers (forward on CPU; on CUDA for Hydra models, whose scan
+is a Triton kernel):
 
 * Layer A (synthetic weights): every parameter is filled deterministically from a
   fixed seed, so no trained checkpoint is needed. This runs in CI and guards
   against code changes that silently alter the forward numerics of a published
-  Borzoi / Borzoi Prime architecture.
+  published architecture.
 * Layer B (real weights): a downloaded ``model_best.pth`` is loaded instead.
   Higher fidelity (real weight distribution); also the end-user "did my download
   work" integrity check.
@@ -44,6 +45,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from natsort import natsorted
 
 # Deterministic seeds / sizes. Changing any of these invalidates committed
 # goldens and requires regenerating them (hound_verify --generate).
@@ -59,7 +61,7 @@ R_THRESHOLD = 0.9999
 # catching systematic drift above ~0.1%.
 RMSE_THRESHOLD = 1e-3
 
-FAMILIES = ("borzoi", "borzoi_prime")
+FAMILIES = ("borzoi", "borzoi_prime", "cerberus")
 SPECIES = ("human", "mouse")
 
 # src/baskerville/verification.py -> repo root
@@ -74,8 +76,20 @@ def verify_dir(family: str) -> Path:
     return releases_dir(family) / "verify"
 
 
+def is_joint(family: str) -> bool:
+    """One multi-species model per fold (params.json) vs one model per species."""
+    return (releases_dir(family) / "params.json").exists()
+
+
 def params_path(family: str, species: str) -> Path:
+    if is_joint(family):
+        return releases_dir(family) / "params.json"
     return releases_dir(family) / f"params_{species}.json"
+
+
+def models_dir(family: str, species: str) -> Path:
+    sub = "models" if is_joint(family) else f"models_{species}"
+    return releases_dir(family) / sub
 
 
 def synth_ref_path(family: str, species: str) -> Path:
@@ -95,7 +109,7 @@ def convention_weights(family: str, species: str, fold: int) -> Path | None:
     This is exactly where ``releases/<family>/download.sh`` writes when run from
     the release directory.
     """
-    p = releases_dir(family) / f"models_{species}" / f"f{fold}c0" / "model_best.pth"
+    p = models_dir(family, species) / f"f{fold}c0" / "model_best.pth"
     return p if p.exists() else None
 
 
@@ -104,7 +118,7 @@ def discover_real_folds(family: str, species: str) -> list[int]:
 
     Empty list -> no downloaded weights (run the synthetic-weight check).
     """
-    base = releases_dir(family) / f"models_{species}"
+    base = models_dir(family, species)
     folds = []
     if base.is_dir():
         for d in base.glob("f*c0"):
@@ -114,16 +128,25 @@ def discover_real_folds(family: str, species: str) -> list[int]:
     return sorted(folds)
 
 
-def discover_source_folds(models_root: Path, species: str) -> list[int]:
-    """Folds present in a known-good source tree (for --generate)."""
-    base = Path(models_root) / f"models_{species}"
-    folds = []
+def source_tree(models_root: Path, family: str, species: str):
+    """(params, {fold: weights}) in a known-good source tree (for --generate).
+
+    Joint families use the bucket layout <root>/{params.json,f<n>c0/model_best.pth};
+    per-species families the training layout <root>/models_<species>/f<n>c0/train/.
+    """
+    root = Path(models_root)
+    if is_joint(family):
+        base, params, rel = root, root / "params.json", "model_best.pth"
+    else:
+        base = root / f"models_{species}"
+        params, rel = base / "f0c0" / "train" / "params.json", "train/model_best.pth"
+    weights = {}
     if base.is_dir():
         for d in base.glob("f*c0"):
             m = _FOLD_RE.match(d.name)
-            if m and (d / "train" / "model_best.pth").exists():
-                folds.append(int(m.group(1)))
-    return sorted(folds)
+            if m and (d / rel).exists():
+                weights[int(m.group(1))] = d / rel
+    return params, dict(sorted(weights.items()))
 
 
 def synthetic_one_hot(seq_length: int, seed: int = SEQ_SEED) -> np.ndarray:
@@ -173,24 +196,34 @@ def fill_synthetic_weights(model: torch.nn.Module, seed: int = WEIGHT_SEED) -> N
     model.load_state_dict(new_sd, strict=True)
 
 
-def _build_seqnn(params_json: Path):
+def needs_cuda(params_json) -> bool:
+    with open(params_json) as f:
+        trunk = json.load(f)["model"]["trunk"]
+    return any(b["name"].startswith("Hydra") for b in trunk)
+
+
+def head_index(params_json, species: str) -> int:
+    with open(params_json) as f:
+        heads = natsorted(k for k in json.load(f)["model"] if k.startswith("head"))
+    return heads.index(f"head_{species}")
+
+
+def run_forward(params_json, weights_path, species: str) -> np.ndarray:
+    """Run a deterministic fp32 forward, returning the (C, T) coverage array.
+
+    weights_path is None -> Layer A (synthetic weights); otherwise Layer B.
+    """
     from baskerville.seqnn import SeqNN
 
     with open(params_json) as f:
         params = json.load(f)
+    device = "cuda" if needs_cuda(params_json) else "cpu"
+    if device == "cuda":
+        torch.backends.cudnn.allow_tf32 = False
     # SeqNN.__init__ prints the full module; keep CLI/test output clean.
     with contextlib.redirect_stdout(io.StringIO()):
         snn = SeqNN(params["model"])
-    snn.set_device("cpu")
-    return snn
-
-
-def run_forward(params_json, weights_path) -> np.ndarray:
-    """Run a deterministic CPU forward, returning the (C, T) coverage array.
-
-    weights_path is None -> Layer A (synthetic weights); otherwise Layer B.
-    """
-    snn = _build_seqnn(Path(params_json))
+    snn.set_device(device)
     if weights_path is not None:
         sd = torch.load(weights_path, map_location="cpu", weights_only=True)
         # Deliberately not routed through SeqNN.restore: that drops
@@ -206,13 +239,13 @@ def run_forward(params_json, weights_path) -> np.ndarray:
     else:
         fill_synthetic_weights(snn.model)
     snn.model.eval()
-    snn.model.to("cpu")
+    snn.model.to(device)
 
     oh = synthetic_one_hot(snn.seq_length)
-    x = torch.from_numpy(oh)[None]  # (1, 4, L)
+    x = torch.from_numpy(oh)[None].to(device)  # (1, 4, L)
     with torch.no_grad():
-        out = snn.model(x)
-    return out.coverage[0].cpu().numpy()  # (C, T)
+        out = snn.model(x, head_index(params_json, species))
+    return out.coverage[0].float().cpu().numpy()  # (C, T)
 
 
 def _sample_indices(n_total: int, seed: int = SAMPLE_SEED, n: int = N_SAMPLES):
@@ -334,10 +367,10 @@ def verify(family: str, species: str, r_threshold: float = R_THRESHOLD):
     folds = discover_real_folds(family, species)
     if folds:
         fold = folds[0]
-        out = run_forward(pp, convention_weights(family, species, fold))
+        out = run_forward(pp, convention_weights(family, species, fold), species)
         ref = load_fingerprint(real_ref_path(family, species, fold))
     else:
         fold = None
-        out = run_forward(pp, None)
+        out = run_forward(pp, None, species)
         ref = load_fingerprint(synth_ref_path(family, species))
     return fold, compare(ref, out, r_threshold)
