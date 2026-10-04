@@ -805,7 +805,10 @@ class SeqNNMod(nn.Module):
         self.heads_gene_def = heads_gene_def
         self.output_stride = 1
         self.output_crop_bp = 0
-        self.output_slice = output_slice
+        # index tensor (not e.g. a pandas Index) so torch.compile can trace the slice
+        if output_slice is not None:
+            output_slice = torch.as_tensor(np.asarray(output_slice), dtype=torch.long)
+        self.register_buffer("output_slice", output_slice, persistent=False)
         global_vars = global_vars or {}
         self.global_vars = global_vars
         self.seq_length = seq_length
