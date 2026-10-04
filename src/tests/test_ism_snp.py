@@ -299,3 +299,32 @@ def test_ism_snp_gene_track_selection(static_model_dir, stat):
                 continue
             out_df = pd.read_csv(f"{temp_dir}/{name}", sep="\t", index_col=0)
             assert list(out_df.identifier) == expected_targets
+
+
+def test_ism_snp_bfloat16(static_model_dir):
+    """-m bfloat16 runs (predictions cast to float32 for scoring) and warns."""
+    test_dir = str(pathlib.Path(__file__).parent)
+    with tempfile.TemporaryDirectory() as temp_dir:
+        cmd = [
+            "python",
+            "-m",
+            "baskerville.scripts.hound_ism_snp",
+            "-f",
+            f"{test_dir}/data/sc3.fa.gz",
+            "-t",
+            f"{test_dir}/data/targets_sc3_me.txt",
+            "-o",
+            temp_dir,
+            "-l",
+            "4",
+            "--stats",
+            "logSUM",
+            "-m",
+            "bfloat16",
+            f"{test_dir}/data/params_sc3.json",
+            f"{static_model_dir}/sc3_model.pth",
+            f"{test_dir}/data/sc3_snps.vcf",
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        assert result.returncode == 0, f"hound_ism_snp failed: {result.stderr}"
+        assert "WARNING: --mix_dtype bfloat16" in result.stderr

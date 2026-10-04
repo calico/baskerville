@@ -87,6 +87,7 @@ def main():
         "--mix_dtype",
         dest="mix_dtype",
         default="float32",
+        choices=["float32", "bfloat16", "float16"],
         help="Mixed precision dtype",
     )
     parser.add_argument(
@@ -138,12 +139,7 @@ def main():
     args = parser.parse_args()
 
     # parse options
-    if args.mix_dtype == "float16":
-        args.mix_dtype = torch.float16
-    elif args.mix_dtype == "bfloat16":
-        args.mix_dtype = torch.bfloat16
-    elif args.mix_dtype == "float32":
-        args.mix_dtype = torch.float32
+    args.mix_dtype = snps.parse_mix_dtype(args.mix_dtype)
     args.shifts = [int(shift) for shift in args.shifts.split(",")]
     args.snp_stats = args.snp_stats.split(",")
 
