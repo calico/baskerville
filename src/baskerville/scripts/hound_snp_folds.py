@@ -356,9 +356,15 @@ def snp_folds(args):
         if getattr(args, "genes_gtf", None):
             _, args.genes_gtf = stage_cache.stage_file(args.genes_gtf, "gtf")
         if not args.gcp_output_dir:
-            # Deterministic run_id so a re-run with the same VCF+models lands
-            # in the same output prefix, enabling per-shard resume.
-            run_id = stage_cache.build_run_id(vcf_sha, models_sha, deterministic=True)
+            # Deterministic run_id so a re-run with the same VCF, models and job
+            # command (options, job size) lands in the same output prefix, enabling
+            # per-shard resume; any change starts fresh instead of reusing shards.
+            cmd_sha = stage_cache.hash_text(
+                build_snp_cmd(args, "MODEL", *job_bounds[0], "OUT", "FOLD")
+            )
+            run_id = stage_cache.build_run_id(
+                vcf_sha, models_sha, cmd_sha, deterministic=True
+            )
             args.gcp_output_dir = f"{stage_cache.output_prefix()}/snp/{run_id}"
         args.gcp_data_dir = stage_cache.cache_prefix()
         args.gcp_data_local = stage_cache.CONTAINER_CACHE_MOUNT

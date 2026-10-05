@@ -305,7 +305,11 @@ def ism_bed_folds(args):
             models_key = (
                 models_sha or hashlib.sha256(gcs_models_dir.encode()).hexdigest()
             )
-            run_id = stage_cache.build_run_id(bed_sha, models_key, deterministic=True)
+            # job command too, so changed options start fresh instead of resuming
+            cmd_sha = stage_cache.hash_text(build_ism_bed_cmd(args, "MODEL", "OUT"))
+            run_id = stage_cache.build_run_id(
+                bed_sha, models_key, cmd_sha, deterministic=True
+            )
             args.gcp_output_dir = f"{stage_cache.output_prefix()}/ism_bed/{run_id}"
         print("=" * 72)
         print(f"[gcp] run output dir: {args.gcp_output_dir}")

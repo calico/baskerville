@@ -396,3 +396,70 @@ def test_collect_scores_gene_mode_index_remapping():
 
 if __name__ == "__main__":
     pytest.main([__file__])
+
+
+def _gcp_output_dir(monkeypatch, tmp_path, script, *options):
+    """Run a *_folds script with --backend gcp up to its first resume check and
+    return the output dir it chose. Staging, image lookup, the runner and GCS are
+    stubbed out."""
+    import importlib
+    import sys
+
+    from baskerville.helpers import stage_cache
+
+    module = importlib.import_module(f"baskerville.scripts.{script}")
+    model_dir = tmp_path / "models" / "f0c0" / "train"
+    model_dir.mkdir(parents=True, exist_ok=True)
+    (model_dir / "model_best.pth").touch()
+
+    class Resumed(Exception):
+        pass
+
+    def resume_check(gcs_uri, status):
+        raise Resumed(gcs_uri)
+
+    staged = lambda path, type_, **kw: ("a" * 64, f"/cache/{type_}")
+    for name, stub in [
+        ("resolve_project", lambda project: "project"),
+        ("resolve_image_arg", lambda *a, **kw: None),
+        ("announce_gcp_image", lambda *a, **kw: None),
+        ("make_runner", lambda args, **kw: None),
+    ]:
+        monkeypatch.setattr(module, name, stub, raising=False)
+    monkeypatch.setattr(stage_cache, "read_run_marker", lambda path: None)
+    monkeypatch.setattr(stage_cache, "cache_prefix", lambda: "gs://cache")
+    monkeypatch.setattr(stage_cache, "output_prefix", lambda: "gs://out")
+    monkeypatch.setattr(stage_cache, "stage_file", staged)
+    monkeypatch.setattr(stage_cache, "stage_dir", staged)
+    monkeypatch.setattr(stage_cache, "check_progress_h5_gcs", resume_check)
+
+    test_dir = pathlib.Path(__file__).parent
+    if script == "hound_ism_bed_folds":
+        data_file = tmp_path / "regions.bed"
+        data_file.write_text("chrI\t1000\t1100\n")
+    else:
+        data_file = test_dir / "data" / "sc3_snps.vcf"
+    argv = [script, "--backend", "gcp", "-f", f"{test_dir}/data/sc3.fa.gz"]
+    argv += ["-t", f"{test_dir}/data/targets_sc3_me.txt", *options]
+    argv += [f"{test_dir}/data/params_sc3.json", str(tmp_path / "models")]
+    argv += [str(data_file)]
+    monkeypatch.setattr(sys, "argv", argv)
+    with pytest.raises(Resumed) as resumed:
+        module.main()
+    return str(resumed.value).rsplit("/f0c0/", 1)[0]
+
+
+@pytest.mark.parametrize(
+    "script,option",
+    [
+        ("hound_snp_folds", ["-j", "2"]),
+        ("hound_snp_folds", ["-m", "bfloat16"]),
+        ("hound_ism_snp_folds", ["-m", "bfloat16"]),
+        ("hound_ism_bed_folds", ["-m", "bfloat16"]),
+    ],
+)
+def test_folds_gcp_output_dir_keyed_on_command(monkeypatch, tmp_path, script, option):
+    """Changing scoring options or job size must not resume another run's shards."""
+    base = _gcp_output_dir(monkeypatch, tmp_path, script)
+    assert _gcp_output_dir(monkeypatch, tmp_path, script) == base
+    assert _gcp_output_dir(monkeypatch, tmp_path, script, *option) != base
