@@ -6,6 +6,7 @@ content is captured for assertions.
 """
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -540,6 +541,7 @@ def test_resubmit_after_batch_failure(
         name = short_id = "train-f0c0"
         cmd = "hound_train"
         status = "PENDING"
+        spec = SimpleNamespace(provisioning="standard")
 
         def launch(self):
             state["attempts"] += 1
