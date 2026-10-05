@@ -291,7 +291,7 @@ def eval_folds(args):
         data_names = [os.path.basename(d.rstrip("/")) for d in args.data_dirs]
         container_data_dirs = [f"{args.gcp_data_local}/{n}" for n in data_names]
         if not args.gcp_output_dir:
-            # Deterministic run id = hash(models, params, data URIs). Same inputs
+            # Deterministic run id = hash(models, params, data URIs, options). Same inputs
             # → same GCS location → per-shard resume (skip finished acc.txt).
             # Marker mode has no staged models_sha; key on the GCS models dir.
             data_uris = sorted(f"{args.gcp_data_dir}/{n}" for n in data_names)
@@ -299,8 +299,13 @@ def eval_folds(args):
             models_key = (
                 models_sha or hashlib.sha256(gcs_models_dir.encode()).hexdigest()
             )
+            # output-changing options too, so changing them starts fresh instead of
+            # resuming; spec's are keyed even without --spec so adding it resumes
+            opts_sha = stage_cache.hash_text(
+                eval_options(args, container_targets_gene) + spec_options(args)
+            )
             run_id = stage_cache.build_run_id(
-                models_key, params_sha, data_uri_sha, deterministic=True
+                models_key, params_sha, data_uri_sha, opts_sha, deterministic=True
             )
             args.gcp_output_dir = f"{stage_cache.output_prefix()}/eval/{run_id}"
         print("=" * 72)
@@ -320,6 +325,7 @@ def eval_folds(args):
     else:
         params_file = os.path.abspath(args.params_file)
         data_dirs = [os.path.abspath(data_dir) for data_dir in args.data_dirs]
+    targets_gene = container_targets_gene if gcp_backend else args.targets_gene_file
 
     #######################################################
     # prep work
@@ -457,26 +463,8 @@ def eval_folds(args):
                     cmd = cmd_base
                     cmd += f" --dataset {di}"
                     cmd += f" -o {eval_fold_dir}"
-                    if args.rank_corr:
-                        cmd += " --rank"
-                    if args.rc:
-                        cmd += " --rc"
-                    if args.save:
-                        cmd += " --save"
-                    if args.shifts:
-                        cmd += f" --shifts {args.shifts}"
-                    if args.aggregate_genes:
-                        cmd += " --aggregate_genes"
-                    targets_gene = (
-                        container_targets_gene
-                        if gcp_backend
-                        else args.targets_gene_file
-                    )
-                    if targets_gene:
-                        cmd += f" --targets_gene_file {targets_gene}"
                     cmd += f" --split fold{ei}"
-                    if args.rank_corr or args.save:
-                        cmd += f" --step {args.step}"
+                    cmd += eval_options(args, targets_gene)
                     cmd += f" {params_file}"
                     cmd += f" {model_file}"
                     cmd += f" {data_dirs[di]}"
@@ -565,8 +553,8 @@ def eval_folds(args):
                     cmd = spec_cmd_base
                     cmd += f" --dataset {di}"
                     cmd += f" -o {out_dir}"
-                    cmd += f" --step {args.step}"
                     cmd += f" --split fold{test_fold}"
+                    cmd += spec_options(args)
                     cmd += f" --ncpus {num_cpu}"
                     if args.band is not None:
                         cmd += f" --band {args.band}"
@@ -576,10 +564,6 @@ def eval_folds(args):
                         cmd += " --ram"
                     if args.scratch_dir is not None:
                         cmd += f" --scratch_dir {args.scratch_dir}"
-                    if args.rc:
-                        cmd += " --rc"
-                    if args.shifts:
-                        cmd += f" --shifts {args.shifts}"
                     cmd += f" {params_file}"
                     cmd += f" {model_file}"
                     cmd += f" {data_dirs[di]}"
@@ -661,6 +645,36 @@ def eval_folds(args):
 # The shared fold helpers (_read_fold_splits, _model_present, _resolve_model_file)
 # now live in baskerville.helpers.fold_utils and are imported above under
 # their original private names so existing call sites and tests are unchanged.
+
+
+def eval_options(args, targets_gene):
+    """hound_eval flags that change its output (not per-job paths/splits)."""
+    opts = ""
+    if args.rank_corr:
+        opts += " --rank"
+    if args.rc:
+        opts += " --rc"
+    if args.save:
+        opts += " --save"
+    if args.shifts:
+        opts += f" --shifts {args.shifts}"
+    if args.aggregate_genes:
+        opts += " --aggregate_genes"
+    if targets_gene:
+        opts += f" --targets_gene_file {targets_gene}"
+    if args.rank_corr or args.save:
+        opts += f" --step {args.step}"
+    return opts
+
+
+def spec_options(args):
+    """hound_eval_spec flags that change its output (not memory/IO knobs)."""
+    opts = f" --step {args.step}"
+    if args.rc:
+        opts += " --rc"
+    if args.shifts:
+        opts += f" --shifts {args.shifts}"
+    return opts
 
 
 def _link_test_metrics(eval_dir, test_fold):

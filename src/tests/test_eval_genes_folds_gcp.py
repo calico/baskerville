@@ -360,3 +360,18 @@ def test_marker_mode_inherits_gcp_config(tmp_path, monkeypatch):
     assert args.gcp_image == "img:tag"
     assert args.gcp_project == "proj"
     assert args.gcp_region == "us-west1"
+
+
+def _gcp_output_dir(tmp_path, monkeypatch, **kwargs):
+    out_dir = _make_models_dir(tmp_path, num_folds=4, test_fold=0, valid_fold=3)
+    captured = _patch_gcp(monkeypatch, num_folds=4)
+    hegf.eval_genes_folds(MockArgs(out_dir=out_dir, fold_subset=1, **kwargs))
+    return captured[0].kwargs["output_dir_gcs"]
+
+
+def test_gcp_output_dir_keyed_on_options(tmp_path, monkeypatch):
+    """Changed options (or --valid, same evalg/ dir) must not resume another run."""
+    base = _gcp_output_dir(tmp_path, monkeypatch)
+    assert _gcp_output_dir(tmp_path, monkeypatch) == base
+    assert _gcp_output_dir(tmp_path, monkeypatch, rc=True) != base
+    assert _gcp_output_dir(tmp_path, monkeypatch, valid=True) != base
