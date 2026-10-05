@@ -80,7 +80,9 @@ def multi_run(
                 if job.status == "FAILED" and job.spec.provisioning == "spot":
                     # Spot retries exhausted (typically a preemption storm):
                     # resubmit once on-demand, which Batch never reclaims.
-                    logger.warning("Job %s failed on Spot; resubmitting as standard", job.name)
+                    logger.warning(
+                        "Job %s failed on Spot; resubmitting as standard", job.name
+                    )
                     job.spec.provisioning = "standard"
                     try:
                         job.launch()
@@ -91,7 +93,9 @@ def multi_run(
                         submission_errors.append(f"{job.name}: {e}")
                         continue
                     if verbose:
-                        print(f"Relaunched as standard: {job.name} (id: {job.short_id})")
+                        print(
+                            f"Relaunched as standard: {job.name} (id: {job.short_id})"
+                        )
                     still.append(job)
                     continue
                 if verbose:
