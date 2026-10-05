@@ -25,6 +25,8 @@ def multi_run(
 
     Mirrors ``slurmrunner.multi_run``: jobs run independently, no dependency
     graph. Batch already reaped each VM, so there's nothing to clean up here.
+    A Spot job that still fails after its Batch retries is resubmitted once as
+    standard.
 
     Raises ``RuntimeError``, naming the jobs, if any fails to launch or reaches
     a terminal state other than ``COMPLETED`` (Batch already applied its in-task
@@ -73,6 +75,23 @@ def multi_run(
             still: List[Job] = []
             for job in active:
                 if job.status in {"PENDING", "RUNNING"}:
+                    still.append(job)
+                    continue
+                if job.status == "FAILED" and job.spec.provisioning == "spot":
+                    # Spot retries exhausted (typically a preemption storm):
+                    # resubmit once on-demand, which Batch never reclaims.
+                    logger.warning("Job %s failed on Spot; resubmitting as standard", job.name)
+                    job.spec.provisioning = "standard"
+                    try:
+                        job.launch()
+                    except Exception as e:
+                        logger.error("Failed to relaunch %s: %s", job.name, e)
+                        job.status = "FAILED"
+                        failed.append(job.name)
+                        submission_errors.append(f"{job.name}: {e}")
+                        continue
+                    if verbose:
+                        print(f"Relaunched as standard: {job.name} (id: {job.short_id})")
                     still.append(job)
                     continue
                 if verbose:

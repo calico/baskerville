@@ -13,7 +13,7 @@ from gcprunner.batch_spec import (
     build_batch_job_dict,
 )
 from gcprunner.gpus import GPU_PROFILES, resolve_gpu
-from gcprunner.job import Job, _parse_slurm_time, _job_id_safe
+from gcprunner.job import Job, _STATE_MAP, _parse_slurm_time, _job_id_safe
 from gcprunner.runner import multi_run
 
 
@@ -693,15 +693,18 @@ def test_gcp_retry_unset_omits_kwarg():
 class _FakeJob:
     """Minimal Job stand-in for multi_run: terminal status set on update."""
 
-    def __init__(self, name, final_status):
+    def __init__(self, name, final_status, provisioning="standard"):
         self.name = name
         self._final = final_status
         self.status = "PENDING"
         self.short_id = name
         self.cmd = "echo hi"
+        self.spec = SimpleNamespace(provisioning=provisioning)
+        self.launched = []
 
     def launch(self):
-        pass
+        self.launched.append(self.spec.provisioning)
+        self.status = "PENDING"
 
     def update_status(self, *args, **kwargs):
         self.status = self._final
@@ -720,6 +723,36 @@ def test_multi_run_raises_on_failure():
 def test_multi_run_all_completed_ok():
     jobs = [_FakeJob(f"j{i}", "COMPLETED") for i in range(3)]
     multi_run(jobs, max_proc=3, launch_sleep=0, update_sleep=0)  # no raise
+
+
+def test_multi_run_spot_failure_falls_back_to_standard():
+    class _PreemptedOnceJob(_FakeJob):
+        def update_status(self, *args, **kwargs):
+            self.status = "FAILED" if self.spec.provisioning == "spot" else "COMPLETED"
+
+    job = _PreemptedOnceJob("j0", None, provisioning="spot")
+    multi_run([job], launch_sleep=0, update_sleep=0)  # no raise
+    assert job.launched == ["spot", "standard"]
+
+
+def test_multi_run_spot_fallback_fails_once():
+    job = _FakeJob("j0", "FAILED", provisioning="spot")
+    with pytest.raises(RuntimeError, match="j0"):
+        multi_run([job], launch_sleep=0, update_sleep=0)
+    assert job.launched == ["spot", "standard"]
+
+
+@pytest.mark.parametrize("raise_on_failure", [True, False])
+def test_multi_run_cancelled_spot_job_is_not_relaunched(raise_on_failure):
+    job = _FakeJob("j0", _STATE_MAP["CANCELLED"], provisioning="spot")
+    kwargs = dict(launch_sleep=0, update_sleep=0, raise_on_failure=raise_on_failure)
+    if raise_on_failure:
+        with pytest.raises(RuntimeError, match="j0"):
+            multi_run([job], **kwargs)
+    else:
+        multi_run([job], **kwargs)
+    assert job.launched == ["spot"]
+    assert job.status == "CANCELLED"
 
 
 def test_multi_run_raises_on_launch_failure():
