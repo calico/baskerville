@@ -15,6 +15,18 @@ from baskerville import metrics
 from baskerville.types import BatchData, ModelOutput
 
 
+def _float_output(out: ModelOutput, keep_gradients: bool) -> ModelOutput:
+    """Cast predictions to float32 (autocast may leave them reduced), detaching unless kept."""
+
+    def cast(x):
+        if x is None:
+            return None
+        x = x.float()
+        return x if keep_gradients else x.detach()
+
+    return ModelOutput(coverage=cast(out.coverage), gene=cast(out.gene))
+
+
 class SeqNN:
     """Sequence neural network model.
 
@@ -142,12 +154,7 @@ class SeqNN:
                     gene_out_mask=gene_out_mask,
                     gene_presence=gene_presence,
                 )
-            if not keep_gradients:
-                out = ModelOutput(
-                    coverage=out.coverage.detach() if out.has_coverage else None,
-                    gene=out.gene.detach() if out.has_gene else None,
-                )
-            outputs.append(out)
+            outputs.append(_float_output(out, keep_gradients))
 
             # reverse complement
             if self.ensemble_rc:
@@ -166,22 +173,17 @@ class SeqNN:
                         gene_out_mask=rc_gene_out_mask,
                         gene_presence=gene_presence,
                     )
+                out_rc = _float_output(out_rc, keep_gradients)
 
                 # Process coverage: flip and apply strand pairing
                 coverage_rc = None
                 if out_rc.has_coverage:
                     coverage_rc = torch.flip(out_rc.coverage, [2])
-                    if not keep_gradients:
-                        coverage_rc = coverage_rc.detach()
                     if strand_pair_hi is not None:
                         coverage_rc = coverage_rc[:, strand_pair_hi, :]
 
                 # Gene predictions: slices were transformed above, no post-hoc flipping needed
-                gene_rc = None
-                if out_rc.has_gene:
-                    gene_rc = out_rc.gene
-                    if not keep_gradients:
-                        gene_rc = gene_rc.detach()
+                gene_rc = out_rc.gene
 
                 outputs.append(ModelOutput(coverage=coverage_rc, gene=gene_rc))
 
@@ -200,10 +202,12 @@ class SeqNN:
         return ModelOutput(coverage=coverage_avg, gene=gene_avg)
 
     def compile(self):
-        """Compile model for faster inference.
-        (Not working well with augmentation ensembling.)
+        """Compile model for faster inference; call after restore.
+
+        Default mode: reduce-overhead's CUDA graphs overwrite outputs that
+        callers hold across calls (e.g. ref predictions).
         """
-        if torch.cuda.get_device_capability()[0] < 7:
+        if self.device == "cuda" and torch.cuda.get_device_capability()[0] < 7:
             print("Warning: CUDA device capability < 7.0, skipping compilation.")
         else:
             self.model = torch.compile(self.model)
@@ -805,7 +809,10 @@ class SeqNNMod(nn.Module):
         self.heads_gene_def = heads_gene_def
         self.output_stride = 1
         self.output_crop_bp = 0
-        self.output_slice = output_slice
+        # index tensor (not e.g. a pandas Index) so torch.compile can trace the slice
+        if output_slice is not None:
+            output_slice = torch.as_tensor(np.asarray(output_slice), dtype=torch.long)
+        self.register_buffer("output_slice", output_slice, persistent=False)
         global_vars = global_vars or {}
         self.global_vars = global_vars
         self.seq_length = seq_length

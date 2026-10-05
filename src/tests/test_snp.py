@@ -5,11 +5,15 @@ import tempfile
 import pytest
 import subprocess
 
+import argparse
+
 import h5py
 import numpy as np
 import pandas as pd
+import torch
 
-from baskerville.snps import partition_snp_stats
+from baskerville.scripts.hound_snp_folds import build_snp_cmd
+from baskerville.snps import parse_mix_dtype, partition_snp_stats
 
 
 @pytest.fixture
@@ -714,3 +718,90 @@ def test_partition_snp_stats(stats, expected):
     original = stats.copy()
     assert partition_snp_stats(stats) == expected
     assert stats == original
+
+
+def test_parse_mix_dtype_warns_below_float32(capsys):
+    assert parse_mix_dtype("float32") is torch.float32
+    assert "WARNING" not in capsys.readouterr().err
+    assert parse_mix_dtype("bfloat16") is torch.bfloat16
+    assert "WARNING" in capsys.readouterr().err
+
+
+def test_snp_folds_passes_mix_dtype():
+    args = argparse.Namespace(
+        mix_dtype="bfloat16", params_file="p.json", vcf_file="v.vcf"
+    )
+    assert "-m bfloat16" in build_snp_cmd(args, "m.pth", 0, 1)
+    args.mix_dtype = "float32"
+    assert "-m" not in build_snp_cmd(args, "m.pth", 0, 1).split()
+
+
+def test_snp_folds_passes_compile():
+    args = argparse.Namespace(compile=True, params_file="p.json", vcf_file="v.vcf")
+    assert "--compile" in build_snp_cmd(args, "m.pth", 0, 1).split()
+
+
+def test_snp_mix_dtype_takes_effect(static_model_dir, test_vcf_file):
+    """-m bfloat16 must change the model's precision (it was once a silent no-op)."""
+    test_dir = str(pathlib.Path(__file__).parent)
+    scores = {}
+    with tempfile.TemporaryDirectory() as temp_dir:
+        for mix_dtype in ["float32", "bfloat16"]:
+            out_dir = f"{temp_dir}/{mix_dtype}"
+            cmd = [
+                "python",
+                "-m",
+                "baskerville.scripts.hound_snp",
+                "-f",
+                f"{test_dir}/data/sc3.fa.gz",
+                "-t",
+                f"{test_dir}/data/targets_sc3_me.txt",
+                "-o",
+                out_dir,
+                "--stats",
+                "logSUM",
+                "-m",
+                mix_dtype,
+                f"{test_dir}/data/params_sc3.json",
+                f"{static_model_dir}/sc3_model.pth",
+                test_vcf_file,
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            assert result.returncode == 0, f"hound_snp failed: {result.stderr}"
+            assert ("WARNING: --mix_dtype" in result.stderr) == (mix_dtype != "float32")
+            with h5py.File(f"{out_dir}/scores.h5", "r") as h5:
+                scores[mix_dtype] = h5["cov/logSUM"][:]
+    assert not np.array_equal(scores["float32"], scores["bfloat16"])
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="compile targets GPU")
+def test_snp_compile_matches_eager(static_model_dir, test_vcf_file):
+    """--compile runs and reproduces eager scores up to fusion reassociation."""
+    test_dir = str(pathlib.Path(__file__).parent)
+    scores = {}
+    with tempfile.TemporaryDirectory() as temp_dir:
+        for compile_flag in [[], ["--compile"]]:
+            out_dir = f"{temp_dir}/{len(compile_flag)}"
+            cmd = [
+                "python",
+                "-m",
+                "baskerville.scripts.hound_snp",
+                "-f",
+                f"{test_dir}/data/sc3.fa.gz",
+                "-t",
+                f"{test_dir}/data/targets_sc3_me.txt",
+                "-o",
+                out_dir,
+                "--stats",
+                "logSUM",
+                "--rc",
+                *compile_flag,
+                f"{test_dir}/data/params_sc3.json",
+                f"{static_model_dir}/sc3_model.pth",
+                test_vcf_file,
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            assert result.returncode == 0, f"hound_snp failed: {result.stderr}"
+            with h5py.File(f"{out_dir}/scores.h5", "r") as h5:
+                scores[len(compile_flag)] = h5["cov/logSUM"][:].astype("float32")
+    np.testing.assert_allclose(scores[1], scores[0], rtol=1e-2, atol=1e-2)

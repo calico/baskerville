@@ -17,9 +17,8 @@ import argparse
 import os
 import tempfile
 import shutil
-import torch
 
-from baskerville.snps import score_snps, score_gene_snps
+from baskerville.snps import parse_mix_dtype, score_snps, score_gene_snps
 from baskerville.helpers.gcs_utils import (
     upload_folder_gcs,
     download_rename_inputs,
@@ -104,7 +103,14 @@ def main():
         "--mix_dtype",
         dest="mix_dtype",
         default="float32",
+        choices=["float32", "bfloat16", "float16"],
         help="Mixed precision dtype",
+    )
+    parser.add_argument(
+        "--compile",
+        default=False,
+        action="store_true",
+        help="Compile the model with torch.compile",
     )
     parser.add_argument(
         "-n",
@@ -207,12 +213,7 @@ def main():
             args.targets_file = download_rename_inputs(args.targets_file, temp_dir)
 
     # parse options
-    if args.mix_dtype == "float16":
-        args.mix_dtype = torch.float16
-    elif args.mix_dtype == "bfloat16":
-        args.mix_dtype = torch.bfloat16
-    elif args.mix_dtype == "float32":
-        args.mix_dtype = torch.float32
+    args.mix_dtype = parse_mix_dtype(args.mix_dtype)
     args.shifts = [int(shift) for shift in args.shifts.split(",")]
     args.snp_stats = args.snp_stats.split(",")
 

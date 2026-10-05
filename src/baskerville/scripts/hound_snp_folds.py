@@ -109,6 +109,20 @@ def main():
         help="Local window size in bp for targets with window=local",
     )
     snp_group.add_argument(
+        "-m",
+        "--mix_dtype",
+        dest="mix_dtype",
+        default="float32",
+        choices=["float32", "bfloat16", "float16"],
+        help="Mixed precision dtype",
+    )
+    snp_group.add_argument(
+        "--compile",
+        default=False,
+        action="store_true",
+        help="Compile the model with torch.compile",
+    )
+    snp_group.add_argument(
         "-n",
         "--norm",
         dest="norm_subdir",
@@ -649,6 +663,12 @@ def build_snp_cmd(args, model_file, start_i, end_i, out_dir=None, fold_cross=Non
 
     if hasattr(args, "local_window") and args.local_window != 2048:
         cmd_parts.extend(["--local_window", str(args.local_window)])
+
+    if hasattr(args, "mix_dtype") and args.mix_dtype != "float32":
+        cmd_parts.extend(["-m", args.mix_dtype])
+
+    if hasattr(args, "compile") and args.compile:
+        cmd_parts.append("--compile")
 
     # Add normalization file if specified
     if hasattr(args, "norm_subdir") and args.norm_subdir and fold_cross is not None:

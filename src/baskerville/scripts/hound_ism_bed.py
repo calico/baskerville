@@ -88,7 +88,14 @@ def main():
         "--mix_dtype",
         dest="mix_dtype",
         default="float32",
+        choices=["float32", "bfloat16", "float16"],
         help="Mixed precision dtype",
+    )
+    parser.add_argument(
+        "--compile",
+        default=False,
+        action="store_true",
+        help="Compile the model with torch.compile",
     )
     parser.add_argument(
         "-o",
@@ -151,12 +158,7 @@ def main():
     args = parser.parse_args()
 
     # parse options
-    if args.mix_dtype == "float16":
-        args.mix_dtype = torch.float16
-    elif args.mix_dtype == "bfloat16":
-        args.mix_dtype = torch.bfloat16
-    elif args.mix_dtype == "float32":
-        args.mix_dtype = torch.float32
+    args.mix_dtype = snps.parse_mix_dtype(args.mix_dtype)
 
     args.shifts = [int(shift) for shift in args.shifts.split(",")]
     args.snp_stats = [snp_stat for snp_stat in args.snp_stats.split(",")]
@@ -219,6 +221,8 @@ def main():
     seqnn_model.ensemble_shifts = args.shifts
     seqnn_model.mix_dtype = args.mix_dtype
     seqnn_model.model.eval()
+    if args.compile:
+        seqnn_model.compile()
 
     output_length = seqnn_model.output_length()
     output_stride = seqnn_model.output_stride()

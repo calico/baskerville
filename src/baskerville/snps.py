@@ -1,6 +1,8 @@
 import concurrent
 import json
 import os
+import sys
+
 import h5py
 import numpy as np
 import pandas as pd
@@ -16,6 +18,24 @@ from baskerville import seqnn
 from baskerville.vcf import VCF, SNPCluster
 
 GENE_ASSAYS = {"RNA", "RNA3", "CAGE"}
+
+MIX_DTYPES = {
+    "float32": torch.float32,
+    "bfloat16": torch.bfloat16,
+    "float16": torch.float16,
+}
+
+
+def parse_mix_dtype(name: str) -> torch.dtype:
+    """Map a --mix_dtype name to a torch dtype, warning on reduced precision."""
+    if name != "float32":
+        print(
+            f"WARNING: --mix_dtype {name} adds rounding noise that can dominate "
+            "variant effect scores (small alt - ref differences). Use float32 "
+            "unless validated for your model and stats.",
+            file=sys.stderr,
+        )
+    return MIX_DTYPES[name]
 
 
 def gene_track_mask(targets_df) -> np.ndarray:
@@ -164,8 +184,11 @@ def score_snps(args):
     seqnn_model = seqnn.SeqNN(params_model, output_slice=targets_df.index)
     seqnn_model.restore(args.model_file)
     seqnn_model.ensemble_rc = args.rc
+    seqnn_model.mix_dtype = args.mix_dtype
     seqnn_model.model.eval()
     seqnn_model.model_di = params.get("train", {}).get("model_di", None)
+    if args.compile:
+        seqnn_model.compile()
 
     # shift outside seqnn
     num_shifts = len(args.shifts)
@@ -608,8 +631,11 @@ def score_gene_snps(args):
     seqnn_model = seqnn.SeqNN(params_model, output_slice=targets_df.index)
     seqnn_model.restore(args.model_file)
     seqnn_model.ensemble_rc = args.rc
+    seqnn_model.mix_dtype = args.mix_dtype
     seqnn_model.model.eval()
     seqnn_model.model_di = params.get("train", {}).get("model_di", None)
+    if args.compile:
+        seqnn_model.compile()
 
     # shift outside seqnn
     num_shifts = len(args.shifts)
