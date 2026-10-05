@@ -71,25 +71,25 @@ def dna_1hot(
     else:
         seq_code = np.zeros((seq_len, 4), dtype="bool")
 
-    for i in range(seq_len):
-        if i >= seq_start and i - seq_start < len(seq):
-            nt = seq[i - seq_start]
-            if nt == "A":
-                seq_code[i, 0] = 1
-            elif nt == "C":
-                seq_code[i, 1] = 1
-            elif nt == "G":
-                seq_code[i, 2] = 1
-            elif nt == "T":
-                seq_code[i, 3] = 1
-            else:
-                if n_uniform:
-                    seq_code[i, :] = 0.25
-                elif n_sample:
-                    ni = random.randint(0, 3)
-                    seq_code[i, ni] = 1
+    seq_end = min(seq_len, seq_start + len(seq))
+    rows = np.arange(seq_start, seq_end)
+    cols = _NT_COLUMN[np.frombuffer(seq.encode("ascii", "replace"), np.uint8)]
+    cols = cols[: seq_end - seq_start]
+    known = cols >= 0
+    seq_code[rows[known], cols[known]] = 1
+
+    if n_uniform:
+        seq_code[rows[~known]] = 0.25
+    elif n_sample:
+        for i in rows[~known]:
+            seq_code[i, random.randint(0, 3)] = 1
 
     return seq_code
+
+
+# column of each ASCII byte in a 1-hot encoding; -1 for N and anything else
+_NT_COLUMN = np.full(256, -1, dtype=np.int8)
+_NT_COLUMN[np.frombuffer(b"ACGT", np.uint8)] = np.arange(4)
 
 
 def dna_1hot_index(seq: str, n_sample: bool = False):
