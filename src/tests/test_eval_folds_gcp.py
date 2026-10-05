@@ -390,3 +390,21 @@ def test_run_marker_roundtrip(tmp_path):
     assert marker["gcp_zone"] is None
     # absent marker → None
     assert hef.stage_cache.read_run_marker(str(tmp_path / "nope")) is None
+
+
+def _gcp_output_dir(tmp_path, monkeypatch, **kwargs):
+    out_dir = _make_models_dir(tmp_path, num_folds=2, test_fold=0, valid_fold=1)
+    captured = _patch_gcp(monkeypatch, num_folds=2)
+    hef.eval_folds(MockArgs(out_dir=out_dir, test_only=True, **kwargs))
+    return captured[0].kwargs["output_dir_gcs"]
+
+
+def test_gcp_output_dir_keyed_on_options(tmp_path, monkeypatch):
+    """Output-changing options start fresh; memory/IO knobs still resume."""
+    base = _gcp_output_dir(tmp_path, monkeypatch)
+    assert _gcp_output_dir(tmp_path, monkeypatch) == base
+    assert _gcp_output_dir(tmp_path, monkeypatch, rc=True) != base
+    assert _gcp_output_dir(tmp_path, monkeypatch, shifts="0,1") != base
+    assert _gcp_output_dir(tmp_path, monkeypatch, band=8, ram=True) == base
+    # adding --spec to a finished eval run resumes its eval jobs
+    assert _gcp_output_dir(tmp_path, monkeypatch, spec=True) == base

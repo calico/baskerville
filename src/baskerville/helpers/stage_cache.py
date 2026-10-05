@@ -137,6 +137,11 @@ def _iter_dir_files(root: str, *, filename: str | None = None):
             yield rel, full
 
 
+def hash_text(text: str) -> str:
+    """SHA-256 hex of a string, e.g. a job command keying a run id."""
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
 def hash_dir(path: str, *, filename: str | None = None) -> str:
     """SHA256 of the sorted ``(relpath, file_sha256)`` manifest of a directory."""
     manifest = hashlib.sha256()

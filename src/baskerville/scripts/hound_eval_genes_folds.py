@@ -275,8 +275,16 @@ def eval_genes_folds(args):
             models_key = (
                 models_sha or hashlib.sha256(gcs_models_dir.encode()).hexdigest()
             )
+            # options too (and --valid, which changes the split written to the
+            # same evalg/ dir), so changed options start fresh instead of resuming
+            opts = evalg_options(args, container_targets) + f" valid={args.valid}"
             run_id = stage_cache.build_run_id(
-                models_key, params_sha, gtf_sha, data_uri_sha, deterministic=True
+                models_key,
+                params_sha,
+                gtf_sha,
+                data_uri_sha,
+                stage_cache.hash_text(opts),
+                deterministic=True,
             )
             args.gcp_output_dir = f"{stage_cache.output_prefix()}/evalg/{run_id}"
         print("=" * 72)
@@ -438,19 +446,7 @@ def eval_genes_folds(args):
                 cmd += f" --head {di}"
                 cmd += f" -o {eval_dir}"
                 cmd += f" --split fold{split_fold}"
-                cmd += f" --seq_step {args.seq_step}"
-                if args.pseudo_qtl is not None:
-                    cmd += f" --pseudo_qtl {args.pseudo_qtl:.2f}"
-                if args.rc:
-                    cmd += " --rc"
-                if args.save_span:
-                    cmd += " --save_span"
-                if args.shifts:
-                    cmd += f" --shifts {args.shifts}"
-                if args.span:
-                    cmd += " --span"
-                if targets_file:
-                    cmd += f" -t {targets_file}"
+                cmd += evalg_options(args, targets_file)
                 cmd += f" {params_file}"
                 cmd += f" {model_file}"
                 cmd += f" {data_dirs[di]}"
@@ -534,6 +530,24 @@ def eval_genes_folds(args):
             download_folder_from_gcs(args.gcp_output_dir, local_target)
             print(f"[fetch] results → {local_target}/")
         print(f"[gcs] full run at {args.gcp_output_dir}")
+
+
+def evalg_options(args, targets_file):
+    """hound_eval_genes flags that change its output (not paths/splits)."""
+    opts = f" --seq_step {args.seq_step}"
+    if args.pseudo_qtl is not None:
+        opts += f" --pseudo_qtl {args.pseudo_qtl:.2f}"
+    if args.rc:
+        opts += " --rc"
+    if args.save_span:
+        opts += " --save_span"
+    if args.shifts:
+        opts += f" --shifts {args.shifts}"
+    if args.span:
+        opts += " --span"
+    if targets_file:
+        opts += f" -t {targets_file}"
+    return opts
 
 
 ################################################################################
