@@ -34,7 +34,7 @@ class MockArgs:
         self.snp_stats = "logSUM"
         self.targets_file = None
         self.crosses = 1
-        self.conda_env = "torch126"
+        self.conda_env = None
         self.embed = False
         self.num_folds = None
         self.fold_subset_list = None
