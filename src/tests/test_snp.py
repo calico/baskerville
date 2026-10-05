@@ -736,6 +736,11 @@ def test_snp_folds_passes_mix_dtype():
     assert "-m" not in build_snp_cmd(args, "m.pth", 0, 1).split()
 
 
+def test_snp_folds_passes_compile():
+    args = argparse.Namespace(compile=True, params_file="p.json", vcf_file="v.vcf")
+    assert "--compile" in build_snp_cmd(args, "m.pth", 0, 1).split()
+
+
 def test_snp_mix_dtype_takes_effect(static_model_dir, test_vcf_file):
     """-m bfloat16 must change the model's precision (it was once a silent no-op)."""
     test_dir = str(pathlib.Path(__file__).parent)
@@ -767,3 +772,36 @@ def test_snp_mix_dtype_takes_effect(static_model_dir, test_vcf_file):
             with h5py.File(f"{out_dir}/scores.h5", "r") as h5:
                 scores[mix_dtype] = h5["cov/logSUM"][:]
     assert not np.array_equal(scores["float32"], scores["bfloat16"])
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="compile targets GPU")
+def test_snp_compile_matches_eager(static_model_dir, test_vcf_file):
+    """--compile runs and reproduces eager scores up to fusion reassociation."""
+    test_dir = str(pathlib.Path(__file__).parent)
+    scores = {}
+    with tempfile.TemporaryDirectory() as temp_dir:
+        for compile_flag in [[], ["--compile"]]:
+            out_dir = f"{temp_dir}/{len(compile_flag)}"
+            cmd = [
+                "python",
+                "-m",
+                "baskerville.scripts.hound_snp",
+                "-f",
+                f"{test_dir}/data/sc3.fa.gz",
+                "-t",
+                f"{test_dir}/data/targets_sc3_me.txt",
+                "-o",
+                out_dir,
+                "--stats",
+                "logSUM",
+                "--rc",
+                *compile_flag,
+                f"{test_dir}/data/params_sc3.json",
+                f"{static_model_dir}/sc3_model.pth",
+                test_vcf_file,
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            assert result.returncode == 0, f"hound_snp failed: {result.stderr}"
+            with h5py.File(f"{out_dir}/scores.h5", "r") as h5:
+                scores[len(compile_flag)] = h5["cov/logSUM"][:].astype("float32")
+    np.testing.assert_allclose(scores[1], scores[0], rtol=1e-2, atol=1e-2)

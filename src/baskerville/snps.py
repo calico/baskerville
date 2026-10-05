@@ -187,6 +187,8 @@ def score_snps(args):
     seqnn_model.mix_dtype = args.mix_dtype
     seqnn_model.model.eval()
     seqnn_model.model_di = params.get("train", {}).get("model_di", None)
+    if args.compile:
+        seqnn_model.compile()
 
     # shift outside seqnn
     num_shifts = len(args.shifts)
@@ -632,6 +634,8 @@ def score_gene_snps(args):
     seqnn_model.mix_dtype = args.mix_dtype
     seqnn_model.model.eval()
     seqnn_model.model_di = params.get("train", {}).get("model_di", None)
+    if args.compile:
+        seqnn_model.compile()
 
     # shift outside seqnn
     num_shifts = len(args.shifts)

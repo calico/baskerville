@@ -202,10 +202,12 @@ class SeqNN:
         return ModelOutput(coverage=coverage_avg, gene=gene_avg)
 
     def compile(self):
-        """Compile model for faster inference.
-        (Not working well with augmentation ensembling.)
+        """Compile model for faster inference; call after restore.
+
+        Default mode: reduce-overhead's CUDA graphs overwrite outputs that
+        callers hold across calls (e.g. ref predictions).
         """
-        if torch.cuda.get_device_capability()[0] < 7:
+        if self.device == "cuda" and torch.cuda.get_device_capability()[0] < 7:
             print("Warning: CUDA device capability < 7.0, skipping compilation.")
         else:
             self.model = torch.compile(self.model)

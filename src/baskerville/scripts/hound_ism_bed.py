@@ -92,6 +92,12 @@ def main():
         help="Mixed precision dtype",
     )
     parser.add_argument(
+        "--compile",
+        default=False,
+        action="store_true",
+        help="Compile the model with torch.compile",
+    )
+    parser.add_argument(
         "-o",
         "--out_dir",
         dest="out_dir",
@@ -215,6 +221,8 @@ def main():
     seqnn_model.ensemble_shifts = args.shifts
     seqnn_model.mix_dtype = args.mix_dtype
     seqnn_model.model.eval()
+    if args.compile:
+        seqnn_model.compile()
 
     output_length = seqnn_model.output_length()
     output_stride = seqnn_model.output_stride()

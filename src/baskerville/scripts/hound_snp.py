@@ -107,6 +107,12 @@ def main():
         help="Mixed precision dtype",
     )
     parser.add_argument(
+        "--compile",
+        default=False,
+        action="store_true",
+        help="Compile the model with torch.compile",
+    )
+    parser.add_argument(
         "-n",
         "--norm",
         dest="norm_file",

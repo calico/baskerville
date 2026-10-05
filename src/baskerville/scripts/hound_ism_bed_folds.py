@@ -106,6 +106,12 @@ def main():
         help="Mixed precision dtype",
     )
     ism_group.add_argument(
+        "--compile",
+        default=False,
+        action="store_true",
+        help="Compile the model with torch.compile",
+    )
+    ism_group.add_argument(
         "-o",
         dest="out_dir",
         default="ism_bed_out",
@@ -540,6 +546,9 @@ def build_ism_bed_cmd(args, model_file, out_dir):
 
     if args.mix_dtype != "float32":
         cmd_parts.extend(["-m", args.mix_dtype])
+
+    if args.compile:
+        cmd_parts.append("--compile")
 
     cmd_parts.extend(["-o", out_dir])
 
