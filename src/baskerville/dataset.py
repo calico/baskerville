@@ -878,10 +878,11 @@ def _target_block_hist(args):
     hist = np.zeros(num_targets * NUM_HIST_BINS, dtype=np.int64)
     for si in range(start, end):
         y = targets[si].astype(np.float32)
-        # + 0.0 turns -0.0 into 0.0
-        bits = (y + y[pair] + 0.0).astype(np.float16).view(np.uint16)
-        if bits.max() >= NUM_HIST_BINS:
+        if not np.isfinite(y).all() or (y < 0).any():
             raise ValueError(f"{zarr_file} seq {si}: negative or non-finite targets")
+        # + 0.0 turns -0.0 into 0.0
+        summed = np.minimum(y + y[pair], 65504) + 0.0
+        bits = summed.astype(np.float16).view(np.uint16)
         hist += np.bincount((bits + offsets).ravel(), minlength=hist.size)
     return hist.reshape(num_targets, NUM_HIST_BINS)
 
@@ -891,8 +892,9 @@ def write_target_hist(data_dir, processes=16, block_seqs=256):
 
     Counts are over every position of every sequence in all examples/*.zarr,
     of the fp16 value y_t + y_pair(t) (strand_pair from targets.txt; unstranded
-    tracks are their own pair, so 2 * y_t), binned by fp16 bit pattern. They are
-    written to each zarr as ``target_hist`` (num_targets, NUM_HIST_BINS) int64,
+    tracks are their own pair, so 2 * y_t), clamped to 65504 and binned by fp16
+    bit pattern. Counts are written to each zarr as ``target_hist``
+    (num_targets, NUM_HIST_BINS) int64,
     from which SpecPearsonCorrCoef builds its quantile maps.
 
     Args:

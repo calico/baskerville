@@ -68,7 +68,7 @@ def test_qmap_tables_match_qnorm():
     y = rng.gamma(0.3, 4, size=(5, 4, 50)).astype("float16")
     y[y < 0.2] = 0  # a large tie block at zero
     cols = y.transpose(1, 0, 2).reshape(4, -1)
-    tables = metrics.qmap_tables(_hist_reference(y, np.arange(4)) )
+    tables = metrics.qmap_tables(_hist_reference(y, np.arange(4)))
     # identity pair doubles values; doubling is exact in fp16
     cols2 = (2 * cols.astype(np.float32)).astype(np.float16)
     mapped = np.take_along_axis(tables, cols2.view(np.uint16).astype(int), axis=1)
@@ -240,11 +240,43 @@ def test_spec_stop_validation(
             Trainer._init_metrics(trainer)
 
 
+def test_target_hist_and_map_fp16_boundaries(monkeypatch):
+    y = np.tile(np.array([-0.0, 1, 40000, 65504], dtype=np.float16), (1, 3, 1))
+    monkeypatch.setattr(dataset.zarr, "open", lambda *a, **kw: {"target": y})
+    hist = dataset._target_block_hist(("unused", 0, 1, np.array([1, 0, 2])))
+    expected = np.zeros_like(hist)
+    expected[:, 0] = 1
+    expected[:, 0x4000] = 1  # 2.0
+    expected[:, 0x7BFF] = 2  # 65504.0
+    np.testing.assert_array_equal(hist, expected)
+
+    df = pd.DataFrame(
+        {
+            "identifier": ["a+", "a-", "b"],
+            "description": ["RNA:a", "RNA:a", "RNA:b"],
+            "strand_pair": [1, 0, 2],
+        }
+    )
+    spec = metrics.SpecPearsonCorrCoef(df, hist, group_min=2)
+    mapped = spec._map(torch.from_numpy(y), "RNA")
+    torch.testing.assert_close(
+        mapped, torch.tensor([[0.0, 2, 65504, 65504]]).expand(2, -1)
+    )
+
+
+@pytest.mark.parametrize("value", [-1, np.inf, -np.inf, np.nan])
+def test_target_hist_rejects_invalid_before_clamping(monkeypatch, value):
+    y = np.array([[[value]]], dtype=np.float16)
+    monkeypatch.setattr(dataset.zarr, "open", lambda *a, **kw: {"target": y})
+    with pytest.raises(ValueError, match="negative or non-finite"):
+        dataset._target_block_hist(("unused", 0, 1, np.array([0])))
+
+
 def test_write_target_hist(tmp_path):
     # tracks 0/1 are a stranded pair, track 2 unstranded
-    pd.DataFrame(
-        {"identifier": ["a+", "a-", "b"], "strand_pair": [1, 0, 2]}
-    ).to_csv(tmp_path / "targets.txt", sep="\t")
+    pd.DataFrame({"identifier": ["a+", "a-", "b"], "strand_pair": [1, 0, 2]}).to_csv(
+        tmp_path / "targets.txt", sep="\t"
+    )
     rng = np.random.default_rng(2)
     values = []
     for fold, num_seqs in enumerate([5, 3]):

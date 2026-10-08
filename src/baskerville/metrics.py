@@ -203,7 +203,7 @@ class SpecPearsonCorrCoef:
         """(N, T, L) -> (tracks, N*L) table values of the group's strand sums."""
         rep, pair = self.index[g]
         s = x[:, rep].float() + x[:, pair].float()
-        bits = s.clamp(0, 65504).half().view(torch.int16).long()
+        bits = (s.clamp(0, 65504) + 0.0).half().view(torch.int16).long()
         return torch.gather(self.table[g], 1, bits.transpose(0, 1).flatten(1))
 
     @torch.no_grad()
