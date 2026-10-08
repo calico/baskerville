@@ -852,10 +852,6 @@ mounted at `/workspace/cache`. Use this when the weights are actually on disk.
 - `--test` / `--valid` evaluate only the held-out test / validation fold per
   model (from `folds.json`); the default evaluates every fold.
 - `--save` / `--aggregate_genes` need ~60 GB RAM — use `-q l4-large`.
-- `--spec` (specificity) is **auto-pinned to `-q l4-large`** (g2-standard-32,
-  32 vCPU, ~122 GB) regardless of `-q`, since quantile normalization is RAM- and
-  CPU-hungry; it runs with `--ncpus 32`. Your `-q` still governs the lighter
-  coverage-eval jobs.
 - On GCP, `mem` is the VM's hard RAM (the task owns the whole VM), not a soft
   Slurm request — size it via `-q`, not a mem flag. Eval warns if the chosen
   profile is too small.

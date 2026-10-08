@@ -1,3 +1,5 @@
+import copy
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -105,25 +107,79 @@ class R2Score(torchmetrics.Metric):
         self.r2score.reset()
 
 
+def qmap_tables(hists):
+    """Quantile-normalization lookup tables from per-track value histograms.
+
+    Exactly qnorm's map for the histogrammed data: the group reference is the
+    average of the tracks' sorted columns, and a value occupying ranks [s, e)
+    in its track maps to the mean reference over [s, e) (ties averaged). Values
+    absent from a track interpolate between its present values and clamp
+    outside them, so any fp16 prediction has an entry.
+
+    Args:
+        hists: (T, dataset.NUM_HIST_BINS) counts per fp16 bit pattern, with
+            equal totals.
+
+    Returns:
+        np.ndarray (T, NUM_HIST_BINS) float32 tables, indexed by bit pattern.
+    """
+    hists = np.asarray(hists, dtype=np.int64)
+    totals = hists.sum(axis=1)
+    if totals.min() == 0 or totals.min() != totals.max():
+        raise ValueError("target histograms must have equal nonzero totals")
+    values = np.arange(dataset.NUM_HIST_BINS, dtype=np.uint16).view(np.float16)
+    values = values.astype(np.float64)
+
+    # per track: present values and the rank bounds of their tie blocks
+    knots = []
+    for h in hists:
+        nz = np.flatnonzero(h)
+        knots.append((nz, np.concatenate([[0], np.cumsum(h[nz])])))
+
+    # the reference (mean sorted column) is a step function of rank: it starts
+    # at the mean minimum and steps by (value change) / T at every track's
+    # block bound; sweep all bounds in order for its running sum
+    num_tracks, num_ranks = len(hists), totals[0]
+    pos = np.concatenate([b[1:-1] for _, b in knots])
+    step = np.concatenate([np.diff(values[nz]) for nz, _ in knots])
+    order = np.argsort(pos, kind="stable")
+    ref_pos = np.concatenate([[0], pos[order], [num_ranks]])
+    ref_level = sum(values[nz[0]] for nz, _ in knots)
+    ref_level = (
+        ref_level + np.concatenate([[0.0], np.cumsum(step[order])])
+    ) / num_tracks
+    ref_sum = np.concatenate([[0.0], np.cumsum(ref_level * np.diff(ref_pos))])
+
+    tables = np.empty(hists.shape, dtype=np.float32)
+    for t, (nz, bounds) in enumerate(knots):
+        block_sum = np.diff(np.interp(bounds, ref_pos, ref_sum))
+        tables[t] = np.interp(values, values[nz], block_sum / np.diff(bounds))
+    return tables
+
+
 class SpecPearsonCorrCoef:
     """Per-track specificity Pearson within target groups.
 
     For each group (dataset.target_groups) with at least ``group_min`` tracks
-    after strand collapse: sum strand pairs, divide preds and targets by the
-    dataset's track means (SeqDataset.target_means), subtract the group mean
-    at each position, and correlate each track's residuals.
+    after strand collapse: sum strand pairs, map preds and targets through each
+    track's quantile-normalization table (qmap_tables on the dataset's
+    whole-genome target histograms, SeqDataset.target_hist), regress the group
+    mean at each position out of each track (its own slope and intercept), and
+    correlate each track's pred and target residuals. Streaming state is the
+    first and second moments of (pred, target, group-mean pred, group-mean
+    target): per track for terms involving the track, per group otherwise.
 
     Args:
         targets_df: targets table aligned with the output tracks.
-        target_means: per-track means of the stored targets, or None.
+        target_hist: per-track histograms of the stored targets, or None.
         group_min: minimum tracks per group.
 
     ``groups`` maps group name to (rep, pair) track positions. compute()
     returns a per-track tensor with values at rep positions, NaN elsewhere.
-    Without target_means, ``enabled`` is False and nothing is scored.
+    Without target_hist, ``enabled`` is False and nothing is scored.
     """
 
-    def __init__(self, targets_df, target_means, group_min: int = 20):
+    def __init__(self, targets_df, target_hist, group_min: int = 20):
         self.num_targets = len(targets_df)
         rep_pos, pair_pos = dataset.strand_collapse(targets_df)
         rep_groups = dataset.target_groups(targets_df)[rep_pos]
@@ -133,51 +189,120 @@ class SpecPearsonCorrCoef:
             if gi.sum() >= group_min:
                 self.groups[g] = (rep_pos[gi], pair_pos[gi])
 
-        self.enabled = target_means is not None
+        self.enabled = target_hist is not None
         if not self.enabled:
-            print("Warning: data lack target means; spec metric disabled.")
+            print("Warning: data lack target histograms; spec metric disabled.")
             return
 
-        means = np.asarray(target_means)
-        self.index, self.b, self.pearson = {}, {}, {}
+        hist = np.asarray(target_hist)
+        self.index, self.table = {}, {}
         for g, (rep, pair) in self.groups.items():
             self.index[g] = (torch.tensor(rep), torch.tensor(pair))
-            # unstranded tracks have pair == rep, so the doubling cancels
-            b = np.maximum(means[rep] + means[pair], 1e-6)
-            self.b[g] = torch.tensor(b, dtype=torch.float32).view(1, -1, 1)
-            self.pearson[g] = PearsonCorrCoef(len(rep), average=False)
+            # histograms are of the strand sum, stored at both partners
+            self.table[g] = torch.from_numpy(qmap_tables(hist[rep]))
+        self.reset()
+
+    def fresh(self):
+        """A new metric with zeroed state, sharing this one's groups and tables."""
+        new = copy.copy(self)
+        if self.enabled:
+            new.index, new.table = dict(self.index), dict(self.table)
+            new.reset()
+        return new
 
     def to(self, device):
         if self.enabled:
             for g in self.groups:
                 self.index[g] = tuple(ix.to(device) for ix in self.index[g])
-                self.b[g] = self.b[g].to(device)
-                self.pearson[g].to(device)
+                self.table[g] = self.table[g].to(device)
+                self.track_sums[g] = self.track_sums[g].to(device)
+                self.mean_sums[g] = self.mean_sums[g].to(device)
         return self
 
-    def _center(self, x, g):
+    def _map(self, x, g):
+        """(N, T, L) -> (tracks, N*L) table values of the group's strand sums."""
         rep, pair = self.index[g]
-        x = (x[:, rep].float() + x[:, pair].float()) / self.b[g]
-        return x - x.mean(dim=1, keepdim=True)
+        s = torch.nan_to_num(x[:, rep].float() + x[:, pair].float(), nan=0.0)
+        bits = (s.clamp(0, 65504) + 0.0).half().view(torch.int16).long()
+        return torch.gather(self.table[g], 1, bits.transpose(0, 1).flatten(1))
 
     @torch.no_grad()
     def update(self, preds: torch.Tensor, target: torch.Tensor) -> None:
         """preds, target: (N, T, L)."""
         if self.enabled:
             for g in self.groups:
-                self.pearson[g].update(self._center(preds, g), self._center(target, g))
+                # Residual covariance subtracts large, nearly equal moments.
+                zp = self._map(preds, g).double()  # (tracks, P)
+                zy = self._map(target, g).double()
+                mp, my = zp.mean(dim=0), zy.mean(dim=0)  # (P,)
+
+                def total(x):
+                    return x.sum(dim=-1, dtype=torch.float64)
+
+                self.track_sums[g] += torch.stack(
+                    [total(zp), total(zy), total(zp * zp), total(zy * zy)]
+                    + [total(zp * zy), total(zp * mp), total(zp * my)]
+                    + [total(zy * mp), total(zy * my)],
+                    dim=-1,
+                )
+                self.mean_sums[g] += torch.stack(
+                    [total(mp), total(my), total(mp * mp), total(my * my)]
+                    + [total(mp * my)]
+                )
+                self.count[g] += zp.shape[1]
 
     def compute(self) -> torch.Tensor:
         spec = torch.full((self.num_targets,), float("nan"))
         if self.enabled:
             for g in self.groups:
-                spec[self.index[g][0].cpu()] = self.pearson[g].compute().float().cpu()
+                n = self.count[g]
+                ts, ms = self.track_sums[g].cpu(), self.mean_sums[g].cpu()
+                # assemble per-track sums over (pred, target, mean pred, mean target)
+                s1 = torch.stack(
+                    [ts[:, 0], ts[:, 1], ms[0].expand(len(ts)), ms[1].expand(len(ts))],
+                    dim=-1,
+                )
+                s2 = torch.empty(len(ts), 4, 4, dtype=torch.float64)
+                pairs = {
+                    (0, 0): ts[:, 2],
+                    (1, 1): ts[:, 3],
+                    (0, 1): ts[:, 4],
+                    (0, 2): ts[:, 5],
+                    (0, 3): ts[:, 6],
+                    (1, 2): ts[:, 7],
+                    (1, 3): ts[:, 8],
+                    (2, 2): ms[2],
+                    (3, 3): ms[3],
+                    (2, 3): ms[4],
+                }
+                for (a, b), v in pairs.items():
+                    s2[:, a, b] = s2[:, b, a] = v
+                cov = s2 / n - s1[:, :, None] * s1[:, None, :] / n**2
+                # residuals of pred/target after regressing out their group mean
+                u = torch.zeros(len(cov), 4, dtype=torch.float64)
+                w = torch.zeros_like(u)
+                u[:, 0] = w[:, 1] = 1
+                # A constant group mean removes only the intercept.
+                u[:, 2] = torch.where(cov[:, 2, 2] > 0, -cov[:, 0, 2] / cov[:, 2, 2], 0)
+                w[:, 3] = torch.where(cov[:, 3, 3] > 0, -cov[:, 1, 3] / cov[:, 3, 3], 0)
+                cuw = torch.einsum("ta,tab,tb->t", u, cov, w)
+                cuu = torch.einsum("ta,tab,tb->t", u, cov, u)
+                cww = torch.einsum("ta,tab,tb->t", w, cov, w)
+                spec[self.index[g][0].cpu()] = (cuw / torch.sqrt(cuu * cww)).float()
         return spec
 
     def reset(self):
         if self.enabled:
-            for p in self.pearson.values():
-                p.reset()
+            device = {g: t.device for g, t in self.table.items()}
+            self.track_sums = {
+                g: torch.zeros(len(r), 9, dtype=torch.float64, device=device[g])
+                for g, (r, _) in self.groups.items()
+            }
+            self.mean_sums = {
+                g: torch.zeros(5, dtype=torch.float64, device=device[g])
+                for g in self.groups
+            }
+            self.count = {g: 0 for g in self.groups}
 
 
 class _MaskedGeneMetric(torchmetrics.Metric):
@@ -378,8 +503,10 @@ class DatasetMetrics:
         device: Device to place metrics on.
         targets_df: Coverage targets table; enables per-group metrics when it
             matches num_targets.
-        target_means: Per-track means of the stored targets; enables spec.
+        target_hist: Per-track histograms of the stored targets; enables spec.
         spec_group_min: Minimum tracks for a group to be scored.
+        spec_like: Optional SpecPearsonCorrCoef whose groups and tables to share
+            (replaces building them from targets_df/target_hist).
     """
 
     def __init__(
@@ -390,8 +517,9 @@ class DatasetMetrics:
         num_gene_targets: int | None,
         device: str,
         targets_df=None,
-        target_means=None,
+        target_hist=None,
         spec_group_min: int = 20,
+        spec_like=None,
     ):
         self.has_coverage = has_coverage
         self.has_gene = has_gene
@@ -404,9 +532,11 @@ class DatasetMetrics:
         if has_coverage and num_targets is not None:
             self.r = PearsonCorrCoef(num_targets, average=False).to(device)
             self.r2 = R2Score(average=False).to(device)
-            if targets_df is not None and len(targets_df) == num_targets:
+            if spec_like is not None:
+                self.spec = spec_like.fresh()
+            elif targets_df is not None and len(targets_df) == num_targets:
                 self.spec = SpecPearsonCorrCoef(
-                    targets_df, target_means, spec_group_min
+                    targets_df, target_hist, spec_group_min
                 ).to(device)
         else:
             self.r = None
