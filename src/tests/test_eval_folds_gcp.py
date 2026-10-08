@@ -231,9 +231,7 @@ def test_eval_gcp_uses_queue(tmp_path, monkeypatch):
     out_dir = _make_models_dir(tmp_path, num_folds=2, test_fold=0, valid_fold=1)
     captured = _patch_gcp(monkeypatch, num_folds=2)
 
-    hef.eval_folds(
-        MockArgs(out_dir=out_dir, fold_subset=1, test_only=True, queue="l4")
-    )
+    hef.eval_folds(MockArgs(out_dir=out_dir, fold_subset=1, test_only=True, queue="l4"))
 
     eval_jobs = [j for j in captured if j.cmd.startswith("hound_eval ")]
     assert eval_jobs

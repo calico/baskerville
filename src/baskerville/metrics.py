@@ -145,7 +145,9 @@ def qmap_tables(hists):
     order = np.argsort(pos, kind="stable")
     ref_pos = np.concatenate([[0], pos[order], [num_ranks]])
     ref_level = sum(values[nz[0]] for nz, _ in knots)
-    ref_level = (ref_level + np.concatenate([[0.0], np.cumsum(step[order])])) / num_tracks
+    ref_level = (
+        ref_level + np.concatenate([[0.0], np.cumsum(step[order])])
+    ) / num_tracks
     ref_sum = np.concatenate([[0.0], np.cumsum(ref_level * np.diff(ref_pos))])
 
     tables = np.empty(hists.shape, dtype=np.float32)
@@ -262,9 +264,16 @@ class SpecPearsonCorrCoef:
                 )
                 s2 = torch.empty(len(ts), 4, 4, dtype=torch.float64)
                 pairs = {
-                    (0, 0): ts[:, 2], (1, 1): ts[:, 3], (0, 1): ts[:, 4],
-                    (0, 2): ts[:, 5], (0, 3): ts[:, 6], (1, 2): ts[:, 7],
-                    (1, 3): ts[:, 8], (2, 2): ms[2], (3, 3): ms[3], (2, 3): ms[4],
+                    (0, 0): ts[:, 2],
+                    (1, 1): ts[:, 3],
+                    (0, 1): ts[:, 4],
+                    (0, 2): ts[:, 5],
+                    (0, 3): ts[:, 6],
+                    (1, 2): ts[:, 7],
+                    (1, 3): ts[:, 8],
+                    (2, 2): ms[2],
+                    (3, 3): ms[3],
+                    (2, 3): ms[4],
                 }
                 for (a, b), v in pairs.items():
                     s2[:, a, b] = s2[:, b, a] = v
@@ -274,12 +283,8 @@ class SpecPearsonCorrCoef:
                 w = torch.zeros_like(u)
                 u[:, 0] = w[:, 1] = 1
                 # A constant group mean removes only the intercept.
-                u[:, 2] = torch.where(
-                    cov[:, 2, 2] > 0, -cov[:, 0, 2] / cov[:, 2, 2], 0
-                )
-                w[:, 3] = torch.where(
-                    cov[:, 3, 3] > 0, -cov[:, 1, 3] / cov[:, 3, 3], 0
-                )
+                u[:, 2] = torch.where(cov[:, 2, 2] > 0, -cov[:, 0, 2] / cov[:, 2, 2], 0)
+                w[:, 3] = torch.where(cov[:, 3, 3] > 0, -cov[:, 1, 3] / cov[:, 3, 3], 0)
                 cuw = torch.einsum("ta,tab,tb->t", u, cov, w)
                 cuu = torch.einsum("ta,tab,tb->t", u, cov, u)
                 cww = torch.einsum("ta,tab,tb->t", w, cov, w)

@@ -113,7 +113,9 @@ def subset_zarr_for_fold(
         old_targets = pd.read_csv(f"{og_data_dir}/targets.txt", sep="\t", index_col=0)
         pair = dataset.strand_pair_indices(old_targets)
         if not np.isin(pair[old_indices], old_indices).all():
-            raise ValueError("old_indices split a strand pair; target_hist would be wrong")
+            raise ValueError(
+                "old_indices split a strand pair; target_hist would be wrong"
+            )
         hist = old_root["target_hist"].oindex[old_indices, :]
         fold_zarr_root.create_array(
             "target_hist",
