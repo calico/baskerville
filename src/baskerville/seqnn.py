@@ -222,7 +222,6 @@ class SeqNN:
         zarr_store: str | None = None,
         target_chunk: int | None = 128,
         seq_chunk: int | None = None,
-        combine_pairs=None,
     ):
         """Evaluate model on data.
 
@@ -235,19 +234,12 @@ class SeqNN:
             zarr_store: Optional zarr store path for predictions.
             target_chunk: zarr chunk size along the target axis
             seq_chunk: zarr chunk size along the seq axis for the coverage store
-            combine_pairs: optional list of coverage column specs (tuples of
-                target indices in the output_slice frame) collapsing the stored
-                preds/targets to one column per spec -- ``(p,)`` keeps a track,
-                ``(p, q)`` sums a strand pair. Reduces the stored/returned
-                coverage arrays' target axis; coverage 'r'/'r2' are returned as
-                None when set (per-track metrics no longer align with the
-                collapsed preds). Default None leaves every track individual.
 
         Returns:
             dict with keys:
                 - 'coverage': dict with 'r', 'r2', 'spec', 'preds', 'targets' (if
                   coverage head); 'spec' is per-track specificity Pearson (NaN
-                  outside scored groups), or None without data.target_means
+                  outside scored groups), or None without data.target_hist
                 - 'gene': dict with 'r', 'r2', 'preds', 'targets', 'masks' (if gene head)
         """
         self.model.eval()
@@ -290,33 +282,20 @@ class SeqNN:
             eval_metric_r2 = metrics.R2Score(average=False)
             eval_metric_r2.to(self.device)
 
-            # specificity, given the dataset's target means
+            # specificity, given the dataset's target histograms
             eval_metric_spec = None
-            target_means = getattr(data, "target_means", None)
-            if target_means is not None:
+            target_hist = getattr(data, "target_hist", None)
+            if target_hist is not None:
                 targets_df = data.targets_df
                 if self.output_slice is not None:
                     targets_df = targets_df.loc[self.output_slice]
-                    target_means = target_means[self.output_slice]
+                    target_hist = target_hist[self.output_slice]
                 # metadata must describe every scored track
                 if len(targets_df) == num_targets:
                     eval_metric_spec = metrics.SpecPearsonCorrCoef(
-                        targets_df, target_means
+                        targets_df, target_hist
                     )
                     eval_metric_spec.to(self.device)
-
-        # optional strand-pair reduction of the stored coverage arrays (metrics
-        # above stay on the full, un-reduced tracks)
-        combine_np = combine_torch = None
-        num_store_targets = num_targets if has_coverage else None
-        if has_coverage and combine_pairs is not None:
-            a_idx, pair_cols, pair_b = _strand_column_index(combine_pairs)
-            num_store_targets = len(combine_pairs)
-            combine_np = (a_idx, pair_cols, pair_b)
-            combine_torch = tuple(
-                torch.as_tensor(ix, device=self.device)
-                for ix in (a_idx, pair_cols, pair_b)
-            )
 
         # prepare gene metrics
         eval_metric_r_gene = eval_metric_r2_gene = None
@@ -364,11 +343,11 @@ class SeqNN:
                         f"step ({step}) must evenly divide target_length ({data.target_length})"
                     )
                 targets_length = data.target_length // step
-                vshape = (num_seqs, num_store_targets, targets_length)
+                vshape = (num_seqs, num_targets, targets_length)
                 tchunk = (
-                    num_store_targets
+                    num_targets
                     if target_chunk is None
-                    else min(target_chunk, num_store_targets)
+                    else min(target_chunk, num_targets)
                 )
                 cshape = (cov_seq_chunk or batch_size, tchunk, targets_length)
                 preds = _create_array("preds", vshape, cshape, "float16")
@@ -409,8 +388,6 @@ class SeqNN:
                         y_np = y.detach().numpy()
                         if step != 1:
                             y_np = y_np[:, :, ::step]
-                        if combine_np is not None:
-                            y_np = _combine_strand_columns(y_np, *combine_np)
                         w_targets.add(si, y_np)
                     y = y.to(self.device).float()
 
@@ -441,9 +418,6 @@ class SeqNN:
                         eval_metric_spec.update(yh.coverage, y)
                     if return_values:
                         yhs = yh.coverage if step == 1 else yh.coverage[:, :, ::step]
-                        if combine_torch is not None:
-                            # sum strand pairs before the fp16 store cast
-                            yhs = _combine_strand_columns(yhs, *combine_torch)
                         w_preds.add(si, yhs.to(torch.float16).detach().cpu().numpy())
 
                 # update gene metrics
@@ -466,15 +440,11 @@ class SeqNN:
         results = {}
 
         if has_coverage:
-            if combine_pairs is not None:
-                # per-track metrics don't align with collapsed preds -- omit
-                eval_r = eval_r2 = eval_spec = None
-            else:
-                eval_r = eval_metric_r.compute().cpu().detach().numpy()
-                eval_r2 = eval_metric_r2.compute().cpu().detach().numpy()
-                eval_spec = None
-                if eval_metric_spec is not None:
-                    eval_spec = eval_metric_spec.compute().numpy()
+            eval_r = eval_metric_r.compute().cpu().detach().numpy()
+            eval_r2 = eval_metric_r2.compute().cpu().detach().numpy()
+            eval_spec = None
+            if eval_metric_spec is not None:
+                eval_spec = eval_metric_spec.compute().numpy()
             results["coverage"] = {
                 "r": eval_r,
                 "r2": eval_r2,
@@ -1082,38 +1052,3 @@ class _RowWriter:
             self.arr[self.base : self.base + self.fill] = self.buf[: self.fill]
             self.base += self.fill
             self.fill = 0
-
-
-def _strand_column_index(columns):
-    """Index arrays for reducing tracks to strand-summed columns along axis 1.
-
-    Args:
-        columns: list of tuples of source track indices -- ``(p,)`` for a single
-            (unstranded) track, ``(p, q)`` for a strand pair to be summed.
-
-    Returns:
-        ``(a_idx, pair_cols, pair_b)``: ``a_idx`` (len num_columns) is the first
-        source track of each output column; ``pair_cols`` are the output columns
-        that are strand pairs; ``pair_b`` are those pairs' second source tracks.
-    """
-    for c in columns:
-        if len(c) not in (1, 2):
-            raise ValueError(f"combine_pairs spec must have 1 or 2 indices, got {c!r}")
-    a_idx = np.array([int(c[0]) for c in columns], dtype=np.int64)
-    is_pair = np.array([len(c) == 2 for c in columns], dtype=bool)
-    pair_cols = np.where(is_pair)[0].astype(np.int64)
-    pair_b = np.array([int(columns[c][1]) for c in pair_cols], dtype=np.int64)
-    return a_idx, pair_cols, pair_b
-
-
-def _combine_strand_columns(arr, a_idx, pair_cols, pair_b):
-    """Reduce ``arr`` (..., num_tracks, bins) to strand-summed columns along axis 1.
-
-    ``out[:, j, :] = arr[:, a_idx[j], :]`` plus, for paired columns, the partner
-    track. Works for both numpy arrays and torch tensors (``a_idx`` etc. must be
-    the matching index type). ``a_idx`` is unique, so the in-place add is safe.
-    """
-    out = arr[:, a_idx, :]  # advanced index -> fresh array/tensor (a copy)
-    if len(pair_cols):
-        out[:, pair_cols, :] += arr[:, pair_b, :]
-    return out

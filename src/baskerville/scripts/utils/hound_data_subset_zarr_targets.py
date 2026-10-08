@@ -107,6 +107,18 @@ def subset_zarr_for_fold(
             compressors=compressors,
         )
 
+    # ** keep the kept tracks' histograms (strand sums: keep pairs together) **
+    old_root = zarr.open_group(f"{og_data_dir}/examples/fold{fi}.zarr", mode="r")
+    if "target_hist" in old_root:
+        hist = old_root["target_hist"][:][old_indices]
+        fold_zarr_root.create_array(
+            "target_hist",
+            shape=hist.shape,
+            dtype=hist.dtype,
+            chunks=(1, hist.shape[1]),
+            overwrite=True,
+        )[:] = hist
+
     # --- CREATE DATALOADER ---
     dataset_obj = IndexedSeqDataset(og_data_dir, split_label=f"fold{fi}", mode="eval")
     dataloader = torch.utils.data.DataLoader(

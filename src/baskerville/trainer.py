@@ -583,7 +583,7 @@ class Trainer:
                         num_gene_targets,
                         self.device,
                         targets_df=getattr(self.train_data[di], "targets_df", None),
-                        target_means=getattr(self.train_data[di], "target_means", None),
+                        target_hist=getattr(self.train_data[di], "target_hist", None),
                         spec_group_min=self.spec_group_min,
                     )
                 )

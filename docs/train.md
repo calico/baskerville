@@ -126,9 +126,9 @@ Each epoch, `log.txt` gets a summary line per dataset (`loss`, `r`, `r2`, `spec`
 Tracks are grouped by the targets `group` column (else the `description` prefix). Each group with at least `train.spec_group_min` tracks (default 20, after merging strand pairs) gets:
 
 - `r/<group>`, `r2/<group>`: mean per-track Pearson r and R² over the group's tracks.
-- `spec/<group>`: specificity, the mean per-track Pearson r after dividing every track by its dataset-wide mean and subtracting the group mean at each position. It rewards predicting how a track differs from its group, not the shared signal.
+- `spec/<group>`: specificity, the mean per-track Pearson r of what remains after removing the group's shared signal. Each track's values (strand pairs summed) are quantile-normalized to the group with a fixed per-track lookup table; predictions use the same table as their targets. The group mean at each position is then regressed out of each track, with the track's own slope and intercept. It rewards predicting how a track differs from its group, not the shared signal or the track's depth and signal-to-noise.
 
-`spec` is the unweighted mean of `spec/<group>` over groups. It needs the per-track means that `hound_data` stores in each `examples/*.zarr`; for an older dataset, add them with `python -c "from baskerville import dataset; dataset.write_target_means('data_dir')"`.
+`spec` is the unweighted mean of `spec/<group>` over groups. `hound_eval` reports the same metric per track (`spec` column of `acc.txt`), in its single pass. The tables are built from the exact whole-genome histograms of each track's stored fp16 values, which `hound_data` writes to each `examples/*.zarr` as `target_hist`. For an older dataset, add them with `python -c "from baskerville import dataset; dataset.write_target_hist('data_dir')"`.
 
 `train.stop_stat` chooses the statistic that selects `model_best.pth` and drives `patience`. It is a `{metric: weight}` dict over the keys above plus `loss`, `r_gene`, and `r2_gene`, and the weighted sum is maximized. The presets `"weighted_r_r2"` (default, `{"r": 1, "r2": 0.25}`), `"r"`, `"r2"`, and `"loss"` (`{"loss": -1}`) remain available as strings; these presets score gene-only datasets by −loss. A dict applies only its own keys, e.g. `{"r_gene": 1}` or `{"loss": -1}` for gene-only datasets.
 

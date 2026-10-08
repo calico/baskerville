@@ -187,10 +187,10 @@ class SeqDataset(Dataset):
         # don't persist handles (not fork-safe with DataLoader workers)
         zarr_data = [zarr.open(zf, mode="r") for zf in self.zarr_files]
 
-        # per-track means of the stored targets (write_target_means)
-        self.target_means = None
-        if self.has_coverage and "mean" in zarr_data[0]["target"].attrs:
-            self.target_means = np.array(zarr_data[0]["target"].attrs["mean"])
+        # per-track histograms of the stored targets (write_target_hist)
+        self.target_hist = None
+        if self.has_coverage and "target_hist" in zarr_data[0]:
+            self.target_hist = zarr_data[0]["target_hist"][:]
 
         # count sequences
         zarr_seqs = [zd["sequence"].shape[0] for zd in zarr_data]
@@ -864,47 +864,69 @@ def target_groups(targets_df):
     return np.array(groups)
 
 
-def _target_block_sum(args):
-    """Float64 per-track sum of the stored targets over sequences [start, end)."""
-    zarr_file, start, end = args
+# non-negative finite fp16 bit patterns: 0x0000 (0.0) to 0x7BFF (65504)
+NUM_HIST_BINS = 0x7C00
+
+
+def _target_block_hist(args):
+    """Per-track counts of strand-summed fp16 target bit patterns over
+    sequences [start, end)."""
+    zarr_file, start, end, pair = args
     targets = zarr.open(zarr_file, mode="r")["target"]
-    block_sum = np.zeros(targets.shape[1])
+    num_targets = targets.shape[1]
+    offsets = np.arange(num_targets)[:, None] * NUM_HIST_BINS
+    hist = np.zeros(num_targets * NUM_HIST_BINS, dtype=np.int64)
     for si in range(start, end):
-        block_sum += targets[si].astype("float64").sum(axis=-1)
-    return block_sum
+        y = targets[si].astype(np.float32)
+        # + 0.0 turns -0.0 into 0.0
+        bits = (y + y[pair] + 0.0).astype(np.float16).view(np.uint16)
+        if bits.max() >= NUM_HIST_BINS:
+            raise ValueError(f"{zarr_file} seq {si}: negative or non-finite targets")
+        hist += np.bincount((bits + offsets).ravel(), minlength=hist.size)
+    return hist.reshape(num_targets, NUM_HIST_BINS)
 
 
-def write_target_means(data_dir, processes=16, block_seqs=64):
-    """Store exact per-track means of the stored targets in each zarr.
+def write_target_hist(data_dir, processes=16, block_seqs=256):
+    """Store exact per-track histograms of the stored targets in each zarr.
 
-    The mean is over every position of every sequence in all examples/*.zarr,
-    in the stored (transformed) space, and is written to each zarr's
-    ``target.attrs["mean"]``.
+    Counts are over every position of every sequence in all examples/*.zarr,
+    of the fp16 value y_t + y_pair(t) (strand_pair from targets.txt; unstranded
+    tracks are their own pair, so 2 * y_t), binned by fp16 bit pattern. They are
+    written to each zarr as ``target_hist`` (num_targets, NUM_HIST_BINS) int64,
+    from which SpecPearsonCorrCoef builds its quantile maps.
 
     Args:
-        data_dir: dataset directory with examples/*.zarr.
+        data_dir: dataset directory with targets.txt and examples/*.zarr.
         processes: parallel readers.
         block_seqs: sequences per read task.
 
     Returns:
-        np.ndarray of per-track means.
+        np.ndarray of per-track histograms.
     """
+    targets_df = pd.read_csv(f"{data_dir}/targets.txt", sep="\t", index_col=0)
+    pair = strand_pair_indices(targets_df)
     zarr_files = natsorted(glob.glob(f"{data_dir}/examples/*.zarr"))
     tasks = []
-    num_positions = 0
     for zarr_file in zarr_files:
-        num_seqs, _, length = zarr.open(zarr_file, mode="r")["target"].shape
-        num_positions += num_seqs * length
+        num_seqs = zarr.open(zarr_file, mode="r")["target"].shape[0]
         for start in range(0, num_seqs, block_seqs):
-            tasks.append((zarr_file, start, min(start + block_seqs, num_seqs)))
+            tasks.append((zarr_file, start, min(start + block_seqs, num_seqs), pair))
 
+    hist = 0
     with multiprocessing.get_context("spawn").Pool(processes) as pool:
-        target_sum = np.sum(pool.map(_target_block_sum, tasks), axis=0)
-    target_means = target_sum / num_positions
+        for block_hist in pool.imap_unordered(_target_block_hist, tasks):
+            hist = hist + block_hist
 
     for zarr_file in zarr_files:
-        zarr.open(zarr_file, mode="r+")["target"].attrs["mean"] = target_means.tolist()
-    return target_means
+        root = zarr.open_group(zarr_file, mode="r+")
+        root.create_array(
+            "target_hist",
+            shape=hist.shape,
+            dtype="int64",
+            chunks=(1, NUM_HIST_BINS),
+            overwrite=True,
+        )[:] = hist
+    return hist
 
 
 def targets_prep_strand(targets_df):

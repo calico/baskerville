@@ -28,7 +28,20 @@ def targets_df():
     return pd.DataFrame(rows, columns=["identifier", "description", "strand_pair"])
 
 
-MEANS = np.linspace(0.5, 2.0, 9)
+def _hist_reference(y, pair):
+    """Per-track fp16 bit-pattern counts of y_t + y_pair(t); y (N, T, L)."""
+    s = (y.astype(np.float32) + y[:, pair].astype(np.float32)).astype(np.float16)
+    bits = s.view(np.uint16).transpose(1, 0, 2).reshape(y.shape[1], -1)
+    return np.stack([np.bincount(b, minlength=dataset.NUM_HIST_BINS) for b in bits])
+
+
+PAIR = np.array([0, 2, 1, 3, 5, 4, 6, 7, 8])
+
+
+def _hist(seed=9):
+    """Histograms of a random dataset for the 9-track fixture."""
+    y = np.random.default_rng(seed).gamma(2, size=(2, 9, 64)).astype("float16")
+    return _hist_reference(y, PAIR)
 
 
 def test_groups_and_collapse(targets_df):
@@ -39,39 +52,97 @@ def test_groups_and_collapse(targets_df):
     assert list(pair) == [0, 2, 3, 5, 6, 7, 8]
 
 
-def _spec_numpy(preds, targets, rep, pair, means):
-    """Direct reference: pair-sum, mean-normalize, center, per-track Pearson."""
-    b = (means[rep] + means[pair])[None, :, None]
+def _qnorm_reference(cols):
+    """Sort-based quantile normalization with tie blocks averaged; cols (T, n)."""
+    ref = np.sort(cols.astype(np.float64), axis=1).mean(axis=0)
+    out = np.empty(cols.shape)
+    for t, c in enumerate(cols):
+        order = np.argsort(c, kind="stable")
+        _, start, counts = np.unique(c[order], return_index=True, return_counts=True)
+        out[t, order] = np.repeat(np.add.reduceat(ref, start) / counts, counts)
+    return out
 
-    def center(x):
-        x = (x[:, rep] + x[:, pair]) / b
-        return x - x.mean(axis=1, keepdims=True)
 
-    p, t = center(preds), center(targets)
-    p = p.transpose(0, 2, 1).reshape(-1, len(rep))
-    t = t.transpose(0, 2, 1).reshape(-1, len(rep))
-    return np.array([np.corrcoef(p[:, i], t[:, i])[0, 1] for i in range(len(rep))])
+def test_qmap_tables_match_qnorm():
+    rng = np.random.default_rng(3)
+    y = rng.gamma(0.3, 4, size=(5, 4, 50)).astype("float16")
+    y[y < 0.2] = 0  # a large tie block at zero
+    cols = y.transpose(1, 0, 2).reshape(4, -1)
+    tables = metrics.qmap_tables(_hist_reference(y, np.arange(4)) )
+    # identity pair doubles values; doubling is exact in fp16
+    cols2 = (2 * cols.astype(np.float32)).astype(np.float16)
+    mapped = np.take_along_axis(tables, cols2.view(np.uint16).astype(int), axis=1)
+    np.testing.assert_allclose(mapped, _qnorm_reference(cols2), rtol=1e-5)
+    # absent values interpolate between neighbors and clamp outside
+    assert np.all(np.diff(tables, axis=1) >= 0)
+
+
+def _spec_numpy(preds, targets, rep, pair, tables):
+    """Direct reference: pair-sum, table-map, regress out the group mean, Pearson."""
+
+    def mapped(x):
+        s = (x[:, rep].astype(np.float32) + x[:, pair]).astype(np.float16)
+        bits = s.view(np.uint16).transpose(1, 0, 2).reshape(len(rep), -1)
+        return np.take_along_axis(tables, bits.astype(int), axis=1).astype(np.float64)
+
+    def resid(z):
+        m = z.mean(axis=0)
+        return np.array([zi - np.polyval(np.polyfit(m, zi, 1), m) for zi in z])
+
+    rp, rt = resid(mapped(preds)), resid(mapped(targets))
+    return np.array([np.corrcoef(a, b)[0, 1] for a, b in zip(rp, rt)])
 
 
 def test_spec_matches_numpy(targets_df):
     rng = np.random.default_rng(0)
     preds = rng.gamma(2, size=(6, 9, 40)).astype("float32")
-    targets = (preds + rng.gamma(1, size=preds.shape)).astype("float32")
+    targets = (preds + rng.gamma(1, size=preds.shape)).astype("float16")
+    hist = _hist_reference(targets, PAIR)
 
-    spec = metrics.SpecPearsonCorrCoef(targets_df, MEANS, group_min=3)
+    spec = metrics.SpecPearsonCorrCoef(targets_df, hist, group_min=3)
     assert list(spec.groups) == ["RNA"]
     for bi in [slice(0, 4), slice(4, 6)]:
         spec.update(torch.tensor(preds[bi]), torch.tensor(targets[bi]))
     spec_t = spec.compute().numpy()
 
     rep, pair = spec.groups["RNA"]
-    expected = _spec_numpy(preds, targets, rep, pair, MEANS)
+    tables = metrics.qmap_tables(hist[rep])
+    expected = _spec_numpy(preds, targets, rep, pair, tables)
     np.testing.assert_allclose(spec_t[rep], expected, rtol=1e-4, atol=1e-5)
     assert np.isnan(np.delete(spec_t, rep)).all()
 
 
+def test_spec_gain_and_specific():
+    """Depth gain on a shared signal scores ~0; track-specific signal scores."""
+    num_tracks = 8
+    targets_df = pd.DataFrame(
+        {"description": [f"CHIP:K4:t{i}" for i in range(num_tracks)]}
+    )
+    rng = np.random.default_rng(4)
+    shape = (16, num_tracks, 512)
+    shared = rng.gamma(0.3, 3, size=(16, 1, 512))
+    gain = rng.uniform(0.3, 3, size=(1, num_tracks, 1))
+    noise = rng.gamma(1, 0.3, size=shape)
+    jitter = 1 + 0.01 * rng.standard_normal(shape)
+    specific = rng.gamma(0.5, 6, size=shape) * (rng.random(shape) < 0.05)
+
+    def score(preds, targets):
+        targets = targets.astype("float16")
+        hist = _hist_reference(targets, np.arange(num_tracks))
+        spec = metrics.SpecPearsonCorrCoef(targets_df, hist, group_min=2)
+        spec.update(torch.tensor(preds, dtype=torch.float32), torch.tensor(targets))
+        return spec.compute().numpy().mean()
+
+    # depth: tracks are scaled copies, so the tables remove gain exactly
+    assert abs(score(gain * shared * jitter, gain * (shared + noise))) < 0.05
+    # unequal SNR: the tables warp noise-free preds nonlinearly per track, so
+    # some credit remains (qnorm, re-ranking preds, gives 0; fast spec 0.6)
+    assert score(gain * shared, gain * shared + noise) < 0.3
+    assert score(gain * shared + specific, gain * shared + noise + specific) > 0.9
+
+
 def test_dataset_metrics_groups(targets_df):
-    dm = metrics.DatasetMetrics(True, False, 9, None, "cpu", targets_df, MEANS, 2)
+    dm = metrics.DatasetMetrics(True, False, 9, None, "cpu", targets_df, _hist(), 2)
     rng = np.random.default_rng(1)
     y = torch.tensor(rng.gamma(2, size=(4, 9, 32)), dtype=torch.float32)
     yh = SimpleNamespace(has_coverage=True, has_gene=False, coverage=y * 0.9 + 0.1)
@@ -83,7 +154,7 @@ def test_dataset_metrics_groups(targets_df):
     assert res["spec"] == pytest.approx((res["spec/RNA"] + res["spec/CHIP/K4"]) / 2)
     assert "valid_spec" in dm.format_log("valid", res)
 
-    # no means: groups still get r, but no spec
+    # no histograms: groups still get r, but no spec
     dm = metrics.DatasetMetrics(True, False, 9, None, "cpu", targets_df, None, 2)
     dm.update(yh, y, None, None, torch.tensor(1.0), 4)
     res = dm.compute()
@@ -146,7 +217,7 @@ def test_spec_stop_validation(
             has_genes=False,
             num_targets=len(df),
             targets_df=df,
-            target_means=MEANS if means else None,
+            target_hist=_hist() if means else None,
         )
         for df in [targets_df.assign(group="other"), targets_df]
     ]
@@ -169,29 +240,42 @@ def test_spec_stop_validation(
             Trainer._init_metrics(trainer)
 
 
-def test_write_target_means(tmp_path):
+def test_write_target_hist(tmp_path):
+    # tracks 0/1 are a stranded pair, track 2 unstranded
+    pd.DataFrame(
+        {"identifier": ["a+", "a-", "b"], "strand_pair": [1, 0, 2]}
+    ).to_csv(tmp_path / "targets.txt", sep="\t")
     rng = np.random.default_rng(2)
     values = []
     for fold, num_seqs in enumerate([5, 3]):
-        x = rng.gamma(2, size=(num_seqs, 9, 16)).astype("float16")
+        x = rng.gamma(0.5, 3, size=(num_seqs, 3, 16)).astype("float16")
+        x[x < 0.5] = 0
         root = zarr.open_group(str(tmp_path / f"examples/fold{fold}.zarr"), mode="w")
         root.create_array("target", shape=x.shape, dtype="float16")[:] = x
         values.append(x)
 
-    means = dataset.write_target_means(str(tmp_path), processes=2, block_seqs=2)
-    expected = np.concatenate(values).astype("float64").mean(axis=(0, 2))
-    np.testing.assert_allclose(means, expected, rtol=1e-12)
+    hist = dataset.write_target_hist(str(tmp_path), processes=2, block_seqs=2)
+    expected = _hist_reference(np.concatenate(values), np.array([1, 0, 2]))
+    np.testing.assert_array_equal(hist, expected)
+    assert hist.sum(axis=1).tolist() == [8 * 16] * 3
     for fold in range(2):
-        target = zarr.open(str(tmp_path / f"examples/fold{fold}.zarr"), mode="r")[
-            "target"
-        ]
-        np.testing.assert_allclose(target.attrs["mean"], expected, rtol=1e-12)
+        stored = zarr.open(str(tmp_path / f"examples/fold{fold}.zarr"), mode="r")
+        np.testing.assert_array_equal(stored["target_hist"][:], expected)
 
 
-def test_hound_data_writes_means(data_me_dir):
+def test_write_target_hist_rejects_negative(tmp_path):
+    pd.DataFrame({"identifier": ["a"]}).to_csv(tmp_path / "targets.txt", sep="\t")
+    root = zarr.open_group(str(tmp_path / "examples/fold0.zarr"), mode="w")
+    root.create_array("target", shape=(1, 1, 4), dtype="float16")[:] = -1
+    with pytest.raises(ValueError, match="negative or non-finite"):
+        dataset.write_target_hist(str(tmp_path), processes=1)
+
+
+def test_hound_data_writes_hist(data_me_dir):
+    targets_df = pd.read_csv(f"{data_me_dir}/targets.txt", sep="\t", index_col=0)
+    pair = dataset.strand_pair_indices(targets_df)
     zarr_files = sorted(glob.glob(f"{data_me_dir}/examples/*.zarr"))
-    targets = [zarr.open(zf, mode="r")["target"] for zf in zarr_files]
-    expected = np.concatenate([t[:].astype("float64") for t in targets])
-    expected = expected.mean(axis=(0, 2))
-    for t in targets:
-        np.testing.assert_allclose(t.attrs["mean"], expected, rtol=1e-12)
+    roots = [zarr.open(zf, mode="r") for zf in zarr_files]
+    expected = _hist_reference(np.concatenate([r["target"][:] for r in roots]), pair)
+    for r in roots:
+        np.testing.assert_array_equal(r["target_hist"][:], expected)

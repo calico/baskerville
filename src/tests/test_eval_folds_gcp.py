@@ -29,11 +29,6 @@ class MockArgs:
         self.test_only = False
         self.valid_only = False
         self.targets_gene_file = None
-        # spec streaming knobs (hound_eval_spec pass-through)
-        self.band = None
-        self.seq_chunk = None
-        self.ram = False
-        self.scratch_dir = None
         # replication options
         self.crosses = 1
         self.conda_env = "torch2.6"
@@ -42,7 +37,6 @@ class MockArgs:
         self.processes = 1
         self.queue = "l4"
         self.restart = False
-        self.spec = False
         self.params_file = "params.json"
         self.data_dirs = ["/data/hg38"]
         # runner backend (add_argparse_group)
@@ -233,33 +227,18 @@ def test_default_evaluates_all_folds(tmp_path, monkeypatch):
     assert splits == ["0", "1", "2"]
 
 
-def test_spec_gcp_uses_queue(tmp_path, monkeypatch, capsys):
+def test_eval_gcp_uses_queue(tmp_path, monkeypatch):
     out_dir = _make_models_dir(tmp_path, num_folds=2, test_fold=0, valid_fold=1)
     captured = _patch_gcp(monkeypatch, num_folds=2)
 
-    args = MockArgs(
-        out_dir=out_dir, fold_subset=1, spec=True, test_only=True, queue="l4"
+    hef.eval_folds(
+        MockArgs(out_dir=out_dir, fold_subset=1, test_only=True, queue="l4")
     )
-    hef.eval_folds(args)
 
-    spec_jobs = [j for j in captured if j.cmd.startswith("hound_eval_spec")]
-    assert spec_jobs
-    for j in spec_jobs:
-        # spec now streams (a few GB), so it honors --queue like coverage eval
-        assert j.kwargs["queue"] == "l4"
-        assert j.kwargs["cpu"] == 8
-        assert " --ncpus 8" in j.cmd
-        # bumped boot disk: the streamed store is tight on the 100 GiB default
-        assert j.kwargs["boot_disk_gb"] == 200
-
-    # coverage eval jobs also honor the user's --queue
     eval_jobs = [j for j in captured if j.cmd.startswith("hound_eval ")]
     assert eval_jobs
     for j in eval_jobs:
         assert j.kwargs["queue"] == "l4"
-
-    # no auto-pin note is emitted anymore
-    assert "pinned to --queue" not in capsys.readouterr().out
 
 
 def test_read_fold_splits_from_json(tmp_path):
@@ -400,11 +379,8 @@ def _gcp_output_dir(tmp_path, monkeypatch, **kwargs):
 
 
 def test_gcp_output_dir_keyed_on_options(tmp_path, monkeypatch):
-    """Output-changing options start fresh; memory/IO knobs still resume."""
+    """Output-changing options start fresh; identical reruns resume."""
     base = _gcp_output_dir(tmp_path, monkeypatch)
     assert _gcp_output_dir(tmp_path, monkeypatch) == base
     assert _gcp_output_dir(tmp_path, monkeypatch, rc=True) != base
     assert _gcp_output_dir(tmp_path, monkeypatch, shifts="0,1") != base
-    assert _gcp_output_dir(tmp_path, monkeypatch, band=8, ram=True) == base
-    # adding --spec to a finished eval run resumes its eval jobs
-    assert _gcp_output_dir(tmp_path, monkeypatch, spec=True) == base
