@@ -112,6 +112,42 @@ def test_spec_matches_numpy(targets_df):
     assert np.isnan(np.delete(spec_t, rep)).all()
 
 
+def test_spec_nearly_identical_tracks():
+    rng = np.random.default_rng(1)
+    num_tracks = 20
+    shape = (1, num_tracks, 10000)
+    shared = rng.uniform(100, 200, (1, 1, shape[-1]))
+    preds = (shared + rng.normal(0, 0.001, shape)).astype(np.float32)
+    targets = (shared + rng.normal(0, 0.001, shape)).astype(np.float16)
+    df = pd.DataFrame({"description": ["RNA:a"] * num_tracks})
+    hist = _hist_reference(targets, np.arange(num_tracks))
+    spec = metrics.SpecPearsonCorrCoef(df, hist)
+    for start in range(0, shape[-1], 2000):
+        spec.update(
+            torch.from_numpy(preds[:, :, start : start + 2000]),
+            torch.from_numpy(targets[:, :, start : start + 2000]),
+        )
+
+    rep, pair = spec.groups["RNA"]
+    expected = _spec_numpy(preds, targets, rep, pair, spec.table["RNA"].numpy())
+    np.testing.assert_allclose(spec.compute().numpy(), expected, atol=1e-5)
+
+
+def test_spec_constant_group_mean():
+    targets = np.tile([0, 1], (1, 20, 20)).astype(np.float16)
+    targets[:, 10:] = 1 - targets[:, 10:]
+    df = pd.DataFrame({"description": ["RNA:a"] * 20})
+    spec = metrics.SpecPearsonCorrCoef(df, _hist_reference(targets, np.arange(20)))
+    y = torch.from_numpy(targets)
+    spec.update(y, y)
+    torch.testing.assert_close(spec.compute(), torch.ones(20))
+
+    # Constant tracks still have undefined residual correlation.
+    spec.reset()
+    spec.update(torch.zeros_like(y), y)
+    assert spec.compute().isnan().all()
+
+
 def test_spec_gain_and_specific():
     """Depth gain on a shared signal scores ~0; track-specific signal scores."""
     num_tracks = 8

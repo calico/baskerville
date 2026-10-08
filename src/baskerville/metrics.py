@@ -229,7 +229,9 @@ class SpecPearsonCorrCoef:
         """preds, target: (N, T, L)."""
         if self.enabled:
             for g in self.groups:
-                zp, zy = self._map(preds, g), self._map(target, g)  # (tracks, P)
+                # Residual covariance subtracts large, nearly equal moments.
+                zp = self._map(preds, g).double()  # (tracks, P)
+                zy = self._map(target, g).double()
                 mp, my = zp.mean(dim=0), zy.mean(dim=0)  # (P,)
 
                 def total(x):
@@ -270,8 +272,14 @@ class SpecPearsonCorrCoef:
                 # residuals of pred/target after regressing out their group mean
                 u = torch.zeros(len(cov), 4, dtype=torch.float64)
                 w = torch.zeros_like(u)
-                u[:, 0], u[:, 2] = 1, -cov[:, 0, 2] / cov[:, 2, 2]
-                w[:, 1], w[:, 3] = 1, -cov[:, 1, 3] / cov[:, 3, 3]
+                u[:, 0] = w[:, 1] = 1
+                # A constant group mean removes only the intercept.
+                u[:, 2] = torch.where(
+                    cov[:, 2, 2] > 0, -cov[:, 0, 2] / cov[:, 2, 2], 0
+                )
+                w[:, 3] = torch.where(
+                    cov[:, 3, 3] > 0, -cov[:, 1, 3] / cov[:, 3, 3], 0
+                )
                 cuw = torch.einsum("ta,tab,tb->t", u, cov, w)
                 cuu = torch.einsum("ta,tab,tb->t", u, cov, u)
                 cww = torch.einsum("ta,tab,tb->t", w, cov, w)
