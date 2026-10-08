@@ -1,3 +1,5 @@
+import copy
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -128,20 +130,28 @@ def qmap_tables(hists):
     values = np.arange(dataset.NUM_HIST_BINS, dtype=np.uint16).view(np.float16)
     values = values.astype(np.float64)
 
-    # per track: present values, rank bounds of their tie blocks, and the
-    # running sum of the sorted column at those bounds (linear within blocks)
+    # per track: present values and the rank bounds of their tie blocks
     knots = []
     for h in hists:
         nz = np.flatnonzero(h)
-        bounds = np.concatenate([[0], np.cumsum(h[nz])])
-        sums = np.concatenate([[0.0], np.cumsum(h[nz] * values[nz])])
-        knots.append((nz, bounds, sums))
+        knots.append((nz, np.concatenate([[0], np.cumsum(h[nz])])))
+
+    # the reference (mean sorted column) is a step function of rank: it starts
+    # at the mean minimum and steps by (value change) / T at every track's
+    # block bound; sweep all bounds in order for its running sum
+    num_tracks, num_ranks = len(hists), totals[0]
+    pos = np.concatenate([b[1:-1] for _, b in knots])
+    step = np.concatenate([np.diff(values[nz]) for nz, _ in knots])
+    order = np.argsort(pos, kind="stable")
+    ref_pos = np.concatenate([[0], pos[order], [num_ranks]])
+    ref_level = sum(values[nz[0]] for nz, _ in knots)
+    ref_level = (ref_level + np.concatenate([[0.0], np.cumsum(step[order])])) / num_tracks
+    ref_sum = np.concatenate([[0.0], np.cumsum(ref_level * np.diff(ref_pos))])
 
     tables = np.empty(hists.shape, dtype=np.float32)
-    for t, (nz, bounds, _) in enumerate(knots):
-        # running sum of the reference = mean of the tracks' running sums
-        ref_sum = np.mean([np.interp(bounds, b, s) for _, b, s in knots], axis=0)
-        tables[t] = np.interp(values, values[nz], np.diff(ref_sum) / np.diff(bounds))
+    for t, (nz, bounds) in enumerate(knots):
+        block_sum = np.diff(np.interp(bounds, ref_pos, ref_sum))
+        tables[t] = np.interp(values, values[nz], block_sum / np.diff(bounds))
     return tables
 
 
@@ -154,8 +164,8 @@ class SpecPearsonCorrCoef:
     whole-genome target histograms, SeqDataset.target_hist), regress the group
     mean at each position out of each track (its own slope and intercept), and
     correlate each track's pred and target residuals. Streaming state is the
-    per-track first and second moments of (pred, target, group-mean pred,
-    group-mean target).
+    first and second moments of (pred, target, group-mean pred, group-mean
+    target): per track for terms involving the track, per group otherwise.
 
     Args:
         targets_df: targets table aligned with the output tracks.
@@ -190,19 +200,27 @@ class SpecPearsonCorrCoef:
             self.table[g] = torch.from_numpy(qmap_tables(hist[rep]))
         self.reset()
 
+    def fresh(self):
+        """A new metric with zeroed state, sharing this one's groups and tables."""
+        new = copy.copy(self)
+        if self.enabled:
+            new.index, new.table = dict(self.index), dict(self.table)
+            new.reset()
+        return new
+
     def to(self, device):
         if self.enabled:
             for g in self.groups:
                 self.index[g] = tuple(ix.to(device) for ix in self.index[g])
                 self.table[g] = self.table[g].to(device)
-                self.sum1[g] = self.sum1[g].to(device)
-                self.sum2[g] = self.sum2[g].to(device)
+                self.track_sums[g] = self.track_sums[g].to(device)
+                self.mean_sums[g] = self.mean_sums[g].to(device)
         return self
 
     def _map(self, x, g):
         """(N, T, L) -> (tracks, N*L) table values of the group's strand sums."""
         rep, pair = self.index[g]
-        s = x[:, rep].float() + x[:, pair].float()
+        s = torch.nan_to_num(x[:, rep].float() + x[:, pair].float(), nan=0.0)
         bits = (s.clamp(0, 65504) + 0.0).half().view(torch.int16).long()
         return torch.gather(self.table[g], 1, bits.transpose(0, 1).flatten(1))
 
@@ -211,12 +229,22 @@ class SpecPearsonCorrCoef:
         """preds, target: (N, T, L)."""
         if self.enabled:
             for g in self.groups:
-                zp, zy = self._map(preds, g), self._map(target, g)
-                mp = zp.mean(dim=0, keepdim=True).expand_as(zp)
-                my = zy.mean(dim=0, keepdim=True).expand_as(zy)
-                z = torch.stack([zp, zy, mp, my], dim=1).double()  # (tracks, 4, N*L)
-                self.sum1[g] += z.sum(dim=-1)
-                self.sum2[g] += torch.einsum("tap,tbp->tab", z, z)
+                zp, zy = self._map(preds, g), self._map(target, g)  # (tracks, P)
+                mp, my = zp.mean(dim=0), zy.mean(dim=0)  # (P,)
+
+                def total(x):
+                    return x.sum(dim=-1, dtype=torch.float64)
+
+                self.track_sums[g] += torch.stack(
+                    [total(zp), total(zy), total(zp * zp), total(zy * zy)]
+                    + [total(zp * zy), total(zp * mp), total(zp * my)]
+                    + [total(zy * mp), total(zy * my)],
+                    dim=-1,
+                )
+                self.mean_sums[g] += torch.stack(
+                    [total(mp), total(my), total(mp * mp), total(my * my)]
+                    + [total(mp * my)]
+                )
                 self.count[g] += zp.shape[1]
 
     def compute(self) -> torch.Tensor:
@@ -224,7 +252,20 @@ class SpecPearsonCorrCoef:
         if self.enabled:
             for g in self.groups:
                 n = self.count[g]
-                s1, s2 = self.sum1[g].cpu(), self.sum2[g].cpu()
+                ts, ms = self.track_sums[g].cpu(), self.mean_sums[g].cpu()
+                # assemble per-track sums over (pred, target, mean pred, mean target)
+                s1 = torch.stack(
+                    [ts[:, 0], ts[:, 1], ms[0].expand(len(ts)), ms[1].expand(len(ts))],
+                    dim=-1,
+                )
+                s2 = torch.empty(len(ts), 4, 4, dtype=torch.float64)
+                pairs = {
+                    (0, 0): ts[:, 2], (1, 1): ts[:, 3], (0, 1): ts[:, 4],
+                    (0, 2): ts[:, 5], (0, 3): ts[:, 6], (1, 2): ts[:, 7],
+                    (1, 3): ts[:, 8], (2, 2): ms[2], (3, 3): ms[3], (2, 3): ms[4],
+                }
+                for (a, b), v in pairs.items():
+                    s2[:, a, b] = s2[:, b, a] = v
                 cov = s2 / n - s1[:, :, None] * s1[:, None, :] / n**2
                 # residuals of pred/target after regressing out their group mean
                 u = torch.zeros(len(cov), 4, dtype=torch.float64)
@@ -240,13 +281,13 @@ class SpecPearsonCorrCoef:
     def reset(self):
         if self.enabled:
             device = {g: t.device for g, t in self.table.items()}
-            self.sum1 = {
-                g: torch.zeros(len(r), 4, dtype=torch.float64, device=device[g])
+            self.track_sums = {
+                g: torch.zeros(len(r), 9, dtype=torch.float64, device=device[g])
                 for g, (r, _) in self.groups.items()
             }
-            self.sum2 = {
-                g: torch.zeros(len(r), 4, 4, dtype=torch.float64, device=device[g])
-                for g, (r, _) in self.groups.items()
+            self.mean_sums = {
+                g: torch.zeros(5, dtype=torch.float64, device=device[g])
+                for g in self.groups
             }
             self.count = {g: 0 for g in self.groups}
 
@@ -451,6 +492,8 @@ class DatasetMetrics:
             matches num_targets.
         target_hist: Per-track histograms of the stored targets; enables spec.
         spec_group_min: Minimum tracks for a group to be scored.
+        spec_like: Optional SpecPearsonCorrCoef whose groups and tables to share
+            (replaces building them from targets_df/target_hist).
     """
 
     def __init__(
@@ -463,6 +506,7 @@ class DatasetMetrics:
         targets_df=None,
         target_hist=None,
         spec_group_min: int = 20,
+        spec_like=None,
     ):
         self.has_coverage = has_coverage
         self.has_gene = has_gene
@@ -475,7 +519,9 @@ class DatasetMetrics:
         if has_coverage and num_targets is not None:
             self.r = PearsonCorrCoef(num_targets, average=False).to(device)
             self.r2 = R2Score(average=False).to(device)
-            if targets_df is not None and len(targets_df) == num_targets:
+            if spec_like is not None:
+                self.spec = spec_like.fresh()
+            elif targets_df is not None and len(targets_df) == num_targets:
                 self.spec = SpecPearsonCorrCoef(
                     targets_df, target_hist, spec_group_min
                 ).to(device)

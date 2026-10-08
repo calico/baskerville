@@ -873,9 +873,8 @@ def _target_block_hist(args):
     sequences [start, end)."""
     zarr_file, start, end, pair = args
     targets = zarr.open(zarr_file, mode="r")["target"]
-    num_targets = targets.shape[1]
-    offsets = np.arange(num_targets)[:, None] * NUM_HIST_BINS
-    hist = np.zeros(num_targets * NUM_HIST_BINS, dtype=np.int64)
+    # int32: a block's counts per bin are at most (end - start) * length
+    hist = np.zeros((targets.shape[1], NUM_HIST_BINS), dtype=np.int32)
     for si in range(start, end):
         y = targets[si].astype(np.float32)
         if not np.isfinite(y).all() or (y < 0).any():
@@ -883,8 +882,9 @@ def _target_block_hist(args):
         # + 0.0 turns -0.0 into 0.0
         summed = np.minimum(y + y[pair], 65504) + 0.0
         bits = summed.astype(np.float16).view(np.uint16)
-        hist += np.bincount((bits + offsets).ravel(), minlength=hist.size)
-    return hist.reshape(num_targets, NUM_HIST_BINS)
+        for ti, track_bits in enumerate(bits):
+            hist[ti] += np.bincount(track_bits, minlength=NUM_HIST_BINS)
+    return hist
 
 
 def write_target_hist(data_dir, processes=16, block_seqs=256):
@@ -917,7 +917,7 @@ def write_target_hist(data_dir, processes=16, block_seqs=256):
     hist = 0
     with multiprocessing.get_context("spawn").Pool(processes) as pool:
         for block_hist in pool.imap_unordered(_target_block_hist, tasks):
-            hist = hist + block_hist
+            hist = hist + block_hist.astype(np.int64)
 
     for zarr_file in zarr_files:
         root = zarr.open_group(zarr_file, mode="r+")

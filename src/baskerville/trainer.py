@@ -574,19 +574,30 @@ class Trainer:
                 self.train_data[di].num_gene_targets if has_gene else None
             )
 
-            for metrics_list in [self.train_metrics, self.valid_metrics]:
-                metrics_list.append(
-                    metrics.DatasetMetrics(
-                        has_coverage,
-                        has_gene,
-                        num_targets,
-                        num_gene_targets,
-                        self.device,
-                        targets_df=getattr(self.train_data[di], "targets_df", None),
-                        target_hist=getattr(self.train_data[di], "target_hist", None),
-                        spec_group_min=self.spec_group_min,
-                    )
+            train_metrics = metrics.DatasetMetrics(
+                has_coverage,
+                has_gene,
+                num_targets,
+                num_gene_targets,
+                self.device,
+                targets_df=getattr(self.train_data[di], "targets_df", None),
+                target_hist=getattr(self.train_data[di], "target_hist", None),
+                spec_group_min=self.spec_group_min,
+            )
+            self.train_metrics.append(train_metrics)
+            # valid shares train's spec tables (same targets)
+            self.valid_metrics.append(
+                metrics.DatasetMetrics(
+                    has_coverage,
+                    has_gene,
+                    num_targets,
+                    num_gene_targets,
+                    self.device,
+                    targets_df=getattr(self.train_data[di], "targets_df", None),
+                    spec_group_min=self.spec_group_min,
+                    spec_like=train_metrics.spec,
                 )
+            )
 
         # Validate specificity keys against the datasets used for stopping.
         stop_metrics = (

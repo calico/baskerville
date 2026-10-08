@@ -135,10 +135,23 @@ def test_spec_gain_and_specific():
 
     # depth: tracks are scaled copies, so the tables remove gain exactly
     assert abs(score(gain * shared * jitter, gain * (shared + noise))) < 0.05
-    # unequal SNR: the tables warp noise-free preds nonlinearly per track, so
-    # some credit remains (qnorm, re-ranking preds, gives 0; fast spec 0.6)
+    # unequal SNR: the target tables warp noise-free preds nonlinearly per
+    # track, so some credit remains
     assert score(gain * shared, gain * shared + noise) < 0.3
     assert score(gain * shared + specific, gain * shared + noise + specific) > 0.9
+
+
+def test_spec_nan_preds_and_fresh(targets_df):
+    spec = metrics.SpecPearsonCorrCoef(targets_df, _hist(), group_min=2)
+    y = torch.rand(2, 9, 16)
+    preds = y.clone()
+    preds[0, 0, 0] = float("nan")
+    spec.update(preds, y)  # NaN maps like 0 instead of indexing out of bounds
+    assert np.isfinite(spec.compute().numpy()[spec.groups["RNA"][0]]).all()
+
+    other = spec.fresh()
+    assert other.table["RNA"] is spec.table["RNA"]
+    assert other.count["RNA"] == 0 and spec.count["RNA"] == 32
 
 
 def test_dataset_metrics_groups(targets_df):
