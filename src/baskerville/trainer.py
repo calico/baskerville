@@ -931,14 +931,14 @@ class Trainer:
 
     def _mlm_unpack(self, batch):
         """Pull sequence / species / masks off a BatchData and move to device."""
-        x = batch.sequence.to(self.device)
+        x = batch.sequence.to(self.device, non_blocking=True)
         label = batch.species_label
         exon_mask = batch.exon_mask
         repeat_mask = batch.repeat_mask
         if exon_mask is not None:
-            exon_mask = exon_mask.to(self.device)
+            exon_mask = exon_mask.to(self.device, non_blocking=True)
         if repeat_mask is not None:
-            repeat_mask = repeat_mask.to(self.device)
+            repeat_mask = repeat_mask.to(self.device, non_blocking=True)
         return x, label, exon_mask, repeat_mask
 
     def _optimizer_step(self, loss):
@@ -1239,17 +1239,17 @@ class Trainer:
             y = y.to(self.device).float()
             return x, y, None, None, None
 
-        # Handle BatchData format
-        x = batch_data.sequence.to(self.device)
+        # Handle BatchData format (pinned by the DataLoader, so copies are async)
+        x = batch_data.sequence.to(self.device, non_blocking=True)
         y = batch_data.coverage_targets
         if y is not None:
-            y = y.to(self.device).float()
+            y = y.to(self.device, non_blocking=True).float()
 
         yg = gene_presence = gene_out_mask = None
         if batch_data.has_gene:
-            yg = batch_data.gene_targets.to(self.device).float()
-            gene_presence = batch_data.gene_presence.to(self.device)
-            gene_out_mask = batch_data.gene_out_mask.to(self.device)
+            yg = batch_data.gene_targets.to(self.device, non_blocking=True).float()
+            gene_presence = batch_data.gene_presence.to(self.device, non_blocking=True)
+            gene_out_mask = batch_data.gene_out_mask.to(self.device, non_blocking=True)
 
         return x, y, yg, gene_presence, gene_out_mask
 

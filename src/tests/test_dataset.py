@@ -458,3 +458,18 @@ class TestSeqDatasetGene:
         assert batch.gene_targets.dtype == torch.float16
         assert batch.gene_presence.dtype == torch.bool
         assert batch.gene_out_mask.dtype == torch.bool
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="pinning needs CUDA")
+def test_batchdata_pin_memory():
+    """DataLoader(pin_memory=True) pins every BatchData tensor, leaving Nones."""
+    items = [
+        BatchData(sequence=torch.zeros(4, 8), coverage_targets=torch.ones(2, 4))
+        for _ in range(3)
+    ]
+    loader = DataLoader(
+        items, batch_size=3, collate_fn=BatchData.collate, pin_memory=True
+    )
+    batch = next(iter(loader))
+    assert batch.sequence.is_pinned() and batch.coverage_targets.is_pinned()
+    assert batch.gene_targets is None
