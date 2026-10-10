@@ -359,3 +359,4 @@ hound_train_folds --backend gcp --gcp_data_dir gs://<bucket>/<prefix> \
 
 - Cross-fold training requires ~N times more computation (N = number of folds)
 - This document uses `--backend local` because it will work for everyone, but jobs can also go to GCP Batch with `--backend gcp` (see [gcprunner](gcprunner.md)), or to Slurm with `--backend slurm`, which requires the non-public `slurmrunner` package and is the default when it is installed.
+- Set `train.num_workers` high enough to keep the GPU fed. Each worker reads and decompresses one example at a time, so long sequences need many: 16 for 786 kb on an H100 at batch 4.

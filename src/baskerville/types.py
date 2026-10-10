@@ -1,6 +1,6 @@
 """Structured data types for coverage and gene prediction."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, replace
 from typing import Optional
 
 import torch
@@ -73,6 +73,17 @@ class BatchData:
     def has_gene(self) -> bool:
         """Check if gene data is present."""
         return self.gene_targets is not None
+
+    def pin_memory(self) -> "BatchData":
+        """Page-lock every tensor; DataLoader(pin_memory=True) calls this per batch."""
+        return replace(
+            self,
+            **{
+                f.name: getattr(self, f.name).pin_memory()
+                for f in fields(self)
+                if getattr(self, f.name) is not None
+            },
+        )
 
     @staticmethod
     def collate(batch: list["BatchData"]) -> "BatchData":
