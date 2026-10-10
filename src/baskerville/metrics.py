@@ -332,8 +332,8 @@ class PoissonMultinomialLoss(_Loss):
         self._setup_position_weights(seq_len, y_true.device)
 
         # apply position weights
-        y_true *= self.position_weights
-        y_pred *= self.position_weights
+        y_true = y_true * self.position_weights
+        y_pred = y_pred * self.position_weights
 
         # sum across lengths
         s_true = y_true.sum(dim=-1)  # B x T

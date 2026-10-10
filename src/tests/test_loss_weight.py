@@ -139,6 +139,15 @@ def test_scaling_all_weights_is_a_noop(loss_inputs):
     assert torch.allclose(one, ten)
 
 
+def test_position_weights_leave_inputs_intact(loss_inputs):
+    """The trainer computes metrics from the same tensors after the loss."""
+    y_pred, y_true = loss_inputs
+    loss_fn = PoissonMultinomialLoss(weight_range=10, weight_exp=8)
+    p, t = y_pred.clone(), y_true.clone()
+    loss_fn(p, t)
+    assert torch.equal(p, y_pred) and torch.equal(t, y_true)
+
+
 @pytest.mark.parametrize("label", ["poisson", "poisson_mn"])
 def test_every_loss_takes_weights(loss_inputs, label):
     y_pred, y_true = loss_inputs
