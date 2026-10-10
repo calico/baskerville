@@ -96,11 +96,11 @@ def main():
         help="Model head with which to predict.",
     )
     snp_group.add_argument(
-        "--indel_stitch",
-        dest="indel_stitch",
-        default=False,
-        action="store_true",
-        help="Stitch indel compensation shifts",
+        "--indel_shift",
+        dest="indel_shift",
+        default="average",
+        choices=["default", "average", "stitch"],
+        help="Indel compensating shift strategy [Default: %(default)s]",
     )
     snp_group.add_argument(
         "--local_window",
@@ -664,8 +664,8 @@ def build_snp_cmd(args, model_file, start_i, end_i, out_dir=None, fold_cross=Non
     if hasattr(args, "center_gene") and args.center_gene:
         cmd_parts.append("--center_gene")
 
-    if hasattr(args, "indel_stitch") and args.indel_stitch:
-        cmd_parts.append("--indel_stitch")
+    if hasattr(args, "indel_shift"):
+        cmd_parts.extend(["--indel_shift", args.indel_shift])
 
     if hasattr(args, "local_window") and args.local_window != 2048:
         cmd_parts.extend(["--local_window", str(args.local_window)])

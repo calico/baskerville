@@ -26,7 +26,7 @@ class MockArgs:
         self.genome_fasta = None
         self.genes_gtf = None
         self.head = 0
-        self.indel_stitch = False
+        self.indel_shift = "average"
         self.out_dir = "snp_out"
         self.rc = False
         self.shifts = "0"

@@ -452,7 +452,7 @@ def score_snps(args):
                     snp_seq_bin = snp_seq_pos // output_stride
 
                     # add left/right shifts for indels
-                    if indel_size == 0:
+                    if indel_size == 0 or args.indel_shift == "default":
                         alt_shifts = args.shifts
                     else:
                         alt_shifts = []
@@ -479,7 +479,7 @@ def score_snps(args):
                             alt_gene_preds.append(output.gene.squeeze(0))
 
                     # stitch indel shifts (coverage only)
-                    if indel_size != 0 and args.indel_stitch:
+                    if indel_size != 0 and args.indel_shift == "stitch":
                         alt_cov_preds = stitch_preds(
                             alt_cov_preds, args.shifts, snp_seq_bin
                         )
@@ -498,8 +498,8 @@ def score_snps(args):
                             rp_gene = torch.stack(ref_gene_preds)
                             ap_gene = torch.stack(alt_gene_preds)
 
-                    # repeat reference predictions for indels w/o stitching
-                    if indel_size != 0 and not args.indel_stitch:
+                    # repeat reference predictions for averaged indel shifts
+                    if indel_size != 0 and args.indel_shift == "average":
                         rp_cov = rp_cov.repeat_interleave(2, dim=0)
                         if ref_gene_preds:
                             rp_gene = rp_gene.repeat_interleave(2, dim=0)
@@ -806,7 +806,7 @@ def score_gene_snps(args):
 
                     # add left/right shifts for indels
                     indel_size = gsc.snps[ai].indel_size()
-                    if indel_size == 0:
+                    if indel_size == 0 or args.indel_shift == "default":
                         alt_shifts = args.shifts
                     else:
                         alt_shifts = []
@@ -833,7 +833,7 @@ def score_gene_snps(args):
                             alt_gene_preds.append(output.gene.squeeze(0))
 
                     # stitch indel shifts
-                    if indel_size != 0 and args.indel_stitch:
+                    if indel_size != 0 and args.indel_shift == "stitch":
                         snp_seq_pos = gsc.snps[ai].pos - gsc.start - output_crop
                         snp_seq_bin = snp_seq_pos // output_stride
                         alt_cov_preds = stitch_preds(
@@ -854,8 +854,8 @@ def score_gene_snps(args):
                             rp_gene = torch.stack(ref_gene_preds)
                             ap_gene = torch.stack(alt_gene_preds)
 
-                    # repeat reference predictions for indels w/o stitching
-                    if indel_size != 0 and not args.indel_stitch:
+                    # repeat reference predictions for averaged indel shifts
+                    if indel_size != 0 and args.indel_shift == "average":
                         rp_cov = rp_cov.repeat_interleave(2, dim=0)
                         if has_gene_head and ref_gene_preds:
                             rp_gene = rp_gene.repeat_interleave(2, dim=0)

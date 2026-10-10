@@ -86,11 +86,11 @@ def main():
         help="Start index for SNP processing (0-based, inclusive)",
     )
     parser.add_argument(
-        "--indel_stitch",
-        dest="indel_stitch",
-        default=False,
-        action="store_true",
-        help="Stitch indel compensation shifts",
+        "--indel_shift",
+        dest="indel_shift",
+        default="average",
+        choices=["default", "average", "stitch"],
+        help="Indel compensating shift strategy [Default: %(default)s]",
     )
     parser.add_argument(
         "--local_window",
