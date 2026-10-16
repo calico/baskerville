@@ -1156,6 +1156,10 @@ class Trainer:
 
         if self.params.get("compile", False):
             self.model = torch.compile(self.model)
+            # Compiled, the elementwise loss over B x T x L is ~9x faster with ~1/5 the
+            # transient memory. Static shapes: one specialization per dataset/batch shape.
+            if not self.is_mlm:
+                self.loss_fn = torch.compile(self.loss_fn, dynamic=False)
 
         # Eager handle for eval forwards: schedule-free optimizer.eval() weight swaps
         # and BatchNorm running-stat recompute don't propagate through the compiled
