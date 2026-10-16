@@ -210,6 +210,7 @@ class Trainer:
                 self.total_weight,
                 self.weight_range,
                 self.weight_exp,
+                self.params.get("split_weights"),
             )
 
         # gene expression loss
@@ -286,6 +287,21 @@ class Trainer:
         self.spec_group_min = self.params.get("spec_group_min", 20)
         # coverage r, r2, spec on every Nth batch per dataset; loss, gene metrics always
         self.train_metrics_every = self.params.get("train_metrics_every", 10)
+
+        # cross-track term in qmap space, one per dataset (its groups and tables)
+        self.qmap_weight = self.params.get("qmap_weight", 0)
+        self.qmap_fns = None
+        if self.qmap_weight > 0:
+            self.qmap_fns = [
+                metrics.QmapCrossTrackLoss(
+                    data.targets_df,
+                    data.target_hist,
+                    self.weight_range,
+                    self.weight_exp,
+                    self.spec_group_min,
+                ).to(self.device)
+                for data in self.train_data
+            ]
 
         # MLM parameters (only loaded when loss == "mlm")
         if self.loss == "mlm":
@@ -371,6 +387,10 @@ class Trainer:
 
         if yh.has_coverage and y is not None:
             cov_loss = self.loss_fn(yh.coverage, y, self.target_weights[di])
+            if self.qmap_fns is not None:
+                cov_loss = cov_loss + self.qmap_weight * self.qmap_fns[di](
+                    yh.coverage, y
+                )
             loss = loss + cov_loss * species_weight
 
         if yh.has_gene and yg is not None:
@@ -1160,6 +1180,10 @@ class Trainer:
             # transient memory. Static shapes: one specialization per dataset/batch shape.
             if not self.is_mlm:
                 self.loss_fn = torch.compile(self.loss_fn, dynamic=False)
+                if self.qmap_fns is not None:
+                    self.qmap_fns = [
+                        torch.compile(fn, dynamic=False) for fn in self.qmap_fns
+                    ]
 
         # Eager handle for eval forwards: schedule-free optimizer.eval() weight swaps
         # and BatchNorm running-stat recompute don't propagate through the compiled
@@ -1382,6 +1406,7 @@ def parse_loss(
     total_weight: float = 1,
     weight_range: float = 1,
     weight_exp: int = 1,
+    split_weights: list | None = None,
 ):
     """Parse loss function from label, strategy, and fitting method.
 
@@ -1391,6 +1416,7 @@ def parse_loss(
         total_weight (float): Total weight for PoissionMultinomial.
         weight_range (float): Weight range for PoissionMultinomial.
         weight_exp (int): Weight exponent for PoissionMultinomial.
+        split_weights (list): Per-level split weights for PoissonMultinomial.
 
     Returns:
       loss_fn: Torch loss
@@ -1399,7 +1425,10 @@ def parse_loss(
         loss_fn = metrics.PoissonLoss()
     elif loss_label == "poisson_mn":
         loss_fn = metrics.PoissonMultinomialLoss(
-            total_weight=total_weight, weight_range=weight_range, weight_exp=weight_exp
+            total_weight=total_weight,
+            weight_range=weight_range,
+            weight_exp=weight_exp,
+            split_weights=split_weights,
         )
     else:
         raise ValueError(f"Loss function {loss_label} not recognized")

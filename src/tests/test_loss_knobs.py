@@ -1,0 +1,168 @@
+import numpy as np
+import pandas as pd
+import pytest
+import torch
+
+from baskerville import dataset, metrics
+
+
+def _yy(shape, seed=0):
+    g = torch.Generator().manual_seed(seed)
+    def rand():
+        return torch.rand(shape, generator=g, dtype=torch.float64)
+
+    y = rand() * (rand() < 0.7)
+    yp = (rand() + 0.1).requires_grad_()
+    return yp, y
+
+
+def _split_reference(yp, y, w, wsum, c, t):
+    """t·P(total) + Σ_k c_k Σ_nodes binomial split NLL, built level by level."""
+    a, b = yp * w, y * w
+    loss = 0
+    for ck in c:
+        al, ar = a[..., 0::2], a[..., 1::2]
+        bl, br = b[..., 0::2], b[..., 1::2]
+        ap = al + ar
+        loss = loss + ck * (-bl * torch.log(al / ap) - br * torch.log(ar / ap)).sum(-1)
+        a, b = ap, bl + br
+    total = (a - b * torch.log(a)).sum(-1)
+    return ((loss + t * total) / wsum).mean()
+
+
+def test_split_weights_nonuniform():
+    yp, y = _yy((2, 3, 8))
+    c, t = [1.7, 0.6, 1.2], 0.3
+    loss_fn = metrics.PoissonMultinomialLoss(t, 10, 8, epsilon=0, split_weights=c)
+    loss = loss_fn(yp, y)
+    (grad,) = torch.autograd.grad(loss, yp)
+    w = metrics.position_weights(8, 10, 8).double()
+    ref = _split_reference(yp, y, w, loss_fn.weights_sum.double(), c, t)
+    (grad_ref,) = torch.autograd.grad(ref, yp)
+    torch.testing.assert_close(loss, ref, rtol=1e-10, atol=1e-12)
+    torch.testing.assert_close(grad, grad_ref, rtol=1e-10, atol=1e-12)
+
+
+def test_split_weights_ones_match_default():
+    yp, y = _yy((2, 3, 16))
+    grads = []
+    for c in [None, [1.0] * 4]:
+        loss = metrics.PoissonMultinomialLoss(0.25, 10, 8, split_weights=c)(yp, y)
+        grads.append(torch.autograd.grad(loss, yp)[0])
+    torch.testing.assert_close(grads[0], grads[1], rtol=1e-6, atol=1e-9)
+
+
+def test_split_weights_length_checked():
+    yp, y = _yy((1, 1, 16))
+    with pytest.raises(ValueError, match="one weight per level"):
+        metrics.PoissonMultinomialLoss(0.25, 10, 8, split_weights=[1.0] * 3)(yp, y)
+
+
+def _values():
+    v = np.arange(dataset.NUM_HIST_BINS, dtype=np.uint16).view(np.float16)
+    return v.astype(np.float64)
+
+
+def _hists(seed=0, tracks=3, n=4000):
+    """Equal-total fp16 histograms with ties, a zero mass, and a long tail."""
+    rng = np.random.default_rng(seed)
+    y = (rng.gamma(0.5, 3, (tracks, n)) * (rng.random((tracks, n)) < 0.6))
+    bits = y.astype(np.float16).view(np.uint16)
+    return np.stack([np.bincount(b, minlength=dataset.NUM_HIST_BINS) for b in bits])
+
+
+def _apply(x, xk, qk):
+    return metrics.qmap_apply(x, torch.from_numpy(xk), torch.from_numpy(qk))
+
+
+def test_qmap_knots_match_tables():
+    hist = _hists()
+    tables = metrics.qmap_tables(hist).astype(np.float64)
+    xk, qk = metrics.qmap_knots(hist, 64)
+    values = _values()
+    for t in range(len(hist)):
+        nz = np.flatnonzero(hist[t])
+        # exact at the knots
+        real = xk[t] <= values[nz[-1]]
+        x = torch.from_numpy(np.tile(xk[t][real], (len(hist), 1)))
+        q = _apply(x, xk, qk)[t].numpy()
+        np.testing.assert_allclose(q, qk[t][real], rtol=1e-12)
+        # monotone between knots, so off the table by at most a segment's rise;
+        # clamped beyond the observed values
+        x = np.concatenate([[-1.0], values[nz], [values[nz[-1]] * 2]])
+        q = _apply(torch.from_numpy(np.tile(x, (len(hist), 1))), xk, qk)[t].numpy()
+        assert np.all(np.diff(q) >= 0)
+        assert q[0] == tables[t, nz[0]] and q[-1] == tables[t, nz[-1]]
+
+
+def test_qmap_constant_track():
+    hist = np.zeros((2, dataset.NUM_HIST_BINS), dtype=np.int64)
+    hist[:, 0] = 100  # every value is 0
+    xk, qk = metrics.qmap_knots(hist, 16)
+    x = torch.tensor([[0.0, 1.0, 1e3]] * 2, dtype=torch.float64, requires_grad=True)
+    q = _apply(x, xk, qk)
+    np.testing.assert_array_equal(q.detach().numpy(), 0)
+    (grad,) = torch.autograd.grad(q.sum(), x)
+    np.testing.assert_array_equal(grad.numpy(), 0)
+
+
+def test_qmap_flat_stretch():
+    xk = np.array([[0.0, 1.0, 2.0, 3.0]])
+    qk = np.array([[0.0, 1.0, 1.0, 2.0]])
+    x = torch.tensor([[1.5, 0.5, 2.5, -1.0, 4.0]], dtype=torch.float64, requires_grad=True)
+    q = _apply(x, xk, qk)
+    np.testing.assert_allclose(q.detach().numpy(), [[1.0, 0.5, 1.5, 0.0, 2.0]])
+    (grad,) = torch.autograd.grad(q.sum(), x)
+    np.testing.assert_allclose(grad.numpy(), [[0.0, 1.0, 1.0, 0.0, 0.0]])
+
+
+@pytest.fixture
+def targets_df():
+    """One group of 3 unstranded tracks + 1 stranded pair; one track ungrouped."""
+    rows = [
+        ("a0", "RNA:a0", 0),
+        ("a1+", "RNA:a1", 2),
+        ("a1-", "RNA:a1", 1),
+        ("a2", "RNA:a2", 3),
+        ("a3", "RNA:a3", 4),
+        ("b0", "CHIP:K4:b0", 5),
+    ]
+    return pd.DataFrame(rows, columns=["identifier", "description", "strand_pair"])
+
+
+def _qmap_loss(targets_df, seed=0):
+    rng = np.random.default_rng(seed)
+    y = rng.gamma(0.5, 3, (2, 6, 32)) * (rng.random((2, 6, 32)) < 0.6)
+    y = y.astype(np.float16)
+    pair = targets_df.strand_pair.to_numpy()
+    s = (y.astype(np.float32) + y[:, pair].astype(np.float32)).astype(np.float16)
+    bits = s.view(np.uint16).transpose(1, 0, 2).reshape(6, -1)
+    hist = np.stack([np.bincount(b, minlength=dataset.NUM_HIST_BINS) for b in bits])
+    loss_fn = metrics.QmapCrossTrackLoss(targets_df, hist, 10, 8, group_min=4)
+    return loss_fn, torch.from_numpy(y.astype(np.float64))
+
+
+def test_qmap_loss_zero_at_target(targets_df):
+    loss_fn, y = _qmap_loss(targets_df)
+    assert loss_fn.rep.tolist() == [0, 1, 3, 4]  # group RNA only
+    yp = y.clone().requires_grad_()
+    loss = loss_fn(yp, y)
+    (grad,) = torch.autograd.grad(loss, yp)
+    assert loss.item() < 1e-12
+    assert grad.abs().max().item() < 1e-6
+
+
+def test_qmap_loss_finite_and_specific(targets_df):
+    loss_fn, y = _qmap_loss(targets_df)
+    yp = torch.zeros_like(y).requires_grad_()  # all zeros: ties at the lowest knot
+    loss = loss_fn(yp, y)
+    (grad,) = torch.autograd.grad(loss, yp)
+    assert loss.item() > 0 and torch.isfinite(grad).all()
+    # the ungrouped track gets no gradient
+    assert grad[:, 5].abs().max().item() == 0
+    # the ungrouped track's error costs nothing; a grouped track's does
+    off = y.clone()
+    off[:, 5] *= 3
+    assert loss_fn(off, y).item() < 1e-12
+    off[:, 0] *= 3
+    assert loss_fn(off, y).item() > 0

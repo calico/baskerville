@@ -157,6 +157,110 @@ def qmap_tables(hists):
     return tables
 
 
+def qmap_knots(hists, num_knots: int = 256):
+    """Piecewise-linear knots approximating each track's qmap_tables map.
+
+    x knots are present values at quantile levels 1 − 10^(−s), s evenly spaced
+    over [0, 8], plus the last present value: dense in the upper tail, where
+    evenly spaced quantiles would leave a track's peaks a few segments. q knots
+    are the table values there, unaltered, so flat
+    stretches of the reference stay flat. A constant track gets two knots with
+    equal q. Tracks with fewer knots are padded past the last one with q held.
+
+    Returns:
+        (xk, qk) np.ndarray (T, num_knots) float64.
+    """
+    hists = np.asarray(hists)
+    tables = qmap_tables(hists)
+    values = np.arange(dataset.NUM_HIST_BINS, dtype=np.uint16).view(np.float16)
+    values = values.astype(np.float64)
+    levels = np.append(1 - 10 ** -np.linspace(0, 8, num_knots - 1), 1)
+    xk, qk = np.empty((len(hists), num_knots)), np.empty((len(hists), num_knots))
+    for t, h in enumerate(hists):
+        nz = np.flatnonzero(h)
+        cdf = np.cumsum(h[nz]) / h[nz].sum()
+        idx = np.searchsorted(cdf, levels)
+        idx = nz[np.unique(np.minimum(idx, len(nz) - 1))]
+        x, q = values[idx], tables[t, idx].astype(np.float64)
+        if len(x) == 1:
+            x, q = np.array([x[0], x[0] + 1]), np.array([q[0], q[0]])
+        pad = np.arange(1, num_knots - len(x) + 1)
+        xk[t] = np.concatenate([x, x[-1] + pad])
+        qk[t] = np.concatenate([q, np.full(len(pad), q[-1])])
+    return xk, qk
+
+
+def qmap_apply(x, xk, qk):
+    """Map x (T, N) through per-track knots (T, K); clamped outside the knots."""
+    x = torch.clamp(x, xk[:, :1], xk[:, -1:]).contiguous()
+    i1 = torch.searchsorted(xk, x).clamp(1, xk.shape[1] - 1)
+    i0 = i1 - 1
+    x0, x1 = xk.gather(1, i0), xk.gather(1, i1)
+    q0, q1 = qk.gather(1, i0), qk.gather(1, i1)
+    return q0 + (q1 - q0) / (x1 - x0) * (x - x0)
+
+
+class QmapCrossTrackLoss(nn.Module):
+    """Cross-track specificity loss in differentiable quantile-mapped space.
+
+    For each group of SpecPearsonCorrCoef (strand sums, >= group_min tracks):
+    map preds and targets through qmap_knots, subtract the group mean at each
+    position, and take the position-weighted mean squared difference of the
+    centered pred and target. Inputs past a track's observed values clamp, as in
+    qmap_tables, so they carry no gradient.
+
+    Args:
+        targets_df: targets table aligned with the output tracks.
+        target_hist: per-track histograms of the stored targets.
+        weight_range, weight_exp: position weights, as in PoissonMultinomialLoss.
+    """
+
+    def __init__(self, targets_df, target_hist, weight_range=1, weight_exp=4,
+                 group_min: int = 20, num_knots: int = 256):
+        super().__init__()
+        self.weight_range, self.weight_exp = weight_range, weight_exp
+        rep_pos, pair_pos = dataset.strand_collapse(targets_df)
+        groups = dataset.target_groups(targets_df)[rep_pos]
+        hist = np.asarray(target_hist)
+        rep, pair, gid, xk, qk = [], [], [], [], []
+        for g in sorted(set(groups)):
+            gi = groups == g
+            if gi.sum() >= group_min:
+                x, q = qmap_knots(hist[rep_pos[gi]], num_knots)
+                rep.append(rep_pos[gi]), pair.append(pair_pos[gi])
+                gid.append(np.full(gi.sum(), len(xk))), xk.append(x), qk.append(q)
+        if not rep:
+            raise ValueError(f"no target group has >= {group_min} tracks")
+        gid = torch.from_numpy(np.concatenate(gid))
+        member = nn.functional.one_hot(gid).double()
+        self.register_buffer("rep", torch.from_numpy(np.concatenate(rep)))
+        self.register_buffer("pair", torch.from_numpy(np.concatenate(pair)))
+        self.register_buffer("gid", gid)
+        self.register_buffer("mean_op", (member / member.sum(0)).float())  # (Tq, G)
+        self.register_buffer("xk", torch.from_numpy(np.concatenate(xk)).float())
+        self.register_buffer("qk", torch.from_numpy(np.concatenate(qk)).float())
+        self.register_buffer("position_weights", None)
+
+    def _centered(self, x):
+        """(B, T, L) -> (Tq, B, L) group-centered qmap values of strand sums."""
+        s = (x[:, self.rep] + x[:, self.pair]).transpose(0, 1)
+        z = qmap_apply(s.flatten(1), self.xk, self.qk).view(s.shape)
+        return z - torch.einsum("tg,tbl->gbl", self.mean_op, z)[self.gid]
+
+    def forward(self, y_pred, y_true):
+        if self.position_weights is None:
+            self.register_buffer("position_weights", position_weights(
+                y_true.shape[-1], self.weight_range, self.weight_exp, y_true.device
+            ))
+        # fp32 throughout: the group mean is a matmul, which autocast would run in bf16
+        with torch.autocast(y_true.device.type, enabled=False):
+            with torch.no_grad():
+                cy = self._centered(y_true.float())
+            d2 = (self._centered(y_pred.float()) - cy).pow(2)
+            w = self.position_weights.view(1, 1, -1)
+            return (w * d2).sum(-1).mean() / w.sum()
+
+
 class SpecPearsonCorrCoef:
     """Per-track specificity Pearson within target groups.
 
@@ -408,6 +512,17 @@ class PoissonLoss(_Loss):
         return weighted_reduce(loss, target_weights, self.reduction)
 
 
+def position_weights(seq_len, weight_range, weight_exp, device=None):
+    """(1, 1, L) flat-topped position weights, 1 at the center, 1/weight_range at the edges."""
+    pos_start = -(seq_len / 2 - 0.5)
+    pos_end = seq_len / 2 + 0.5
+    sigma = -pos_start / (np.log(weight_range)) ** (1 / weight_exp)
+
+    positions = torch.arange(pos_start, pos_end, dtype=torch.float32, device=device)
+    weights = torch.exp(-((positions / sigma) ** weight_exp))
+    return (weights / weights.max()).view(1, 1, -1)
+
+
 class PoissonMultinomialLoss(_Loss):
     """Poisson decomposition with multinomial specificity term."""
 
@@ -419,9 +534,11 @@ class PoissonMultinomialLoss(_Loss):
         epsilon: float = 1e-9,
         rescale: bool = False,
         reduction: str = "mean",
+        split_weights: list | None = None,
     ):
         super(PoissonMultinomialLoss, self).__init__(reduction=reduction)
         self.total_weight = total_weight
+        self.split_weights = split_weights
         self.weight_range = weight_range
         self.weight_exp = weight_exp
         self.epsilon = epsilon
@@ -436,17 +553,31 @@ class PoissonMultinomialLoss(_Loss):
     def _setup_position_weights(self, seq_len, device):
         """Construct position weight vectors from sequence length."""
         if self.position_weights is None:
-            pos_start = -(seq_len / 2 - 0.5)
-            pos_end = seq_len / 2 + 0.5
-            sigma = -pos_start / (np.log(self.weight_range)) ** (1 / self.weight_exp)
-
-            positions = torch.arange(
-                pos_start, pos_end, dtype=torch.float32, device=device
+            weights = position_weights(
+                seq_len, self.weight_range, self.weight_exp, device
             )
-            weights = torch.exp(-((positions / sigma) ** self.weight_exp))
-            weights = (weights / weights.max()).view(1, 1, -1)
             self.register_buffer("position_weights", weights)
             self.register_buffer("weights_sum", weights.sum())
+
+    def _split_loss(self, y_true, y_pred):
+        """t·P(total) + Σ_k c_k·(level-k binomial splits), computed as Σ_ℓ a_ℓ·P_ℓ
+        over sum-pooled values: a_0 = c_1, a_ℓ = c_{ℓ+1} − c_ℓ, a_K = t − c_K.
+
+        split_weights c_1..c_K weight the splits of 2^k-bin blocks into halves,
+        K = log2(L). All ones gives the default loss up to a constant.
+        """
+        c = [float(v) for v in self.split_weights]
+        if 2 ** len(c) != y_true.shape[-1]:
+            raise ValueError("split_weights needs one weight per level, log2(L)")
+        coefs = [c[0]] + [b - a for a, b in zip(c, c[1:])] + [self.total_weight - c[-1]]
+        loss = 0
+        for level, coef in enumerate(coefs):
+            if coef != 0:
+                loss = loss + coef * self._poisson(y_true, y_pred).sum(dim=-1)
+            if level < len(c):
+                y_true = y_true.unflatten(-1, (-1, 2)).sum(dim=-1)
+                y_pred = y_pred.unflatten(-1, (-1, 2)).sum(dim=-1)
+        return loss / self.weights_sum
 
     def forward(self, y_pred, y_true, target_weights=None):
         """Args:
@@ -459,6 +590,9 @@ class PoissonMultinomialLoss(_Loss):
         # apply position weights
         y_true = y_true * self.position_weights
         y_pred = y_pred * self.position_weights
+        if self.split_weights is not None:
+            loss = self._split_loss(y_true, y_pred)
+            return weighted_reduce(loss, target_weights, self.reduction)
 
         # sum across lengths
         s_true = y_true.sum(dim=-1)  # B x T
