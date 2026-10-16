@@ -25,7 +25,7 @@ import tempfile
 import threading
 import time
 
-from baskerville import utils
+from baskerville import dataset, utils
 
 try:
     import slurmrunner
@@ -44,7 +44,7 @@ from gcprunner.argparse_helpers import (
 from gcprunner import resolve_image
 from gcprunner import run_identity
 from gcprunner.batch_spec import DataMount
-from baskerville.helpers import stage_cache
+from baskerville.helpers import fold_utils, stage_cache
 from baskerville.helpers.gcs_utils import (
     download_folder_from_gcs,
     gcs_file_exist,
@@ -84,6 +84,13 @@ def main():
         "$BASKERVILLE_CONDA first if set). Default: the current environment.",
     )
     parser.add_argument(
+        "--eval",
+        default=False,
+        action="store_true",
+        help="Evaluate the test fold with hound_eval at the end of each training "
+        "job, into <fold>/eval*/fold<t> as hound_eval_folds does [Default: %(default)s]",
+    )
+    parser.add_argument(
         "-f",
         "--fold_subset",
         default=None,
@@ -113,6 +120,13 @@ def main():
         "--queue",
         default="titan_rtx",
         help="SLURM queue on which to run the jobs [Default: %(default)s]",
+    )
+    parser.add_argument(
+        "--rc",
+        default=False,
+        action="store_true",
+        help="--eval: average forward and reverse complement predictions "
+        "[Default: %(default)s]",
     )
     parser.add_argument(
         "-r",
@@ -186,6 +200,8 @@ def main():
     container_transfer_dir = None
     if (args.conclude or args.extend) and not gcp_backend:
         parser.error("--conclude/--extend are only supported with --backend gcp")
+    if args.eval and args.whole:
+        parser.error("--eval needs a held-out test fold; drop --whole")
     if args.extend:
         # Edited params hash to a new run id, so take the run dir and image
         # from the marker instead. Before resolve_image_arg, so the pinned
@@ -296,8 +312,9 @@ def main():
         with open(data_stats_file) as data_stats_open:
             data_stats = json.load(data_stats_open)
 
-    # count folds
+    # count folds (all of them set the test fold, even under --fold_subset)
     num_folds = len([dkey for dkey in data_stats if dkey.startswith("fold")])
+    args.num_folds_total = num_folds
 
     # subset folds
     if args.fold_subset is not None:
@@ -370,6 +387,17 @@ def main():
                     cmd += " -w"
                 cmd += f" {rep_dir}/params.json"
                 cmd += f" {' '.join(args.data_dirs)}"
+                evals = _test_evals(args, fold_cross)
+                cmd += _test_eval_cmd(
+                    args,
+                    evals,
+                    f"{rep_dir}/params.json",
+                    f"{train_dir}/model_best.pth",
+                    args.data_dirs,
+                    rep_dir,
+                )
+                for eval_sub, test_fold in evals:
+                    fold_utils.link_test_metrics(f"{rep_dir}/{eval_sub}", test_fold)
 
                 if slurmrunner is None:
                     # Run locally
@@ -612,7 +640,7 @@ def _read_progress_epoch(gcs_progress_uri):
         return None
 
 
-def _fold_state(run_dir, fold_cross, active, epochs_max):
+def _fold_state(run_dir, fold_cross, active, epochs_max, evals=()):
     """Infer a fold's state from GCS markers + the set of active Batch jobs.
 
     Returns (state, detail) where state is one of:
@@ -623,12 +651,19 @@ def _fold_state(run_dir, fold_cross, active, epochs_max):
       new        — nothing yet (fresh start)
 
     A COMPLETE fold that stopped at max_epochs below ``epochs_max`` counts as
-    incomplete, so raising train_epochs_max extends it.
+    incomplete, so raising train_epochs_max extends it. So does one missing any
+    ``evals`` (eval_sub, test_fold) acc.txt; the relaunch resumes a finished
+    trainer, which exits at once, and reruns the eval.
     """
     base = f"{run_dir}/{fold_cross}/train"
     if gcs_file_exist(f"{base}/COMPLETE"):
         done = read_json_gcs(f"{base}/COMPLETE")
-        if done.get("reason") != "max_epochs" or done["epoch"] + 1 >= epochs_max:
+        trained = done.get("reason") != "max_epochs" or done["epoch"] + 1 >= epochs_max
+        evaluated = all(
+            gcs_file_exist(f"{run_dir}/{fold_cross}/{sub}/fold{t}/acc.txt")
+            for sub, t in evals
+        )
+        if trained and evaluated:
             return ("complete", None)
     if gcs_file_exist(f"{base}/FAILED"):
         return ("failed", None)
@@ -681,6 +716,14 @@ def _build_gcp_train_job(
     if args.whole:
         cmd += " -w"
     cmd += f" {container_params} {' '.join(container_data_dirs)}"
+    cmd += _test_eval_cmd(
+        args,
+        _test_evals(args, fold_cross),
+        container_params,
+        "/workspace/out/train/model_best.pth",
+        container_data_dirs,
+        "/workspace/out",
+    )
 
     fold_gcs = f"{args.gcp_output_dir}/{fold_cross}"
     run_id = run_identity.run_id_from_gcs_dir(args.gcp_output_dir)
@@ -805,6 +848,11 @@ def _run_gcp_training(
             try:
                 if completed:
                     _pull_full_run(args.gcp_output_dir, args.out_dir)
+                    for fc in fold_crosses:
+                        for eval_sub, test_fold in _test_evals(args, fc):
+                            fold_utils.link_test_metrics(
+                                f"{args.out_dir}/{fc}/{eval_sub}", test_fold
+                            )
                 else:
                     # light catch-up only; --conclude pulls an interrupted run
                     _mirror_once(args.gcp_output_dir, args.out_dir)
@@ -836,13 +884,15 @@ def _resubmit_loop(
     project = resolve_project(args.gcp_project)
     region = resolve_region(args.gcp_region)
     epochs_max = params_train.get("train_epochs_max", 10000)  # Trainer default
+    evals = {fc: _test_evals(args, fc) for fc in fold_crosses}
 
     previous_states = {}
 
     for round_i in range(args.gcp_max_rounds):
         active = _active_fold_crosses(project, region, fold_crosses, run_id)
         states = {
-            fc: _fold_state(run_dir, fc, active, epochs_max) for fc in fold_crosses
+            fc: _fold_state(run_dir, fc, active, epochs_max, evals[fc])
+            for fc in fold_crosses
         }
         _print_status_table(states, round_i, args.gcp_max_rounds)
 
@@ -927,7 +977,10 @@ def _resubmit_loop(
 
     # exhausted rounds
     active = _active_fold_crosses(project, region, fold_crosses, run_id)
-    states = {fc: _fold_state(run_dir, fc, active, epochs_max) for fc in fold_crosses}
+    states = {
+        fc: _fold_state(run_dir, fc, active, epochs_max, evals[fc])
+        for fc in fold_crosses
+    }
     incomplete = [fc for fc, (s, _) in states.items() if s != "complete"]
     if incomplete:
         print(
@@ -938,6 +991,30 @@ def _resubmit_loop(
         return False
     print(f"\n[gcp] all folds COMPLETE → {run_dir}")
     return True
+
+
+def _test_evals(args, fold_cross):
+    """[(eval_sub, test_fold)] per dataset under --eval, else []."""
+    if not args.eval:
+        return []
+    fi, ci = map(int, fold_cross[1:].split("c"))
+    test_fold = dataset.compute_fold_splits(args.num_folds_total, fi, ci)["test"]
+    num_data = len(args.data_dirs)
+    return [
+        ("eval" if num_data == 1 else f"eval{di}", test_fold) for di in range(num_data)
+    ]
+
+
+def _test_eval_cmd(args, evals, params_file, model_file, data_dirs, out_root):
+    """hound_eval commands to chain after hound_train, one per dataset."""
+    cmd = ""
+    for di, (eval_sub, test_fold) in enumerate(evals):
+        cmd += f" && hound_eval --dataset {di} -o {out_root}/{eval_sub}/fold{test_fold}"
+        cmd += f" --split fold{test_fold}"
+        if args.rc:
+            cmd += " --rc"
+        cmd += f" {params_file} {model_file} {data_dirs[di]}"
+    return cmd
 
 
 def make_rep_params(params_file, rep_dir, pretrained_model):

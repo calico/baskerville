@@ -38,6 +38,7 @@ from gcprunner.argparse_helpers import (
 from gcprunner.batch_spec import DataMount
 from baskerville.helpers import fold_utils, stage_cache
 from baskerville.helpers.fold_utils import (
+    link_test_metrics as _link_test_metrics,
     model_present as _model_present,
     read_fold_splits as _read_fold_splits,
     resolve_model_file as _resolve_model_file,
@@ -513,9 +514,10 @@ def eval_folds(args):
 ################################################################################
 # helpers
 ################################################################################
-# The shared fold helpers (_read_fold_splits, _model_present, _resolve_model_file)
-# now live in baskerville.helpers.fold_utils and are imported above under
-# their original private names so existing call sites and tests are unchanged.
+# The shared fold helpers (_read_fold_splits, _model_present, _resolve_model_file,
+# _link_test_metrics) now live in baskerville.helpers.fold_utils and are imported
+# above under their original private names so existing call sites and tests are
+# unchanged.
 
 
 def eval_options(args, targets_gene):
@@ -536,29 +538,6 @@ def eval_options(args, targets_gene):
     if args.rank_corr or args.save:
         opts += f" --step {args.step}"
     return opts
-
-
-def _link_test_metrics(eval_dir, test_fold):
-    """Symlink test -> fold{test_fold} and test.out -> fold{test_fold}.out.
-
-    Relative targets so the links resolve wherever eval_dir lives. Targets may
-    be dangling until eval completes. A stale link (e.g. left by the pre-GCP
-    script that linked test -> fold{fi}, wrong when test_fold != fi for
-    cross > 0) is repointed; a real file/dir at the link path is left alone.
-    """
-    os.makedirs(eval_dir, exist_ok=True)
-    for name, target in (
-        ("test", f"fold{test_fold}"),
-        ("test.out", f"fold{test_fold}.out"),
-    ):
-        link = f"{eval_dir}/{name}"
-        if os.path.islink(link):
-            if os.readlink(link) == target:
-                continue  # already correct
-            os.unlink(link)  # stale link → repoint below
-        elif os.path.lexists(link):
-            continue  # real file/dir squatting the name → don't clobber
-        os.symlink(target, link)
 
 
 ################################################################################
