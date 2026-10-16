@@ -38,6 +38,7 @@ from gcprunner.argparse_helpers import (
 from gcprunner.batch_spec import DataMount
 from baskerville.helpers import fold_utils, stage_cache
 from baskerville.helpers.fold_utils import (
+    link_test_metrics as _link_test_metrics,
     model_present as _model_present,
     read_fold_splits as _read_fold_splits,
     resolve_model_file as _resolve_model_file,
@@ -63,18 +64,11 @@ def main():
         description="Evaluate baskerville model replicates on cross folds using given parameters and data."
     )
 
-    # eval/spec options
+    # eval options
     parser.add_argument(
         "--aggregate_genes",
         action="store_true",
         help="Aggregate predictions per unique gene across sequences [Default: %(default)s]",
-    )
-    parser.add_argument(
-        "--band",
-        default=None,
-        type=int,
-        help="Tracks read per band during spec streaming normalization; lower "
-        "to reduce peak RAM [Default: hound_eval_spec's default]",
     )
     parser.add_argument(
         "-o",
@@ -102,12 +96,6 @@ def main():
         help="Save targets and predictions numpy arrays [Default: %(default)s]",
     )
     parser.add_argument(
-        "--seq_chunk",
-        default=None,
-        type=int,
-        help="Zarr seq-axis chunk for preds/targets store; [Default: batch_size]",
-    )
-    parser.add_argument(
         "--shifts",
         default="0",
         type=str,
@@ -117,7 +105,7 @@ def main():
         "--step",
         default=1,
         type=int,
-        help="Spatial step for specificity/spearmanr [Default: %(default)s]",
+        help="Spatial step for saved/ranked preds [Default: %(default)s]",
     )
     parser.add_argument(
         "--test",
@@ -187,26 +175,6 @@ def main():
         action="store_true",
         help="Restart evaluation [Default: %(default)s]",
     )
-    parser.add_argument(
-        "--ram",
-        default=False,
-        action="store_true",
-        help="Hold spec preds/targets in RAM instead of streaming to a Zarr "
-        "store on disk (big-memory nodes only) [Default: %(default)s]",
-    )
-    parser.add_argument(
-        "--scratch_dir",
-        default=None,
-        help="Directory for the spec preds/targets Zarr store; must be a real "
-        "disk with room [Default: the job output directory]",
-    )
-    parser.add_argument(
-        "--spec",
-        default=False,
-        action="store_true",
-        help="Specificity evaluation [Default: %(default)s]",
-    )
-
     parser.add_argument("params_file", help="JSON file with model parameters")
     parser.add_argument(
         "data_dirs", nargs="+", help="Train/valid/test data directorie(s)"
@@ -300,10 +268,8 @@ def eval_folds(args):
                 models_sha or hashlib.sha256(gcs_models_dir.encode()).hexdigest()
             )
             # output-changing options too, so changing them starts fresh instead of
-            # resuming; spec's are keyed even without --spec so adding it resumes
-            opts_sha = stage_cache.hash_text(
-                eval_options(args, container_targets_gene) + spec_options(args)
-            )
+            # resuming
+            opts_sha = stage_cache.hash_text(eval_options(args, container_targets_gene))
             run_id = stage_cache.build_run_id(
                 models_key, params_sha, data_uri_sha, opts_sha, deterministic=True
             )
@@ -369,7 +335,6 @@ def eval_folds(args):
     # need conda activation and a $HOSTNAME echo.
     if gcp_backend:
         cmd_base = "hound_eval"
-        spec_cmd_base = "hound_eval_spec"
         data_mounts = [
             DataMount(args.gcp_data_dir, args.gcp_data_local, mode="fuse"),
             DataMount(
@@ -394,7 +359,6 @@ def eval_folds(args):
     else:
         env_base = utils.conda_activate(args.conda_env) + "echo $HOSTNAME;"
         cmd_base = f"{env_base} hound_eval"
-        spec_cmd_base = f"{env_base} hound_eval_spec"
         gcp_extra = {}
 
     jobs = []
@@ -507,98 +471,6 @@ def eval_folds(args):
                         )
                         jobs.append(job)
 
-    #######################################################
-    # evaluate test specificity
-
-    if args.spec:
-        for ci in range(args.crosses):
-            for fi in fold_index:
-                fold_cross = f"f{fi}c{ci}"
-                it_dir = f"{args.out_dir}/{fold_cross}"
-                train_dir = f"{it_dir}/train"
-
-                if not _model_present(
-                    gcp_backend, gcs_models_dir, train_dir, fold_cross
-                ):
-                    continue
-
-                # use the test fold training actually held out (not just fi)
-                test_fold, _ = _read_fold_splits(train_dir, num_folds, fi, ci)
-
-                model_file = _resolve_model_file(
-                    gcp_backend,
-                    gcs_models_dir,
-                    container_models_dir,
-                    train_dir,
-                    fold_cross,
-                )
-
-                for di in range(num_data):
-                    spec_sub = "spec" if num_data == 1 else f"spec{di}"
-                    rel = f"{fold_cross}/{spec_sub}"
-
-                    # check if done (GCS for gcp, local otherwise)
-                    if gcp_backend:
-                        acc_loc = f"{args.gcp_output_dir}/{rel}/acc.txt"
-                        already_done = gcs_file_exist(acc_loc)
-                        out_dir = f"/workspace/out/{rel}"
-                    else:
-                        out_dir = f"{it_dir}/{spec_sub}"
-                        acc_loc = f"{out_dir}/acc.txt"
-                        already_done = os.path.isfile(acc_loc)
-                    if already_done:
-                        print(f"{acc_loc} already generated.")
-                        continue
-
-                    cmd = spec_cmd_base
-                    cmd += f" --dataset {di}"
-                    cmd += f" -o {out_dir}"
-                    cmd += f" --split fold{test_fold}"
-                    cmd += spec_options(args)
-                    cmd += f" --ncpus {num_cpu}"
-                    if args.band is not None:
-                        cmd += f" --band {args.band}"
-                    if args.seq_chunk is not None:
-                        cmd += f" --seq_chunk {args.seq_chunk}"
-                    if args.ram:
-                        cmd += " --ram"
-                    if args.scratch_dir is not None:
-                        cmd += f" --scratch_dir {args.scratch_dir}"
-                    cmd += f" {params_file}"
-                    cmd += f" {model_file}"
-                    cmd += f" {data_dirs[di]}"
-
-                    if slurmrunner is None:
-                        # Run locally
-                        jobs.append(cmd)
-                    else:
-                        # Submit to SLURM / GCP Batch
-                        name = f"{args.name}-spec-{fold_cross}"
-                        spec_extra = dict(gcp_extra)
-                        if gcp_backend:
-                            out_file = f"{args.gcp_output_dir}/{rel}.out"
-                            err_file = f"{args.gcp_output_dir}/{rel}.err"
-                            spec_extra["boot_disk_gb"] = 200
-                            spec_extra["labels"] = run_identity.identity_labels(
-                                run_id, "eval", fold_cross
-                            )
-                        else:
-                            out_file = f"{out_dir}.out"
-                            err_file = f"{out_dir}.err"
-                        job = slurmrunner.Job(
-                            cmd,
-                            name=name,
-                            out_file=out_file,
-                            err_file=err_file,
-                            queue=args.queue,
-                            cpu=num_cpu,
-                            gpu=num_gpu,
-                            mem=None if gcp_backend else 64000,
-                            time=f"{3 * time_base}:00:00",
-                            **spec_extra,
-                        )
-                        jobs.append(job)
-
     # dir exists but had no replicate weights (vs. all jobs already complete)
     if not found_model:
         where = gcs_models_dir if gcs_models_dir is not None else args.out_dir
@@ -642,9 +514,10 @@ def eval_folds(args):
 ################################################################################
 # helpers
 ################################################################################
-# The shared fold helpers (_read_fold_splits, _model_present, _resolve_model_file)
-# now live in baskerville.helpers.fold_utils and are imported above under
-# their original private names so existing call sites and tests are unchanged.
+# The shared fold helpers (_read_fold_splits, _model_present, _resolve_model_file,
+# _link_test_metrics) now live in baskerville.helpers.fold_utils and are imported
+# above under their original private names so existing call sites and tests are
+# unchanged.
 
 
 def eval_options(args, targets_gene):
@@ -665,39 +538,6 @@ def eval_options(args, targets_gene):
     if args.rank_corr or args.save:
         opts += f" --step {args.step}"
     return opts
-
-
-def spec_options(args):
-    """hound_eval_spec flags that change its output (not memory/IO knobs)."""
-    opts = f" --step {args.step}"
-    if args.rc:
-        opts += " --rc"
-    if args.shifts:
-        opts += f" --shifts {args.shifts}"
-    return opts
-
-
-def _link_test_metrics(eval_dir, test_fold):
-    """Symlink test -> fold{test_fold} and test.out -> fold{test_fold}.out.
-
-    Relative targets so the links resolve wherever eval_dir lives. Targets may
-    be dangling until eval completes. A stale link (e.g. left by the pre-GCP
-    script that linked test -> fold{fi}, wrong when test_fold != fi for
-    cross > 0) is repointed; a real file/dir at the link path is left alone.
-    """
-    os.makedirs(eval_dir, exist_ok=True)
-    for name, target in (
-        ("test", f"fold{test_fold}"),
-        ("test.out", f"fold{test_fold}.out"),
-    ):
-        link = f"{eval_dir}/{name}"
-        if os.path.islink(link):
-            if os.readlink(link) == target:
-                continue  # already correct
-            os.unlink(link)  # stale link → repoint below
-        elif os.path.lexists(link):
-            continue  # real file/dir squatting the name → don't clobber
-        os.symlink(target, link)
 
 
 ################################################################################

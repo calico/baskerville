@@ -14,7 +14,7 @@ import torch
 import zarr
 
 from baskerville import metrics
-from baskerville.dataset import SeqDataset
+from baskerville.dataset import NUM_HIST_BINS, SeqDataset
 from baskerville.seqnn import SeqNN
 
 
@@ -324,7 +324,10 @@ class TestSeqNNEval:
     ):
         target_slice = np.array([2, 0])
         data = SeqDataset(coverage_only_dataset, split_label="test")
-        data.target_means = np.array([1.0, 2.0, 4.0])
+        y = np.random.default_rng(0).gamma(2, size=(3, 1000)).astype(np.float16)
+        data.target_hist = np.stack(
+            [np.bincount(v.view(np.uint16), minlength=NUM_HIST_BINS) for v in y]
+        )
         if subset_metadata:
             data.targets_df = data.targets_df.loc[[0, 2]]
 
@@ -337,7 +340,7 @@ class TestSeqNNEval:
         cov = model.eval(data, batch_size=2, return_values=True)["coverage"]
         expected = spec_metric(
             data.targets_df.loc[target_slice],
-            data.target_means[target_slice],
+            data.target_hist[target_slice],
             group_min=2,
         )
         expected.update(
@@ -598,69 +601,3 @@ class TestSeqNNEval:
             assert "targets" in root
             assert "gene_preds" not in root
             assert "gene_targets" not in root
-
-    def test_eval_combine_pairs(self, coverage_only_dataset):
-        """combine_pairs collapses the coverage store to summed columns."""
-        model_def = self._create_model_def(has_coverage=True, has_gene=False)
-        model = SeqNN(model_def)  # one instance -> deterministic preds across runs
-        dataset = SeqDataset(
-            data_dir=coverage_only_dataset, split_label="test", mode="eval"
-        )
-
-        # full (no combine): individual tracks, shape num_targets
-        full = model.eval(dataset, batch_size=2, return_values=True)
-        fp = np.asarray(full["coverage"]["preds"], dtype=np.float32)
-        ft = np.asarray(full["coverage"]["targets"], dtype=np.float32)
-        assert fp.shape[1] == self.num_targets
-        assert full["coverage"]["r"] is not None
-        assert full["coverage"]["r2"] is not None
-
-        # combine: sum pair (0,1), keep 2 -> 2 columns in spec order
-        columns = [(0, 1), (2,)]
-        comb = model.eval(
-            dataset, batch_size=2, return_values=True, combine_pairs=columns
-        )
-        cp = np.asarray(comb["coverage"]["preds"], dtype=np.float32)
-        ct = np.asarray(comb["coverage"]["targets"], dtype=np.float32)
-
-        assert cp.shape == (self.num_seqs, len(columns), self.target_length)
-        assert comb["coverage"]["r"] is None
-        assert comb["coverage"]["r2"] is None
-        # column 0 == track0 + track1, column 1 == track2 (fp16-store tolerance)
-        np.testing.assert_allclose(cp[:, 0], fp[:, 0] + fp[:, 1], atol=1e-2)
-        np.testing.assert_allclose(cp[:, 1], fp[:, 2], atol=1e-3)
-        np.testing.assert_allclose(ct[:, 0], ft[:, 0] + ft[:, 1], atol=1e-2)
-        np.testing.assert_allclose(ct[:, 1], ft[:, 2], atol=1e-3)
-
-
-def test_strand_column_helpers():
-    """_strand_column_index / _combine_strand_columns sum pairs along axis 1."""
-    from baskerville.seqnn import (
-        _combine_strand_columns,
-        _strand_column_index,
-    )
-
-    columns = [(0, 1), (2,), (3, 4)]
-    a_idx, pair_cols, pair_b = _strand_column_index(columns)
-    np.testing.assert_array_equal(a_idx, [0, 2, 3])
-    np.testing.assert_array_equal(pair_cols, [0, 2])
-    np.testing.assert_array_equal(pair_b, [1, 4])
-
-    arr = np.arange(2 * 5 * 3).reshape(2, 5, 3).astype(np.float32)
-    out = _combine_strand_columns(arr, a_idx, pair_cols, pair_b)
-    expected = np.stack(
-        [arr[:, 0] + arr[:, 1], arr[:, 2], arr[:, 3] + arr[:, 4]], axis=1
-    )
-    np.testing.assert_array_equal(out, expected)
-    # source array is not mutated (advanced indexing copies)
-    np.testing.assert_array_equal(arr, np.arange(2 * 5 * 3).reshape(2, 5, 3))
-
-    # no-pairs case is an identity gather
-    a2, pc2, pb2 = _strand_column_index([(0,), (1,)])
-    out2 = _combine_strand_columns(arr[:, :2], a2, pc2, pb2)
-    np.testing.assert_array_equal(out2, arr[:, :2])
-
-    # malformed specs (empty / too many indices) raise
-    for bad in [(), (0, 1, 2)]:
-        with pytest.raises(ValueError):
-            _strand_column_index([bad])

@@ -19,6 +19,7 @@ class MockArgs:
     def __init__(self, **kwargs):
         self.params_file = "params.json"
         self.transfer = None
+        self.eval = False
         for key, value in kwargs.items():
             setattr(self, key, value)
 
@@ -633,3 +634,84 @@ def test_extend_inherits_run_dir_and_image(tmp_path, monkeypatch):
         htf.main()
     assert seen["gcp_output_dir"] == "gs://b/train/old-run"
     assert seen["gcp_image"] == "reg/img@sha256:abc"
+
+
+def _eval_args(data_dirs, rc=False, eval=True):
+    return MockArgs(
+        eval=eval,
+        rc=rc,
+        num_folds_total=8,
+        data_dirs=data_dirs,
+        gcp_output_dir="gs://bucket/train/run123",
+        name="b32",
+        queue="l4",
+        whole=False,
+        gcp_retry_count=0,
+        gcp_data_dir="gs://bucket/data",
+        gcp_data_local="/workspace/data",
+    )
+
+
+def test_eval_chains_hound_eval_per_dataset(monkeypatch):
+    """--eval appends one hound_eval per dataset on the held-out test fold,
+    written where hound_eval_folds writes (eval<di>/fold<t>)."""
+    import gcprunner
+
+    monkeypatch.setattr(htf, "slurmrunner", gcprunner)
+    args = _eval_args(["hg38", "mm10"], rc=True)
+    data = ["/workspace/data/hg38", "/workspace/data/mm10"]
+    job = htf._build_gcp_train_job(args, {}, "/c/params.json", data, "f2c1")
+    train, eval0, eval1 = job.cmd.split(" && ")
+    assert train.startswith("hound_train -o /workspace/out/train --fold 2 --cross 1")
+    model = "/workspace/out/train/model_best.pth"
+    # with 8 folds, fold 2 cross 1 tests on fold 2 (test = fold, valid = fold+1+cross)
+    assert eval0 == (
+        "hound_eval --dataset 0 -o /workspace/out/eval0/fold2 --split fold2 --rc "
+        f"/c/params.json {model} /workspace/data/hg38"
+    )
+    assert eval1.startswith("hound_eval --dataset 1 -o /workspace/out/eval1/fold2")
+    assert eval1.endswith("/workspace/data/mm10")
+
+
+def test_eval_single_dataset_and_off():
+    assert htf._test_evals(_eval_args(["hg38"]), "f3c0") == [("eval", 3)]
+    assert htf._test_evals(_eval_args(["hg38"], eval=False), "f3c0") == []
+    assert htf._test_eval_cmd(_eval_args(["hg38"]), [], "p", "m", ["d"], "o") == ""
+
+
+def test_eval_fold_uses_all_folds():
+    """The test fold comes from the full fold count, not the --fold_subset cut."""
+    args = _eval_args(["hg38"])
+    expected = htf.dataset.compute_fold_splits(8, 1, 3)["test"]
+    assert htf._test_evals(args, "f1c3") == [("eval", expected)]
+
+
+@pytest.mark.parametrize(
+    "has_acc, expected", [(True, "complete"), (False, "incomplete")]
+)
+def test_fold_state_requires_test_eval(monkeypatch, has_acc, expected):
+    """COMPLETE without the test acc.txt relaunches (resume is a no-op, eval reruns)."""
+    base = "gs://b/run/f0c0"
+    files = {f"{base}/train/COMPLETE", f"{base}/train/checkpoint.pth"}
+    if has_acc:
+        files.add(f"{base}/eval0/fold0/acc.txt")
+    monkeypatch.setattr(htf, "gcs_file_exist", lambda uri: uri in files)
+    monkeypatch.setattr(
+        htf, "read_json_gcs", lambda uri: {"epoch": 49, "reason": "early_stop"}
+    )
+    state, _ = htf._fold_state("gs://b/run", "f0c0", set(), 50, [("eval0", 0)])
+    assert state == expected
+
+
+def test_success_links_test_eval(tmp_path, monkeypatch):
+    """A completed --eval run links eval*/test -> fold<t> after the pull."""
+    _patch_gcp_training_env(monkeypatch, [])
+    monkeypatch.setattr(htf, "_resubmit_loop", lambda *a, **k: True)
+    monkeypatch.setattr(htf, "_pull_full_run", lambda *a: None)
+    args = _gcp_training_args(tmp_path)
+    for k, v in vars(_eval_args(["hg38", "mm10"])).items():
+        if not hasattr(args, k) or k in ("eval", "data_dirs"):
+            setattr(args, k, v)
+    htf._run_gcp_training(args, {}, {}, [], ["f1c0"])
+    for di in (0, 1):
+        assert (tmp_path / f"f1c0/eval{di}/test").readlink().name == "fold1"

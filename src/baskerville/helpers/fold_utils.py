@@ -3,8 +3,10 @@
 Both ``hound_eval_folds`` and ``hound_eval_genes_folds`` need the same logic to
 (a) read the authoritative fold assignment a replicate was trained with,
 (b) decide whether a replicate's weights exist (locally or in GCS marker mode),
-and (c) resolve the ``model_best.pth`` path to pass to the eval command. They're
-collected here so the fold scripts share one implementation.
+(c) resolve the ``model_best.pth`` path to pass to the eval command, and (d)
+link ``test`` to the held-out fold's eval dir. They're collected here so the
+fold scripts (including ``hound_train_folds --eval``) share one
+implementation.
 """
 
 from __future__ import annotations
@@ -60,3 +62,26 @@ def resolve_model_file(
     if gcs_models_dir is not None:
         return f"{GCP_MODELS_MOUNT}/{fold_cross}/train/model_best.pth"
     return f"{container_models_dir}/{fold_cross}/train/model_best.pth"
+
+
+def link_test_metrics(eval_dir, test_fold):
+    """Symlink test -> fold{test_fold} and test.out -> fold{test_fold}.out.
+
+    Relative targets so the links resolve wherever eval_dir lives. Targets may
+    be dangling until eval completes. A stale link (e.g. left by the pre-GCP
+    script that linked test -> fold{fi}, wrong when test_fold != fi for
+    cross > 0) is repointed; a real file/dir at the link path is left alone.
+    """
+    os.makedirs(eval_dir, exist_ok=True)
+    for name, target in (
+        ("test", f"fold{test_fold}"),
+        ("test.out", f"fold{test_fold}.out"),
+    ):
+        link = f"{eval_dir}/{name}"
+        if os.path.islink(link):
+            if os.readlink(link) == target:
+                continue  # already correct
+            os.unlink(link)  # stale link → repoint below
+        elif os.path.lexists(link):
+            continue  # real file/dir squatting the name → don't clobber
+        os.symlink(target, link)

@@ -258,8 +258,6 @@ hound_eval_folds --backend local --rank -o train_folds params.json data_folds
 # Evaluate only test sets (faster)
 hound_eval_folds --backend local --test -o train_folds params.json data_folds
 
-# Include specificity analysis
-hound_eval_folds --backend local --spec -o train_folds params.json data_folds
 ```
 
 ### Understanding Evaluation Output
@@ -269,20 +267,18 @@ After evaluation, each fold directory contains:
 ```
 train_folds/f0c0/
 ├── train/          # Training artifacts
-├── eval/           # Evaluation results
-│   ├── fold0/      # Model evaluated on fold 0
-│   ├── fold1/      # Model evaluated on fold 1
-│   ├── ...
-│   ├── test -> fold0  # Symlink to test fold
-│   └── test.out
-└── spec/           # Specificity analysis (if --spec used)
+└── eval/           # Evaluation results
+    ├── fold0/      # Model evaluated on fold 0
+    ├── fold1/      # Model evaluated on fold 1
+    ├── ...
+    ├── test -> fold0  # Symlink to test fold
+    └── test.out
 ```
 
 Key files:
 
 - `eval/fold{X}/acc.txt`: Accuracy metrics for each target
-- `eval/test/acc.txt`: Test set performance (most important)
-- `spec/acc.txt`: Specificity analysis results
+- `eval/test/acc.txt`: Test set performance (most important), with per-track `spec` (see [train.md](train.md))
 
 ## Analyzing Results
 

@@ -899,9 +899,9 @@ def main():
             update_sleep=3,
         )
 
-    # per-track means, for depth-normalized specificity metrics
+    # per-track value histograms, for the specificity metric's quantile maps
     if num_targets > 0:
-        dataset.write_target_means(args.out_dir, processes=args.processes)
+        dataset.write_target_hist(args.out_dir, processes=args.processes)
 
     ################################################################
     # stats
