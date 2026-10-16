@@ -166,3 +166,36 @@ def test_qmap_loss_finite_and_specific(targets_df):
     assert loss_fn(off, y).item() < 1e-12
     off[:, 0] *= 3
     assert loss_fn(off, y).item() > 0
+
+
+def test_qmap_loss_groups_weigh_equally():
+    """Group B is group A at 10x scale: the same error costs the same in either."""
+    df = pd.DataFrame(
+        [(f"{g}{i}", f"{d}:{g}{i}", k) for k, (g, d, i) in enumerate(
+            [(g, d, i) for g, d in [("a", "RNA"), ("b", "CHIP:K4")] for i in range(3)])],
+        columns=["identifier", "description", "strand_pair"],
+    )
+    rng = np.random.default_rng(0)
+    ya = rng.gamma(0.5, 3, (2, 3, 32)) * (rng.random((2, 3, 32)) < 0.6)
+    y = np.concatenate([ya, 10 * ya], axis=1).astype(np.float16)
+    s = (2 * y.astype(np.float32)).astype(np.float16)  # unstranded: strand sum is 2y
+    bits = s.view(np.uint16).transpose(1, 0, 2).reshape(6, -1)
+    hist = np.stack([np.bincount(b, minlength=dataset.NUM_HIST_BINS) for b in bits])
+    loss_fn = metrics.QmapCrossTrackLoss(df, hist, 10, 8, group_min=3)
+    y = torch.from_numpy(y.astype(np.float64))
+    losses = []
+    for t in (0, 3):  # first track of group a, of group b
+        yp = y.clone()
+        yp[:, t] *= 1.5
+        losses.append(loss_fn(yp, y).item())
+    assert losses[0] > 0
+    np.testing.assert_allclose(losses[0], losses[1], rtol=0.02)
+
+
+def test_per_dataset_weights():
+    from baskerville.trainer import per_dataset
+
+    assert per_dataset(0.5, 2, "w") == [0.5, 0.5]
+    assert per_dataset([0.1, 0.9], 2, "w") == [0.1, 0.9]
+    with pytest.raises(ValueError, match="one value per dataset"):
+        per_dataset([0.1], 2, "w")

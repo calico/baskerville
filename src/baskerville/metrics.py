@@ -157,7 +157,7 @@ def qmap_tables(hists):
     return tables
 
 
-def qmap_knots(hists, num_knots: int = 256):
+def qmap_knots(hists, num_knots: int = 256, tables=None):
     """Piecewise-linear knots approximating each track's qmap_tables map.
 
     x knots are present values at quantile levels 1 − 10^(−s), s evenly spaced
@@ -167,11 +167,14 @@ def qmap_knots(hists, num_knots: int = 256):
     stretches of the reference stay flat. A constant track gets two knots with
     equal q. Tracks with fewer knots are padded past the last one with q held.
 
+    Args:
+        tables: qmap_tables(hists), if already computed.
+
     Returns:
         (xk, qk) np.ndarray (T, num_knots) float64.
     """
     hists = np.asarray(hists)
-    tables = qmap_tables(hists)
+    tables = qmap_tables(hists) if tables is None else tables
     values = np.arange(dataset.NUM_HIST_BINS, dtype=np.uint16).view(np.float16)
     values = values.astype(np.float64)
     levels = np.append(1 - 10 ** -np.linspace(0, 8, num_knots - 1), 1)
@@ -206,7 +209,10 @@ class QmapCrossTrackLoss(nn.Module):
     For each group of SpecPearsonCorrCoef (strand sums, >= group_min tracks):
     map preds and targets through qmap_knots, subtract the group mean at each
     position, and take the position-weighted mean squared difference of the
-    centered pred and target. Inputs past a track's observed values clamp, as in
+    centered pred and target. Each group's error is divided by its mapped
+    variance (the table values' variance under each track's histogram, averaged
+    over the group), and groups are averaged with equal weight, so mapped units
+    don't weight groups. Inputs past a track's observed values clamp, as in
     qmap_tables, so they carry no gradient.
 
     Args:
@@ -222,15 +228,23 @@ class QmapCrossTrackLoss(nn.Module):
         rep_pos, pair_pos = dataset.strand_collapse(targets_df)
         groups = dataset.target_groups(targets_df)[rep_pos]
         hist = np.asarray(target_hist)
-        rep, pair, gid, xk, qk = [], [], [], [], []
+        rep, pair, gid, xk, qk, var = [], [], [], [], [], []
         for g in sorted(set(groups)):
             gi = groups == g
             if gi.sum() >= group_min:
-                x, q = qmap_knots(hist[rep_pos[gi]], num_knots)
+                h = hist[rep_pos[gi]].astype(np.float64)
+                tables = qmap_tables(hist[rep_pos[gi]]).astype(np.float64)
+                x, q = qmap_knots(hist[rep_pos[gi]], num_knots, tables)
+                mean = (h * tables).sum(1, keepdims=True) / h.sum(1, keepdims=True)
+                v = ((h * (tables - mean) ** 2).sum(1) / h.sum(1)).mean()
                 rep.append(rep_pos[gi]), pair.append(pair_pos[gi])
                 gid.append(np.full(gi.sum(), len(xk))), xk.append(x), qk.append(q)
+                var.append(np.full(gi.sum(), v))
         if not rep:
             raise ValueError(f"no target group has >= {group_min} tracks")
+        # per-track weight 1 / (groups · group size · group mapped variance)
+        var, size = np.concatenate(var), np.bincount(np.concatenate(gid))
+        weight = np.where(var > 0, 1 / (len(size) * size[np.concatenate(gid)] * var), 0)
         gid = torch.from_numpy(np.concatenate(gid))
         member = nn.functional.one_hot(gid).double()
         self.register_buffer("rep", torch.from_numpy(np.concatenate(rep)))
@@ -239,6 +253,7 @@ class QmapCrossTrackLoss(nn.Module):
         self.register_buffer("mean_op", (member / member.sum(0)).float())  # (Tq, G)
         self.register_buffer("xk", torch.from_numpy(np.concatenate(xk)).float())
         self.register_buffer("qk", torch.from_numpy(np.concatenate(qk)).float())
+        self.register_buffer("track_weight", torch.from_numpy(weight).float())
         self.register_buffer("position_weights", None)
 
     def _centered(self, x):
@@ -258,7 +273,8 @@ class QmapCrossTrackLoss(nn.Module):
                 cy = self._centered(y_true.float())
             d2 = (self._centered(y_pred.float()) - cy).pow(2)
             w = self.position_weights.view(1, 1, -1)
-            return (w * d2).sum(-1).mean() / w.sum()
+            per_track = (w * d2).sum(-1).mean(-1) / w.sum()  # (Tq,)
+            return (self.track_weight * per_track).sum()
 
 
 class SpecPearsonCorrCoef:

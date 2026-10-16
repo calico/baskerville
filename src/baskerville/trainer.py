@@ -288,10 +288,13 @@ class Trainer:
         # coverage r, r2, spec on every Nth batch per dataset; loss, gene metrics always
         self.train_metrics_every = self.params.get("train_metrics_every", 10)
 
-        # cross-track term in qmap space, one per dataset (its groups and tables)
-        self.qmap_weight = self.params.get("qmap_weight", 0)
+        # cross-track term in qmap space, one per dataset (its groups and tables);
+        # qmap_weight is one λ or a list with one per dataset
+        self.qmap_weight = per_dataset(
+            self.params.get("qmap_weight", 0), self.num_datasets, "qmap_weight"
+        )
         self.qmap_fns = None
-        if self.qmap_weight > 0:
+        if any(w > 0 for w in self.qmap_weight):
             self.qmap_fns = [
                 metrics.QmapCrossTrackLoss(
                     data.targets_df,
@@ -387,8 +390,8 @@ class Trainer:
 
         if yh.has_coverage and y is not None:
             cov_loss = self.loss_fn(yh.coverage, y, self.target_weights[di])
-            if self.qmap_fns is not None:
-                cov_loss = cov_loss + self.qmap_weight * self.qmap_fns[di](
+            if self.qmap_fns is not None and self.qmap_weight[di] > 0:
+                cov_loss = cov_loss + self.qmap_weight[di] * self.qmap_fns[di](
                     yh.coverage, y
                 )
             loss = loss + cov_loss * species_weight
@@ -1398,6 +1401,15 @@ def _module_has_running_stats(module) -> bool:
         and getattr(m, "running_mean", None) is not None
         for m in module.modules()
     )
+
+
+def per_dataset(value, num_datasets: int, name: str) -> list:
+    """A scalar broadcast to every dataset, or a list with one value per dataset."""
+    if not isinstance(value, (list, tuple)):
+        return [value] * num_datasets
+    if len(value) != num_datasets:
+        raise ValueError(f"{name} needs one value per dataset ({num_datasets})")
+    return list(value)
 
 
 def parse_loss(
