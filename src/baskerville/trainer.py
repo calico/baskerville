@@ -284,7 +284,7 @@ class Trainer:
         self.stop_stat = parse_stop_stat(stop_stat)
         self.stop_stat_loss_fallback = isinstance(stop_stat, str)
         self.spec_group_min = self.params.get("spec_group_min", 20)
-        # train r, r2, spec on every Nth batch per dataset; train loss on every batch
+        # coverage r, r2, spec on every Nth batch per dataset; loss, gene metrics always
         self.train_metrics_every = self.params.get("train_metrics_every", 10)
 
         # MLM parameters (only loaded when loss == "mlm")
@@ -1163,7 +1163,7 @@ class Trainer:
         self.model_eval = getattr(self.model, "_orig_mod", self.model)
 
     def _train_batch_cov(self, di_tensor, batch_data, score=True):
-        """Coverage-supervised training step; score=False updates only the loss."""
+        """Coverage-supervised training step; score=False skips coverage metrics."""
         di = di_tensor[0].item()
         x, y, yg, gene_presence, gene_out_mask = self._unpack_batch(batch_data)
         sw = torch.tensor(self.species_weights[di]).to(
@@ -1182,7 +1182,7 @@ class Trainer:
             loss = self._compute_loss(yh, y, yg, gene_presence, sw, di)
 
         if not score:
-            y = yg = None
+            y = None
         self.train_metrics[di].update(yh, y, yg, gene_presence, loss, x.shape[0])
         return loss
 
