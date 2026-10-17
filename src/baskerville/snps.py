@@ -564,7 +564,6 @@ def score_snps(args):
 
                 # clean reference
                 del rp_cov, ref_cov_preds
-                torch.cuda.empty_cache()
 
     # surface any cov-write exceptions (executor swallows them otherwise)
     for f in cov_write_futures:
@@ -903,7 +902,6 @@ def score_gene_snps(args):
                 # clean up memory
                 del rp_cov, ref_cov_preds
                 del ap_cov, alt_cov_preds
-                torch.cuda.empty_cache()
 
     # close open files
     genome_open.close()
