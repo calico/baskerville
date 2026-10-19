@@ -5,6 +5,8 @@ import pytest
 import shutil
 import subprocess
 
+from baskerville.scripts import hound_train
+
 DATA_DIR = pathlib.Path(__file__).parent / "data"
 
 
@@ -50,16 +52,7 @@ def _hound_data(tmp_path_factory, name, targets_file, *extra):
 def _hound_train(tmp_path_factory, name, params_file, *data_dirs):
     """Run hound_train, returning the output directory."""
     output_dir = str(tmp_path_factory.mktemp(name))
-    cmd = [
-        "python",
-        "-m",
-        "baskerville.scripts.hound_train",
-        "-o",
-        output_dir,
-        str(params_file),
-        *data_dirs,
-    ]
-    subprocess.run(cmd, check=True)
+    hound_train.main(["-o", output_dir, str(params_file), *data_dirs])
     return output_dir
 
 

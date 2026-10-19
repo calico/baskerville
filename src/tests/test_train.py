@@ -1,10 +1,11 @@
 import os
 import pathlib
 import shutil
-import subprocess
 
 import numpy as np
 import pandas as pd
+
+from baskerville.scripts import hound_train_distill
 
 
 def epoch_stats(epoch_line):
@@ -97,16 +98,13 @@ def test_train_distill(tmp_path, static_model_dir, data_me_dir):
 
     # Run distillation training
     cmd = [
-        "python",
-        "-m",
-        "baskerville.scripts.hound_train_distill",
         "-o",
         output_dir,
         params_file,
         teachers_dir,
         data_me_dir,
     ]
-    subprocess.run(cmd, check=True)
+    hound_train_distill.main(cmd)
 
     # Verify training (distillation has different log format, check manually)
     train_log_file = f"{output_dir}/log.txt"

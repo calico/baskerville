@@ -39,7 +39,7 @@ Perform an in silico saturation mutagenesis of sequences in a BED file.
 """
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Perform in silico saturation mutagenesis of sequences in a BED file."
     )
@@ -155,7 +155,7 @@ def main():
         help="Nucleotides upstream of center sequence to mutate",
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     # parse options
     args.mix_dtype = snps.parse_mix_dtype(args.mix_dtype)

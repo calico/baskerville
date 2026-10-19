@@ -2,11 +2,12 @@ import os
 import pathlib
 import tempfile
 import pytest
-import subprocess
 
 import h5py
 import numpy as np
 import pandas as pd
+
+from baskerville.scripts import hound_ism_snp
 
 
 @pytest.fixture(scope="module")
@@ -21,9 +22,6 @@ def ism_output(static_model_dir):
 
     with tempfile.TemporaryDirectory() as temp_dir:
         cmd = [
-            "python",
-            "-m",
-            "baskerville.scripts.hound_ism_snp",
             "-f",
             fasta_file,
             "-t",
@@ -42,9 +40,7 @@ def ism_output(static_model_dir):
             vcf_file,
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            pytest.fail(f"ISM fixture failed: {result.stderr}")
+        hound_ism_snp.main(cmd)
 
         scores_file = f"{temp_dir}/scores.h5"
 
@@ -199,9 +195,6 @@ def test_ism_snp_mutation_regions(static_model_dir):
     # Create temporary output directory
     with tempfile.TemporaryDirectory() as temp_dir:
         cmd = [
-            "python",
-            "-m",
-            "baskerville.scripts.hound_ism_snp",
             "-f",
             fasta_file,
             "-t",
@@ -219,10 +212,7 @@ def test_ism_snp_mutation_regions(static_model_dir):
             vcf_file,
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        assert result.returncode == 0, (
-            f"hound_ism_snp with custom regions failed: {result.stderr}"
-        )
+        hound_ism_snp.main(cmd)
 
         # Check output file exists
         scores_file = f"{temp_dir}/scores.h5"
@@ -267,9 +257,6 @@ def test_ism_snp_gene_track_selection(static_model_dir, stat):
         targets_df.to_csv(targets_file, sep="\t")
 
         cmd = [
-            "python",
-            "-m",
-            "baskerville.scripts.hound_ism_snp",
             "-f",
             fasta_file,
             "-t",
@@ -287,8 +274,7 @@ def test_ism_snp_gene_track_selection(static_model_dir, stat):
             vcf_file,
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        assert result.returncode == 0, f"Failed: {result.stderr}"
+        hound_ism_snp.main(cmd)
 
         with h5py.File(f"{temp_dir}/scores.h5", "r") as h5f:
             assert h5f[f"ref/{stat}"].shape[-1] == len(expected_targets)
@@ -301,14 +287,11 @@ def test_ism_snp_gene_track_selection(static_model_dir, stat):
             assert list(out_df.identifier) == expected_targets
 
 
-def test_ism_snp_bfloat16(static_model_dir):
+def test_ism_snp_bfloat16(static_model_dir, capsys):
     """-m bfloat16 runs (predictions cast to float32 for scoring) and warns."""
     test_dir = str(pathlib.Path(__file__).parent)
     with tempfile.TemporaryDirectory() as temp_dir:
         cmd = [
-            "python",
-            "-m",
-            "baskerville.scripts.hound_ism_snp",
             "-f",
             f"{test_dir}/data/sc3.fa.gz",
             "-t",
@@ -325,6 +308,5 @@ def test_ism_snp_bfloat16(static_model_dir):
             f"{static_model_dir}/sc3_model.pth",
             f"{test_dir}/data/sc3_snps.vcf",
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        assert result.returncode == 0, f"hound_ism_snp failed: {result.stderr}"
-        assert "WARNING: --mix_dtype bfloat16" in result.stderr
+        hound_ism_snp.main(cmd)
+        assert "WARNING: --mix_dtype bfloat16" in capsys.readouterr().err

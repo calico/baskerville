@@ -40,7 +40,7 @@ given in a VCF file.
 """
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Perform in silico saturated mutagenesis of sequences surrounding variants.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -142,7 +142,7 @@ def main():
         type=int,
         help="Nucleotides upstream of center sequence to mutate",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     # parse options
     args.mix_dtype = snps.parse_mix_dtype(args.mix_dtype)

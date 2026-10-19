@@ -1,9 +1,10 @@
 import shutil
-import subprocess
 import tempfile
 from pathlib import Path
 
 import pytest
+
+from baskerville.scripts import hound_eval_genes
 
 TESTS_DIR = Path(__file__).parent
 DATA_DIR = TESTS_DIR / "data"
@@ -17,9 +18,6 @@ def test_hound_eval_genes_smoke(model_cov_with_gene_data_dir, data_gene_dir):
     """Smoke test for hound_eval_genes using yeast test data."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         cmd = [
-            "python",
-            "-m",
-            "baskerville.scripts.hound_eval_genes",
             f"{model_cov_with_gene_data_dir}/params.json",
             f"{model_cov_with_gene_data_dir}/model_best.pth",
             data_gene_dir,
@@ -29,8 +27,7 @@ def test_hound_eval_genes_smoke(model_cov_with_gene_data_dir, data_gene_dir):
             "--split",
             "test",
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        assert result.returncode == 0, f"Script failed:\n{result.stderr}"
+        hound_eval_genes.main(cmd)
 
         # Check expected output files exist
         out_path = Path(tmp_dir)

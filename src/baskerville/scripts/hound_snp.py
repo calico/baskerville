@@ -31,7 +31,7 @@ Compute variant effect predictions for SNPs in a VCF file.
 """
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Compute variant effect predictions for SNPs in a VCF file.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -182,7 +182,7 @@ def main():
     parser.add_argument("model_file", help="Model file")
     parser.add_argument("vcf_file", help="VCF file")
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     # validate flag dependencies
     if args.pregrouped_seqs and args.genes_gtf is None:

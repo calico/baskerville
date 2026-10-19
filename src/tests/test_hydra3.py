@@ -13,8 +13,14 @@ import torch
 from baskerville import layers
 from baskerville.blocks import HydraTower
 
+
+def _mamba3_available():
+    layers._import_mamba()
+    return layers.mamba3_siso_combined is not None
+
+
 requires_mamba3 = pytest.mark.skipif(
-    not torch.cuda.is_available() or layers.mamba3_siso_combined is None,
+    not torch.cuda.is_available() or not _mamba3_available(),
     reason="Hydra3 needs a CUDA GPU and the Mamba-3 mamba_ssm build",
 )
 
