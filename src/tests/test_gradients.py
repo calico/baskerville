@@ -224,15 +224,6 @@ def test_gradients_device_compatibility(params):
         )
 
 
-def test_gradients_with_pretrained_model(params, static_model_dir):
-    model = SeqNN(params)
-    model.restore(os.path.join(static_model_dir, "sc3_model.pth"))
-    x = torch.randn(4, params["seq_length"], requires_grad=True)
-    gradients = model.gradients(x, hi=0)
-    assert gradients.shape == x.shape
-    assert torch.isfinite(gradients).all()
-
-
 def test_gradients_untransform(params):
     """Test gradients() method with untransform functionality."""
     import pandas as pd

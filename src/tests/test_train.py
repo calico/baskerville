@@ -80,27 +80,20 @@ def test_transfer(transfer_dir):
     verify_training(transfer_dir, expect_coverage=True, expect_gene=False)
 
 
-def test_train_distill(static_model_dir, data_me_dir):
+def test_train_distill(tmp_path, static_model_dir, data_me_dir):
     """Test distillation training using a trained model as teacher."""
-    test_dir = str(pathlib.Path(__file__).parent)
-    params_file = f"{test_dir}/data/params_sc3.json"
-    output_dir = f"{test_dir}/data/sc3_distill"
+    params_file = f"{pathlib.Path(__file__).parent}/data/params_sc3.json"
+    output_dir = f"{tmp_path}/sc3_distill"
 
     # Create teachers directory structure (mimic hound_train_folds output)
-    teachers_dir = f"{test_dir}/data/sc3_teachers"
-    if os.path.exists(teachers_dir):
-        shutil.rmtree(teachers_dir)
-    os.makedirs(f"{teachers_dir}/f0c0/train", exist_ok=True)
+    teachers_dir = f"{tmp_path}/sc3_teachers"
+    os.makedirs(f"{teachers_dir}/f0c0/train")
 
     # Copy model and params to teacher location
     shutil.copy(
         f"{static_model_dir}/sc3_model.pth", f"{teachers_dir}/f0c0/train/model_best.pth"
     )
     shutil.copy(params_file, f"{teachers_dir}/f0c0/params.json")
-
-    # Clean output directory
-    if os.path.exists(output_dir):
-        shutil.rmtree(output_dir)
 
     # Run distillation training
     cmd = [
@@ -129,12 +122,6 @@ def test_train_distill(static_model_dir, data_me_dir):
     assert found_data_line, "No 'Data' line found in log"
     model_file = f"{output_dir}/model_best.pth"
     assert os.path.exists(model_file), f"Model file not found: {model_file}"
-
-    # Cleanup
-    if os.path.exists(teachers_dir):
-        shutil.rmtree(teachers_dir)
-    if os.path.exists(output_dir):
-        shutil.rmtree(output_dir)
 
 
 def test_train_gene(model_gene_dir):

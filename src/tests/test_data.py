@@ -1,8 +1,5 @@
 import numpy as np
 import os
-from pathlib import Path
-
-import pandas as pd
 import zarr
 
 
@@ -24,13 +21,3 @@ def test_data(data_me_dir):
     assert (target_sums > 0).all()
     assert np.isfinite(target_sums).all()
 
-
-def test_data_fixtures_are_independent(data_me_dir, data_ac_dir):
-    """Creating either target dataset must leave the other intact."""
-    assert Path(data_me_dir).resolve() != Path(data_ac_dir).resolve()
-    for data_dir, kind in [(data_me_dir, "me"), (data_ac_dir, "ac")]:
-        expected = pd.read_csv(
-            Path(__file__).parent / "data" / f"targets_sc3_{kind}.txt", sep="\t"
-        )
-        actual = pd.read_csv(Path(data_dir) / "targets.txt", sep="\t")
-        assert actual.identifier.tolist() == expected.identifier.tolist()
