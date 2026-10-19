@@ -3,7 +3,6 @@ import os
 import pathlib
 import tempfile
 import pytest
-import subprocess
 
 import argparse
 
@@ -12,6 +11,7 @@ import numpy as np
 import pandas as pd
 import torch
 
+from baskerville.scripts import hound_snp
 from baskerville.scripts.hound_snp_folds import build_snp_cmd
 from baskerville.snps import parse_mix_dtype, partition_snp_stats
 
@@ -39,9 +39,6 @@ def test_snp_basic(static_model_dir, test_vcf_file):
     # Create temporary output directory
     with tempfile.TemporaryDirectory() as temp_dir:
         cmd = [
-            "python",
-            "-m",
-            "baskerville.scripts.hound_snp",
             "-f",
             fasta_file,
             "-t",
@@ -58,10 +55,7 @@ def test_snp_basic(static_model_dir, test_vcf_file):
             test_vcf_file,
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
-
-        # Check if command succeeded
-        assert result.returncode == 0, f"hound_snp failed: {result.stderr}"
+        hound_snp.main(cmd)
 
         # Check output files exist
         scores_file = f"{temp_dir}/scores.h5"
@@ -130,9 +124,6 @@ def test_snp_index_range(static_model_dir, test_vcf_file):
 
     with tempfile.TemporaryDirectory() as temp_dir:
         cmd = [
-            "python",
-            "-m",
-            "baskerville.scripts.hound_snp",
             "-f",
             fasta_file,
             "-o",
@@ -148,8 +139,7 @@ def test_snp_index_range(static_model_dir, test_vcf_file):
             test_vcf_file,
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        assert result.returncode == 0, f"hound_snp failed: {result.stderr}"
+        hound_snp.main(cmd)
 
         # Check output
         scores_file = f"{temp_dir}/scores.h5"
@@ -172,9 +162,6 @@ def test_snp_cluster_snps(static_model_dir, test_vcf_file):
 
     with tempfile.TemporaryDirectory() as temp_dir:
         cmd = [
-            "python",
-            "-m",
-            "baskerville.scripts.hound_snp",
             "-f",
             fasta_file,
             "-o",
@@ -188,8 +175,7 @@ def test_snp_cluster_snps(static_model_dir, test_vcf_file):
             test_vcf_file,
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        assert result.returncode == 0, f"hound_snp failed: {result.stderr}"
+        hound_snp.main(cmd)
 
         scores_file = f"{temp_dir}/scores.h5"
         assert os.path.exists(scores_file)
@@ -207,9 +193,6 @@ def test_snp_gene_scoring(static_model_dir, test_vcf_file, center_gene):
 
     with tempfile.TemporaryDirectory() as temp_dir:
         cmd = [
-            "python",
-            "-m",
-            "baskerville.scripts.hound_snp",
             "-f",
             fasta_file,
             "-t",
@@ -227,11 +210,8 @@ def test_snp_gene_scoring(static_model_dir, test_vcf_file, center_gene):
         ]
 
         if center_gene:
-            cmd.insert(3, "--center_gene")
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        assert result.returncode == 0, (
-            f"hound_snp with gene scoring failed: {result.stderr}"
-        )
+            cmd.insert(0, "--center_gene")
+        hound_snp.main(cmd)
 
         scores_file = f"{temp_dir}/scores.h5"
         assert os.path.exists(scores_file)
@@ -320,9 +300,6 @@ def test_snp_gene_scoring_span(static_model_dir, test_vcf_file):
 
     with tempfile.TemporaryDirectory() as temp_dir:
         cmd = [
-            "python",
-            "-m",
-            "baskerville.scripts.hound_snp",
             "-f",
             fasta_file,
             "-t",
@@ -339,10 +316,7 @@ def test_snp_gene_scoring_span(static_model_dir, test_vcf_file):
             test_vcf_file,
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        assert result.returncode == 0, (
-            f"hound_snp with gene scoring span failed: {result.stderr}"
-        )
+        hound_snp.main(cmd)
 
         scores_file = f"{temp_dir}/scores.h5"
         assert os.path.exists(scores_file)
@@ -378,9 +352,6 @@ def test_snp_covgene_only_gene_tracks(static_model_dir, test_vcf_file, center_ge
         targets_df.to_csv(targets_file, sep="\t")
 
         cmd = [
-            "python",
-            "-m",
-            "baskerville.scripts.hound_snp",
             "-f",
             fasta_file,
             "-t",
@@ -398,8 +369,7 @@ def test_snp_covgene_only_gene_tracks(static_model_dir, test_vcf_file, center_ge
         if center_gene:
             cmd.append("--center_gene")
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        assert result.returncode == 0, f"Failed: {result.stderr}"
+        hound_snp.main(cmd)
 
         with h5py.File(f"{temp_dir}/scores.h5", "r") as h5f:
             assert h5f["covgene/logSUM"].shape[1] == 1
@@ -422,9 +392,6 @@ def test_snp_cov_model_gene_scoring(static_model_dir, test_vcf_file):
 
     with tempfile.TemporaryDirectory() as temp_dir:
         cmd = [
-            "python",
-            "-m",
-            "baskerville.scripts.hound_snp",
             "-f",
             fasta_file,
             "-t",
@@ -440,8 +407,7 @@ def test_snp_cov_model_gene_scoring(static_model_dir, test_vcf_file):
             test_vcf_file,
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        assert result.returncode == 0, f"Failed: {result.stderr}"
+        hound_snp.main(cmd)
 
         with h5py.File(f"{temp_dir}/scores.h5", "r") as h5f:
             num_snps = len(h5f["snp"])
@@ -486,9 +452,6 @@ def test_snp_gene_head_model_scoring(model_gene_dir, test_vcf_file):
 
     with tempfile.TemporaryDirectory() as temp_dir:
         cmd = [
-            "python",
-            "-m",
-            "baskerville.scripts.hound_snp",
             "-f",
             fasta_file,
             "-t",
@@ -504,8 +467,7 @@ def test_snp_gene_head_model_scoring(model_gene_dir, test_vcf_file):
             test_vcf_file,
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        assert result.returncode == 0, f"Failed: {result.stderr}"
+        hound_snp.main(cmd)
 
         with h5py.File(f"{temp_dir}/scores.h5", "r") as h5f:
             num_snps = len(h5f["snp"])
@@ -549,9 +511,6 @@ def test_snp_normalization(static_model_dir, test_vcf_file):
         os.makedirs(norm_dir)
 
         cmd_norm = [
-            "python",
-            "-m",
-            "baskerville.scripts.hound_snp",
             "-f",
             fasta_file,
             "-t",
@@ -565,10 +524,7 @@ def test_snp_normalization(static_model_dir, test_vcf_file):
             test_vcf_file,
         ]
 
-        result = subprocess.run(cmd_norm, capture_output=True, text=True)
-        assert result.returncode == 0, (
-            f"Creating normalization file failed: {result.stderr}"
-        )
+        hound_snp.main(cmd_norm)
 
         norm_file = f"{norm_dir}/scores.h5"
         assert os.path.exists(norm_file), "Normalization file not created"
@@ -578,9 +534,6 @@ def test_snp_normalization(static_model_dir, test_vcf_file):
         os.makedirs(test_dir_norm)
 
         cmd = [
-            "python",
-            "-m",
-            "baskerville.scripts.hound_snp",
             "-f",
             fasta_file,
             "-t",
@@ -596,10 +549,7 @@ def test_snp_normalization(static_model_dir, test_vcf_file):
             test_vcf_file,
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        assert result.returncode == 0, (
-            f"hound_snp with normalization failed: {result.stderr}"
-        )
+        hound_snp.main(cmd)
 
         # Check output files exist
         scores_file = f"{test_dir_norm}/scores.h5"
@@ -641,9 +591,6 @@ def test_snp_normalization_missing_file(static_model_dir, test_vcf_file):
         missing_norm_file = f"{temp_dir}/missing_norm.h5"
 
         cmd = [
-            "python",
-            "-m",
-            "baskerville.scripts.hound_snp",
             "-f",
             fasta_file,
             "-t",
@@ -659,14 +606,8 @@ def test_snp_normalization_missing_file(static_model_dir, test_vcf_file):
             test_vcf_file,
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        # Should fail with FileNotFoundError
-        assert result.returncode != 0, (
-            "Expected failure with missing normalization file"
-        )
-        assert "not found" in result.stderr.lower(), (
-            f"Expected 'not found' error, got: {result.stderr}"
-        )
+        with pytest.raises(FileNotFoundError, match="not found"):
+            hound_snp.main(cmd)
 
 
 def test_vcf_fixture_validity(test_vcf_file):
@@ -741,7 +682,7 @@ def test_snp_folds_passes_compile():
     assert "--compile" in build_snp_cmd(args, "m.pth", 0, 1).split()
 
 
-def test_snp_mix_dtype_takes_effect(static_model_dir, test_vcf_file):
+def test_snp_mix_dtype_takes_effect(static_model_dir, test_vcf_file, capsys):
     """-m bfloat16 must change the model's precision (it was once a silent no-op)."""
     test_dir = str(pathlib.Path(__file__).parent)
     scores = {}
@@ -749,9 +690,6 @@ def test_snp_mix_dtype_takes_effect(static_model_dir, test_vcf_file):
         for mix_dtype in ["float32", "bfloat16"]:
             out_dir = f"{temp_dir}/{mix_dtype}"
             cmd = [
-                "python",
-                "-m",
-                "baskerville.scripts.hound_snp",
                 "-f",
                 f"{test_dir}/data/sc3.fa.gz",
                 "-t",
@@ -766,9 +704,9 @@ def test_snp_mix_dtype_takes_effect(static_model_dir, test_vcf_file):
                 f"{static_model_dir}/sc3_model.pth",
                 test_vcf_file,
             ]
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            assert result.returncode == 0, f"hound_snp failed: {result.stderr}"
-            assert ("WARNING: --mix_dtype" in result.stderr) == (mix_dtype != "float32")
+            hound_snp.main(cmd)
+            warned = "WARNING: --mix_dtype" in capsys.readouterr().err
+            assert warned == (mix_dtype != "float32")
             with h5py.File(f"{out_dir}/scores.h5", "r") as h5:
                 scores[mix_dtype] = h5["cov/logSUM"][:]
     assert not np.array_equal(scores["float32"], scores["bfloat16"])
@@ -783,9 +721,6 @@ def test_snp_compile_matches_eager(static_model_dir, test_vcf_file):
         for compile_flag in [[], ["--compile"]]:
             out_dir = f"{temp_dir}/{len(compile_flag)}"
             cmd = [
-                "python",
-                "-m",
-                "baskerville.scripts.hound_snp",
                 "-f",
                 f"{test_dir}/data/sc3.fa.gz",
                 "-t",
@@ -800,8 +735,7 @@ def test_snp_compile_matches_eager(static_model_dir, test_vcf_file):
                 f"{static_model_dir}/sc3_model.pth",
                 test_vcf_file,
             ]
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            assert result.returncode == 0, f"hound_snp failed: {result.stderr}"
+            hound_snp.main(cmd)
             with h5py.File(f"{out_dir}/scores.h5", "r") as h5:
                 scores[len(compile_flag)] = h5["cov/logSUM"][:].astype("float32")
     np.testing.assert_allclose(scores[1], scores[0], rtol=1e-2, atol=1e-2)

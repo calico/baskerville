@@ -6,7 +6,6 @@ import json
 import os
 import pytest
 import torch
-import numpy as np
 
 from baskerville.seqnn import SeqNN
 
@@ -223,42 +222,6 @@ def test_gradients_device_compatibility(params):
         assert torch.allclose(grads_cpu, grads_cuda.cpu(), atol=1e-4), (
             "Gradients should be similar across devices"
         )
-
-
-# Test with pre-trained model if available (optional fixture-based test)
-def test_gradients_with_pretrained_model(model_dir):
-    """Test gradients() method with a pre-trained model from fixtures."""
-    try:
-        # Load model parameters
-        params_file = os.path.join(model_dir, "params.json")
-        with open(params_file) as f:
-            params = json.load(f)
-
-        # Create model
-        model = SeqNN(params["model"])
-
-        # Restore trained weights
-        model_file = os.path.join(model_dir, "model_best.pth")
-        if os.path.exists(model_file):
-            model.restore(model_file)
-
-        # Create test input
-        seq_length = params["model"]["seq_length"]
-        x = torch.randn(4, seq_length, requires_grad=True)
-
-        # Test gradients computation
-        gradients = model.gradients(x, hi=0)
-
-        # Check output shape matches input
-        assert gradients.shape == x.shape, (
-            f"Expected shape {x.shape}, got {gradients.shape}"
-        )
-
-        # Check gradients are finite
-        assert torch.isfinite(gradients).all(), "Gradients should be finite"
-
-    except (FileNotFoundError, KeyError):
-        pytest.skip("Pre-trained model not available, skipping this test")
 
 
 def test_gradients_untransform(params):

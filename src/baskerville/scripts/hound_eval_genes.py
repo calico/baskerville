@@ -46,7 +46,7 @@ Measure accuracy at gene-level.
 ################################################################################
 # main
 ################################################################################
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description="Evaluate a trained model on genes.")
     parser.add_argument(
         "--head",
@@ -111,7 +111,7 @@ def main():
     parser.add_argument("model_file", help="Trained model file.")
     parser.add_argument("data_dir", help="Train/valid/test data directory")
     parser.add_argument("genes_gtf_file", help="GTF file with gene annotations")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     os.makedirs(args.out_dir, exist_ok=True)
 

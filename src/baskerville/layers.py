@@ -5,19 +5,6 @@ from torch import Tensor, einsum, nn
 import torch.nn.functional as F
 from typing import Optional
 
-try:
-    from mamba_ssm.ops.triton.layernorm_gated import RMSNorm as RMSNormGated
-    from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
-except (ImportError, RuntimeError):
-    RMSNormGated = None
-    mamba_chunk_scan_combined = None
-
-# separate: mamba_ssm builds predating Mamba-3 still provide the Mamba-2 ops above
-try:
-    from mamba_ssm.ops.triton.mamba3.mamba3_siso_combined import mamba3_siso_combined
-except (ImportError, RuntimeError):
-    mamba3_siso_combined = None
-
 from baskerville.position import (
     get_central_mask,
     relative_shift_orig,
@@ -26,6 +13,25 @@ from baskerville.position import (
 
 from baskerville.deprecated.layers import *
 from baskerville.condnorm import CondBatchNorm1d
+
+RMSNormGated = mamba_chunk_scan_combined = mamba3_siso_combined = None
+
+
+def _import_mamba():
+    """Import mamba_ssm kernels on first use; the package import takes seconds."""
+    global RMSNormGated, mamba_chunk_scan_combined, mamba3_siso_combined
+    try:
+        from mamba_ssm.ops.triton.layernorm_gated import RMSNorm as RMSNormGated
+        from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
+    except (ImportError, RuntimeError):
+        pass
+    # separate: mamba_ssm builds predating Mamba-3 still provide the Mamba-2 ops above
+    try:
+        from mamba_ssm.ops.triton.mamba3.mamba3_siso_combined import (
+            mamba3_siso_combined,
+        )
+    except (ImportError, RuntimeError):
+        pass
 
 
 class Activation(nn.Module):
@@ -411,6 +417,7 @@ class Hydra(nn.Module):
     ):
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
+        _import_mamba()
         self.d_model = d_model
         self.d_state = d_state
         self.d_conv = d_conv
@@ -650,6 +657,7 @@ class Hydra3(nn.Module):
     ):
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
+        _import_mamba()
         self.d_model = d_model
         self.d_state = d_state
         self.expand = expand
