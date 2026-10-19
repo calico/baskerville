@@ -20,13 +20,14 @@ def _placeholder_gcp_config(monkeypatch):
 
 
 @pytest.fixture(scope="session")
-def data_me_dir():
+def data_me_dir(tmp_path_factory):
     # inputs
     data_files_dir = str(pathlib.Path(__file__).parent / "data")
     fasta_file = f"{data_files_dir}/sc3.fa.gz"
     targets_file = f"{data_files_dir}/targets_sc3_me.txt"
-    folds_dir = f"{data_files_dir}/data_folds"
-    tvt_dir = f"{data_files_dir}/data_tvt"
+    output_dir = tmp_path_factory.mktemp("data_me")
+    folds_dir = str(output_dir / "folds")
+    tvt_dir = str(output_dir / "tvt")
 
     # clean
     if os.path.exists(folds_dir):
@@ -39,6 +40,10 @@ def data_me_dir():
         "baskerville.scripts.hound_data",
         "--folds",
         "8",
+        "--sample_pct",
+        "0.1",
+        "--seed",
+        "44",
         "-l",
         "16384",
         "--local",
@@ -67,13 +72,14 @@ def data_me_dir():
 
 
 @pytest.fixture(scope="session")
-def data_ac_dir():
+def data_ac_dir(tmp_path_factory):
     # inputs
     data_files_dir = str(pathlib.Path(__file__).parent / "data")
     fasta_file = f"{data_files_dir}/sc3.fa.gz"
     targets_file = f"{data_files_dir}/targets_sc3_ac.txt"
-    folds_dir = f"{data_files_dir}/data_folds"
-    tvt_dir = f"{data_files_dir}/data_tvt"
+    output_dir = tmp_path_factory.mktemp("data_ac")
+    folds_dir = str(output_dir / "folds")
+    tvt_dir = str(output_dir / "tvt")
 
     # clean
     if os.path.exists(folds_dir):
@@ -86,6 +92,10 @@ def data_ac_dir():
         "baskerville.scripts.hound_data",
         "--folds",
         "8",
+        "--sample_pct",
+        "0.1",
+        "--seed",
+        "44",
         "-l",
         "16384",
         "--local",
@@ -155,7 +165,7 @@ def static_model_dir():
 
 
 @pytest.fixture(scope="session")
-def transfer_dir(data_ac_dir, model_dir):
+def transfer_dir(data_ac_dir, static_model_dir):
     test_dir = str(pathlib.Path(__file__).parent)
     params_file = f"{test_dir}/data/params_sc3.json"
     params_transfer_file = f"{test_dir}/data/params_sc3_ac.json"
@@ -164,9 +174,11 @@ def transfer_dir(data_ac_dir, model_dir):
     if os.path.exists(output_dir):
         shutil.rmtree(output_dir)
 
-    # copy params file, adding pretained model path
-    model_file = f"{model_dir}/model_best.pth"
-    params_pretrained(params_file, params_transfer_file, model_file)
+    with open(params_file) as f:
+        params = json.load(f)
+    params["model"]["pretrained_model"] = f"{static_model_dir}/sc3_model.pth"
+    with open(params_transfer_file, "w") as f:
+        json.dump(params, f)
 
     cmd = [
         "python",
@@ -186,27 +198,6 @@ def transfer_dir(data_ac_dir, model_dir):
         os.remove(params_transfer_file)
         if os.path.exists(output_dir):
             shutil.rmtree(output_dir)
-
-
-def params_pretrained(params_file, params_transfer_file, pretrained_model):
-    """Copy params file, adding pretained model path.
-
-    Args:
-        params_file (str): Path to the original params file.
-        params_transfer_file (str): Path to the transfer params file.
-        pretrained_model (str): Path to the pretrained model, if any.
-    """
-    with open(params_transfer_file, "w") as params_transfer_open:
-        for line in open(params_file):
-            print(line, file=params_transfer_open, end="")
-            if line.strip() == '"model": {':
-                if pretrained_model is not None:
-                    print(
-                        f'        "pretrained_model": "{pretrained_model}",',
-                        file=params_transfer_open,
-                    )
-            elif line.split()[0] == '"train_epochs_max":':
-                print(f'        "train_epochs_max": 1,', file=params_transfer_open)
 
 
 @pytest.fixture(scope="session")
@@ -325,8 +316,7 @@ def model_gene_mixed_dir(data_gene_dir, data_me_dir):
 @pytest.fixture(scope="session")
 def data_gene_dir(data_gene_folds_dir):
     """Convert folds dataset to train/valid/test split."""
-    data_files_dir = str(pathlib.Path(__file__).parent / "data")
-    tvt_dir = f"{data_files_dir}/data_tvt_gene"
+    tvt_dir = str(pathlib.Path(data_gene_folds_dir).parent / "tvt")
 
     # clean
     if os.path.exists(tvt_dir):
@@ -344,7 +334,7 @@ def data_gene_dir(data_gene_folds_dir):
 
 
 @pytest.fixture(scope="session")
-def data_gene_folds_dir():
+def data_gene_folds_dir(tmp_path_factory):
     """Create test data with gene expression, yielding raw folds directory."""
     # inputs
     data_files_dir = str(pathlib.Path(__file__).parent / "data")
@@ -352,7 +342,7 @@ def data_gene_folds_dir():
     targets_file = f"{data_files_dir}/targets_sc3_me.txt"
     targets_gene_file = f"{data_files_dir}/targets_sc3_gene.txt"
     gtf_file = f"{data_files_dir}/sc3_genes.gtf"
-    folds_dir = f"{data_files_dir}/data_folds_gene"
+    folds_dir = str(tmp_path_factory.mktemp("data_gene") / "folds")
 
     # clean
     if os.path.exists(folds_dir):
@@ -365,6 +355,10 @@ def data_gene_folds_dir():
         "baskerville.scripts.hound_data",
         "--folds",
         "8",
+        "--sample_pct",
+        "0.1",
+        "--seed",
+        "44",
         "-l",
         "16384",
         "--local",
