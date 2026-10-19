@@ -20,4 +20,3 @@ def test_data(data_me_dir):
     target_sums = test_zarr_open["target"][:].sum(axis=(0, 2), dtype="float32")
     assert (target_sums > 0).all()
     assert np.isfinite(target_sums).all()
-
