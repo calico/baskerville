@@ -1,0 +1,35 @@
+# Build the gcprunner image and push it to Calico's Artifact Registry
+# (us-west1-docker.pkg.dev/calico-docker-registry/baskerville/baskerville:commit-<sha>).
+# Runs on every push to the docker-image branch, so it works without living on main;
+# workflow_dispatch also allows manual runs once this file is on the default branch.
+
+name: Build and Push baskerville Docker Image
+
+on:
+  push:
+    branches: [docker-image]
+  workflow_dispatch:
+    inputs:
+      release-version:
+        description: "New version (e.g., v0.0.0)"
+        required: false
+      custom-docker-tags:
+        description: "Custom Docker tags (e.g., latest, dev)"
+        required: false
+
+jobs:
+  call-build-push-cdr:
+    permissions:
+      contents: "read"
+      id-token: "write"
+
+    uses: calico/calico-github-actions/.github/workflows/build-push-image-cdr.yml@main
+    with:
+      environment: dev
+      gar-docker-repo-name: baskerville
+      gar-image-name: baskerville
+      release-version: ${{ inputs.release-version }}
+      custom-docker-tags: ${{ inputs.custom-docker-tags }}
+      dockerfile-relative-path: dockerfiles/baskerville.Dockerfile
+      free-extra-disk-space: true
+    secrets: inherit
