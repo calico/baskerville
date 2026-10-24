@@ -23,6 +23,8 @@ path you are expected to have. It is used only to rebuild training data with
 Weights for 4 folds × {human, mouse} are hosted in a public GCS bucket.
 `params.json` and `targets.txt` are shared across folds and live alongside the fold directories.
 
+The weights are released under the Apache License 2.0 ([LICENSE](../../LICENSE)); a copy is stored next to them in the bucket.
+
 ```
 gs://seqnn-share/prime_pt/models_human/params.json
 gs://seqnn-share/prime_pt/models_human/targets.txt

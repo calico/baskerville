@@ -36,6 +36,8 @@ pip install -e ".[cuda]"
 
 ## Model weights
 
+The weights are released under the Apache License 2.0 ([LICENSE](../../LICENSE)); a copy is stored next to them in the bucket.
+
 Cerberus is an ensemble of 8 replicate models, each trained with a different
 held-out fold. Each model predicts both species, so `params.json` and the targets
 tables are shared by all folds:

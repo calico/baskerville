@@ -217,5 +217,6 @@ npx prettier@3.8.2 --check .
 
 ## License
 
-This project is licensed under the Apache License 2.0; see [LICENSE](LICENSE).
+This project, including the model weights released under [`releases/`](releases/),
+is licensed under the Apache License 2.0; see [LICENSE](LICENSE).
 Third-party code and its licenses are listed in [NOTICE](NOTICE).
