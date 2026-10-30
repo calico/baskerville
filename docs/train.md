@@ -119,6 +119,20 @@ H3K9me3 tracks get 0.1 here and every other ChIP track 0.2, each multiplying wha
 
 The loss is a weighted mean over tracks, so only the ratios matter: scaling every weight by a constant leaves training unchanged, and `global_clipnorm` keeps its meaning across weightings. The resolved weights are printed at startup, with a warning for any rule whose selector matched nothing. The `mlm` loss scores nucleotides rather than tracks and rejects both keys.
 
+### Positional split weights
+
+`"loss": "poisson_tree"` is position-weighted Poisson decomposed over the binary tree of positional splits: the window total, then each 2^k-bin block divided into halves, k = 1 … log2(L). Each level of splits gets its own weight:
+
+```
+c_k = min(1, (2^k / split_knee)^−split_exp)
+```
+
+- `split_exp` (default 0): the weight falls by 2^−split_exp per doubling of block size. 0 weights every level 1, which is `poisson_mn` up to a constant.
+- `split_knee` (bins, a power of two; default 1): blocks up to this size keep weight 1.
+- `total_weight`: the weight on the window total, set apart from the curve.
+
+The sequence length must be a power of two. Only ratios between weights matter.
+
 ### Validation metrics and early stopping
 
 Each epoch, `log.txt` gets a summary line per dataset (`loss`, `r`, `r2`, `spec`), and `metrics.tsv` gets every metric as a long table with columns `epoch, split, dataset, group, metric, value`. Dataset-level rows have `group` = `all`.

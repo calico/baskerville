@@ -550,11 +550,9 @@ class PoissonMultinomialLoss(_Loss):
         epsilon: float = 1e-9,
         rescale: bool = False,
         reduction: str = "mean",
-        split_weights: list | None = None,
     ):
         super(PoissonMultinomialLoss, self).__init__(reduction=reduction)
         self.total_weight = total_weight
-        self.split_weights = split_weights
         self.weight_range = weight_range
         self.weight_exp = weight_exp
         self.epsilon = epsilon
@@ -575,26 +573,6 @@ class PoissonMultinomialLoss(_Loss):
             self.register_buffer("position_weights", weights)
             self.register_buffer("weights_sum", weights.sum())
 
-    def _split_loss(self, y_true, y_pred):
-        """t·P(total) + Σ_k c_k·(level-k binomial splits), computed as Σ_ℓ a_ℓ·P_ℓ
-        over sum-pooled values: a_0 = c_1, a_ℓ = c_{ℓ+1} − c_ℓ, a_K = t − c_K.
-
-        split_weights c_1..c_K weight the splits of 2^k-bin blocks into halves,
-        K = log2(L). All ones gives the default loss up to a constant.
-        """
-        c = [float(v) for v in self.split_weights]
-        if 2 ** len(c) != y_true.shape[-1]:
-            raise ValueError("split_weights needs one weight per level, log2(L)")
-        coefs = [c[0]] + [b - a for a, b in zip(c, c[1:])] + [self.total_weight - c[-1]]
-        loss = 0
-        for level, coef in enumerate(coefs):
-            if coef != 0:
-                loss = loss + coef * self._poisson(y_true, y_pred).sum(dim=-1)
-            if level < len(c):
-                y_true = y_true.unflatten(-1, (-1, 2)).sum(dim=-1)
-                y_pred = y_pred.unflatten(-1, (-1, 2)).sum(dim=-1)
-        return loss / self.weights_sum
-
     def forward(self, y_pred, y_true, target_weights=None):
         """Args:
         y_pred, y_true: B x T x L predictions and targets.
@@ -606,9 +584,6 @@ class PoissonMultinomialLoss(_Loss):
         # apply position weights
         y_true = y_true * self.position_weights
         y_pred = y_pred * self.position_weights
-        if self.split_weights is not None:
-            loss = self._split_loss(y_true, y_pred)
-            return weighted_reduce(loss, target_weights, self.reduction)
 
         # sum across lengths
         s_true = y_true.sum(dim=-1)  # B x T
@@ -637,6 +612,62 @@ class PoissonMultinomialLoss(_Loss):
             loss = loss_raw
 
         return weighted_reduce(loss, target_weights, self.reduction)
+
+
+def split_profile(num_levels: int, split_exp: float, split_knee: int) -> list:
+    """Split weights c_1..c_K = min(1, (2^k / split_knee)^−split_exp).
+
+    c_k weights the splits of 2^k-bin blocks into halves: 1 up to blocks of
+    split_knee bins, then falling by 2^−split_exp per doubling of block size.
+    """
+    return [min(1.0, (2**k / split_knee) ** -split_exp) for k in range(1, num_levels + 1)]
+
+
+class PoissonTreeLoss(PoissonMultinomialLoss):
+    """Position-weighted Poisson over the binary tree of positional splits, weighted per level.
+
+    loss = [t·P(window total) + Σ_k c_k·B_k] / Σw, where B_k is the binomial NLL of
+    the level-k splits (2^k-bin blocks into halves) and c_k = split_profile(...).
+    Computed as Σ_ℓ a_ℓ·P_ℓ, P_ℓ the Poisson NLL sum-pooled to blocks of 2^ℓ bins:
+    a_0 = c_1, a_ℓ = c_{ℓ+1} − c_ℓ, a_K = t − c_K. split_exp 0 gives
+    PoissonMultinomialLoss(total_weight) up to a constant. Needs a power-of-two length.
+    """
+
+    def __init__(
+        self,
+        total_weight: float = 1,
+        split_exp: float = 0,
+        split_knee: int = 1,
+        weight_range: float = 1,
+        weight_exp: int = 4,
+        epsilon: float = 1e-9,
+        reduction: str = "mean",
+    ):
+        super().__init__(total_weight, weight_range, weight_exp, epsilon, reduction=reduction)
+        if split_knee < 1 or split_knee & (split_knee - 1):
+            raise ValueError("split_knee must be a power of two (bins)")
+        self.split_exp = split_exp
+        self.split_knee = split_knee
+
+    def forward(self, y_pred, y_true, target_weights=None):
+        seq_len = y_true.shape[-1]
+        num_levels = seq_len.bit_length() - 1
+        if 2**num_levels != seq_len:
+            raise ValueError("PoissonTreeLoss needs a power-of-two length")
+        self._setup_position_weights(seq_len, y_true.device)
+        y_true = y_true * self.position_weights
+        y_pred = y_pred * self.position_weights
+
+        c = split_profile(num_levels, self.split_exp, self.split_knee)
+        coefs = [c[0]] + [b - a for a, b in zip(c, c[1:])] + [self.total_weight - c[-1]]
+        loss = 0
+        for level, coef in enumerate(coefs):
+            if coef != 0:
+                loss = loss + coef * self._poisson(y_true, y_pred).sum(dim=-1)
+            if level < num_levels:
+                y_true = y_true.unflatten(-1, (-1, 2)).sum(dim=-1)
+                y_pred = y_pred.unflatten(-1, (-1, 2)).sum(dim=-1)
+        return weighted_reduce(loss / self.weights_sum, target_weights, self.reduction)
 
 
 class DatasetMetrics:

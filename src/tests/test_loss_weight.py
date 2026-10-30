@@ -148,7 +148,7 @@ def test_position_weights_leave_inputs_intact(loss_inputs):
     assert torch.equal(p, y_pred) and torch.equal(t, y_true)
 
 
-@pytest.mark.parametrize("label", ["poisson", "poisson_mn"])
+@pytest.mark.parametrize("label", ["poisson", "poisson_mn", "poisson_tree"])
 def test_every_loss_takes_weights(loss_inputs, label):
     y_pred, y_true = loss_inputs
     loss_fn = parse_loss(label, total_weight=0.25)

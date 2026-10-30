@@ -30,32 +30,43 @@ def _split_reference(yp, y, w, wsum, c, t):
     return ((loss + t * total) / wsum).mean()
 
 
-def test_split_weights_nonuniform():
+def test_tree_matches_split_reference():
     yp, y = _yy((2, 3, 8))
-    c, t = [1.7, 0.6, 1.2], 0.3
-    loss_fn = metrics.PoissonMultinomialLoss(t, 10, 8, epsilon=0, split_weights=c)
+    t = 0.3
+    loss_fn = metrics.PoissonTreeLoss(t, split_exp=0.5, split_knee=2, weight_range=10,
+                                      weight_exp=8, epsilon=0)
     loss = loss_fn(yp, y)
     (grad,) = torch.autograd.grad(loss, yp)
     w = metrics.position_weights(8, 10, 8).double()
+    c = metrics.split_profile(3, 0.5, 2)
     ref = _split_reference(yp, y, w, loss_fn.weights_sum.double(), c, t)
     (grad_ref,) = torch.autograd.grad(ref, yp)
     torch.testing.assert_close(loss, ref, rtol=1e-10, atol=1e-12)
     torch.testing.assert_close(grad, grad_ref, rtol=1e-10, atol=1e-12)
 
 
-def test_split_weights_ones_match_default():
+def test_tree_flat_matches_poisson_mn():
     yp, y = _yy((2, 3, 16))
     grads = []
-    for c in [None, [1.0] * 4]:
-        loss = metrics.PoissonMultinomialLoss(0.25, 10, 8, split_weights=c)(yp, y)
-        grads.append(torch.autograd.grad(loss, yp)[0])
+    for loss_fn in [metrics.PoissonMultinomialLoss(0.25, 10, 8),
+                    metrics.PoissonTreeLoss(0.25, weight_range=10, weight_exp=8)]:
+        grads.append(torch.autograd.grad(loss_fn(yp, y), yp)[0])
     torch.testing.assert_close(grads[0], grads[1], rtol=1e-6, atol=1e-9)
 
 
-def test_split_weights_length_checked():
-    yp, y = _yy((1, 1, 16))
-    with pytest.raises(ValueError, match="one weight per level"):
-        metrics.PoissonMultinomialLoss(0.25, 10, 8, split_weights=[1.0] * 3)(yp, y)
+def test_split_profile():
+    c = np.array(metrics.split_profile(14, 0.25, 32))
+    np.testing.assert_allclose(c[:5], 1)
+    np.testing.assert_allclose(c[5:], 2.0 ** (-0.25 * np.arange(1, 10)))
+    assert metrics.split_profile(2, 0.5, 1) == [2**-0.5, 0.5]
+
+
+def test_tree_checks_lengths():
+    yp, y = _yy((1, 1, 12))
+    with pytest.raises(ValueError, match="power-of-two length"):
+        metrics.PoissonTreeLoss(0.25)(yp, y)
+    with pytest.raises(ValueError, match="split_knee"):
+        metrics.PoissonTreeLoss(0.25, split_knee=24)
 
 
 def _values():

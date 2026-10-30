@@ -210,7 +210,8 @@ class Trainer:
                 self.total_weight,
                 self.weight_range,
                 self.weight_exp,
-                self.params.get("split_weights"),
+                self.params.get("split_exp", 0),
+                self.params.get("split_knee", 1),
             )
 
         # gene expression loss
@@ -1418,7 +1419,8 @@ def parse_loss(
     total_weight: float = 1,
     weight_range: float = 1,
     weight_exp: int = 1,
-    split_weights: list | None = None,
+    split_exp: float = 0,
+    split_knee: int = 1,
 ):
     """Parse loss function from label, strategy, and fitting method.
 
@@ -1428,7 +1430,8 @@ def parse_loss(
         total_weight (float): Total weight for PoissionMultinomial.
         weight_range (float): Weight range for PoissionMultinomial.
         weight_exp (int): Weight exponent for PoissionMultinomial.
-        split_weights (list): Per-level split weights for PoissonMultinomial.
+        split_exp (float): Split-weight decline per block doubling for PoissonTree.
+        split_knee (int): Block size (bins) where PoissonTree's split weights start to fall.
 
     Returns:
       loss_fn: Torch loss
@@ -1437,10 +1440,15 @@ def parse_loss(
         loss_fn = metrics.PoissonLoss()
     elif loss_label == "poisson_mn":
         loss_fn = metrics.PoissonMultinomialLoss(
+            total_weight=total_weight, weight_range=weight_range, weight_exp=weight_exp
+        )
+    elif loss_label == "poisson_tree":
+        loss_fn = metrics.PoissonTreeLoss(
             total_weight=total_weight,
+            split_exp=split_exp,
+            split_knee=split_knee,
             weight_range=weight_range,
             weight_exp=weight_exp,
-            split_weights=split_weights,
         )
     else:
         raise ValueError(f"Loss function {loss_label} not recognized")
