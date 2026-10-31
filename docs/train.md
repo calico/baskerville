@@ -133,6 +133,15 @@ c_k = min(1, (2^k / split_knee)^−split_exp)
 
 The sequence length must be a power of two. Only ratios between weights matter.
 
+### Cross-track specificity term
+
+`qmap_weight` (λ; one value, or a list with one per dataset; default 0) adds a term on the spec metric's groups, computed on quantile-mapped strand sums. With a, b the group-centered mapped prediction and target, `qmap_form` picks the term:
+
+- `mse` (default): (a − b)².
+- `dot`: (a − b)² − a², whose gradient −2b pushes toward the target's deviation and leaves magnitude to the main loss.
+- `proj`: |b|(1 − cos(a, b)) per track over the batch, which rewards direction only.
+- `mn`: a multinomial across the group's tracks at each position, on uncentered mapped values.
+
 ### Validation metrics and early stopping
 
 Each epoch, `log.txt` gets a summary line per dataset (`loss`, `r`, `r2`, `spec`), and `metrics.tsv` gets every metric as a long table with columns `epoch, split, dataset, group, metric, value`. Dataset-level rows have `group` = `all`.

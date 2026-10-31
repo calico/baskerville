@@ -290,10 +290,11 @@ class Trainer:
         self.train_metrics_every = self.params.get("train_metrics_every", 10)
 
         # cross-track term in qmap space, one per dataset (its groups and tables);
-        # qmap_weight is one λ or a list with one per dataset
+        # qmap_weight is one λ or a list with one per dataset; qmap_form its form
         self.qmap_weight = per_dataset(
             self.params.get("qmap_weight", 0), self.num_datasets, "qmap_weight"
         )
+        self.qmap_form = self.params.get("qmap_form", "mse")
         self.qmap_fns = None
         if any(w > 0 for w in self.qmap_weight):
             self.qmap_fns = [
@@ -303,6 +304,7 @@ class Trainer:
                     self.weight_range,
                     self.weight_exp,
                     self.spec_group_min,
+                    form=self.qmap_form,
                 ).to(self.device)
                 for data in self.train_data
             ]

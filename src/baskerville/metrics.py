@@ -206,29 +206,47 @@ def qmap_apply(x, xk, qk):
 class QmapCrossTrackLoss(nn.Module):
     """Cross-track specificity loss in differentiable quantile-mapped space.
 
-    For each group of SpecPearsonCorrCoef (strand sums, >= group_min tracks):
-    map preds and targets through qmap_knots, subtract the group mean at each
-    position, and take the position-weighted mean squared difference of the
-    centered pred and target. Each group's error is divided by its mapped
-    variance (the table values' variance under each track's histogram, averaged
-    over the group), and groups are averaged with equal weight, so mapped units
-    don't weight groups. Inputs past a track's observed values clamp, as in
-    qmap_tables, so they carry no gradient.
+    For each group of SpecPearsonCorrCoef (strand sums, >= group_min tracks),
+    map preds and targets through qmap_knots. With a, b the group-centered
+    mapped pred and target (the group mean at each position subtracted), the
+    per-track loss over the batch's positions (position-weighted) is, by form:
+
+    - mse: mean of (a - b)^2.
+    - dot: mean of (a - b)^2 - a^2, i.e. mse without the penalty on a's own
+      magnitude; the gradient is -2b.
+    - proj: (|b| - a.b / |a|) / sqrt(n), i.e. |b|(1 - cos(a, b)); a's direction
+      only. |a| is floored at 0.1 |b|, below which proj acts like dot.
+    - mn: the multinomial across the group's tracks at each position, on
+      uncentered mapped values: sum_t (z_t + e) log(q_t / p_t), with q, p the
+      target and pred shares of the group sum, e 1e-3 of the group's mean
+      mapped value. Zero at pred = target; weighted by the group's target sum.
+
+    Groups weigh equally: each group's loss is divided by its mapped variance
+    (mse, dot), SD (proj) or mean (mn), from the table values under each
+    track's histogram, averaged over the group. Inputs past a track's observed
+    values clamp, as in qmap_tables, so they carry no gradient.
 
     Args:
         targets_df: targets table aligned with the output tracks.
         target_hist: per-track histograms of the stored targets.
         weight_range, weight_exp: position weights, as in PoissonMultinomialLoss.
+        form: mse, dot, proj or mn.
     """
 
+    FORMS = ("mse", "dot", "proj", "mn")
+
     def __init__(self, targets_df, target_hist, weight_range=1, weight_exp=4,
-                 group_min: int = 20, num_knots: int = 256):
+                 group_min: int = 20, num_knots: int = 256, form: str = "mse"):
         super().__init__()
+        if form not in self.FORMS:
+            raise ValueError(f"qmap form {form!r} is not one of {self.FORMS}")
+        self.form = form
         self.weight_range, self.weight_exp = weight_range, weight_exp
         rep_pos, pair_pos = dataset.strand_collapse(targets_df)
         groups = dataset.target_groups(targets_df)[rep_pos]
         hist = np.asarray(target_hist)
-        rep, pair, gid, xk, qk, var = [], [], [], [], [], []
+        rep, pair, gid, xk, qk, var, avg = [], [], [], [], [], [], []
+        self.group_names = names = []
         for g in sorted(set(groups)):
             gi = groups == g
             if gi.sum() >= group_min:
@@ -237,14 +255,17 @@ class QmapCrossTrackLoss(nn.Module):
                 x, q = qmap_knots(hist[rep_pos[gi]], num_knots, tables)
                 mean = (h * tables).sum(1, keepdims=True) / h.sum(1, keepdims=True)
                 v = ((h * (tables - mean) ** 2).sum(1) / h.sum(1)).mean()
-                rep.append(rep_pos[gi]), pair.append(pair_pos[gi])
+                rep.append(rep_pos[gi]), pair.append(pair_pos[gi]), names.append(g)
                 gid.append(np.full(gi.sum(), len(xk))), xk.append(x), qk.append(q)
                 var.append(np.full(gi.sum(), v))
+                avg.append(np.full(gi.sum(), mean.mean()))
         if not rep:
             raise ValueError(f"no target group has >= {group_min} tracks")
-        # per-track weight 1 / (groups · group size · group mapped variance)
-        var, size = np.concatenate(var), np.bincount(np.concatenate(gid))
-        weight = np.where(var > 0, 1 / (len(size) * size[np.concatenate(gid)] * var), 0)
+        # per-track weight 1 / (groups · group size · group mapped scale)
+        var, avg = np.concatenate(var), np.concatenate(avg)
+        scale = {"mse": var, "dot": var, "proj": np.sqrt(var), "mn": avg}[form]
+        size = np.bincount(np.concatenate(gid))
+        weight = np.where(scale > 0, 1 / (len(size) * size[np.concatenate(gid)] * scale), 0)
         gid = torch.from_numpy(np.concatenate(gid))
         member = nn.functional.one_hot(gid).double()
         self.register_buffer("rep", torch.from_numpy(np.concatenate(rep)))
@@ -254,13 +275,39 @@ class QmapCrossTrackLoss(nn.Module):
         self.register_buffer("xk", torch.from_numpy(np.concatenate(xk)).float())
         self.register_buffer("qk", torch.from_numpy(np.concatenate(qk)).float())
         self.register_buffer("track_weight", torch.from_numpy(weight).float())
+        self.register_buffer("eps", torch.from_numpy(1e-3 * avg).float().view(-1, 1, 1))
         self.register_buffer("position_weights", None)
 
-    def _centered(self, x):
-        """(B, T, L) -> (Tq, B, L) group-centered qmap values of strand sums."""
+    def _mapped(self, x):
+        """(B, T, L) -> (Tq, B, L) qmap values of strand sums."""
         s = (x[:, self.rep] + x[:, self.pair]).transpose(0, 1)
-        z = qmap_apply(s.flatten(1), self.xk, self.qk).view(s.shape)
-        return z - torch.einsum("tg,tbl->gbl", self.mean_op, z)[self.gid]
+        return qmap_apply(s.flatten(1), self.xk, self.qk).view(s.shape)
+
+    def _group_mean(self, z):
+        """(Tq, B, L) -> (Tq, B, L) each track's group mean at each position."""
+        return torch.einsum("tg,tbl->gbl", self.mean_op, z)[self.gid]
+
+    def per_track(self, zp, zy):
+        """(Tq,) per-track loss of mapped preds zp and targets zy, (Tq, B, L)."""
+        w = self.position_weights.view(1, 1, -1)
+        n = zp.shape[1] * w.sum()
+
+        def wsum(x):
+            return (w * x).sum((1, 2))
+
+        if self.form == "mn":
+            e = self.eps
+            log_q = torch.log((zy + e) / (self._group_mean(zy) + e))
+            log_p = torch.log((zp + e) / (self._group_mean(zp) + e))
+            return wsum((zy + e) * (log_q - log_p)) / n
+        a, b = zp - self._group_mean(zp), zy - self._group_mean(zy)
+        if self.form == "mse":
+            return wsum((a - b).pow(2)) / n
+        if self.form == "dot":
+            return wsum((a - b).pow(2) - a.pow(2)) / n
+        bb = wsum(b.pow(2))
+        aa = wsum(a.pow(2)).clamp_min((0.01 * bb).clamp_min(1e-20))
+        return (bb.sqrt() - wsum(a * b) / aa.sqrt()) / n.sqrt()
 
     def forward(self, y_pred, y_true):
         if self.position_weights is None:
@@ -270,11 +317,9 @@ class QmapCrossTrackLoss(nn.Module):
         # fp32 throughout: the group mean is a matmul, which autocast would run in bf16
         with torch.autocast(y_true.device.type, enabled=False):
             with torch.no_grad():
-                cy = self._centered(y_true.float())
-            d2 = (self._centered(y_pred.float()) - cy).pow(2)
-            w = self.position_weights.view(1, 1, -1)
-            per_track = (w * d2).sum(-1).mean(-1) / w.sum()  # (Tq,)
-            return (self.track_weight * per_track).sum()
+                zy = self._mapped(y_true.float())
+            zp = self._mapped(y_pred.float())
+            return (self.track_weight * self.per_track(zp, zy)).sum()
 
 
 class SpecPearsonCorrCoef:

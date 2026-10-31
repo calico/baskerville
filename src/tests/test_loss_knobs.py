@@ -141,7 +141,7 @@ def targets_df():
     return pd.DataFrame(rows, columns=["identifier", "description", "strand_pair"])
 
 
-def _qmap_loss(targets_df, seed=0):
+def _qmap_loss(targets_df, seed=0, form="mse"):
     rng = np.random.default_rng(seed)
     y = rng.gamma(0.5, 3, (2, 6, 32)) * (rng.random((2, 6, 32)) < 0.6)
     y = y.astype(np.float16)
@@ -149,7 +149,7 @@ def _qmap_loss(targets_df, seed=0):
     s = (y.astype(np.float32) + y[:, pair].astype(np.float32)).astype(np.float16)
     bits = s.view(np.uint16).transpose(1, 0, 2).reshape(6, -1)
     hist = np.stack([np.bincount(b, minlength=dataset.NUM_HIST_BINS) for b in bits])
-    loss_fn = metrics.QmapCrossTrackLoss(targets_df, hist, 10, 8, group_min=4)
+    loss_fn = metrics.QmapCrossTrackLoss(targets_df, hist, 10, 8, group_min=4, form=form)
     return loss_fn, torch.from_numpy(y.astype(np.float64))
 
 
@@ -179,7 +179,8 @@ def test_qmap_loss_finite_and_specific(targets_df):
     assert loss_fn(off, y).item() > 0
 
 
-def test_qmap_loss_groups_weigh_equally():
+@pytest.mark.parametrize("form", metrics.QmapCrossTrackLoss.FORMS)
+def test_qmap_loss_groups_weigh_equally(form):
     """Group B is group A at 10x scale: the same error costs the same in either."""
     df = pd.DataFrame(
         [(f"{g}{i}", f"{d}:{g}{i}", k) for k, (g, d, i) in enumerate(
@@ -192,14 +193,14 @@ def test_qmap_loss_groups_weigh_equally():
     s = (2 * y.astype(np.float32)).astype(np.float16)  # unstranded: strand sum is 2y
     bits = s.view(np.uint16).transpose(1, 0, 2).reshape(6, -1)
     hist = np.stack([np.bincount(b, minlength=dataset.NUM_HIST_BINS) for b in bits])
-    loss_fn = metrics.QmapCrossTrackLoss(df, hist, 10, 8, group_min=3)
+    loss_fn = metrics.QmapCrossTrackLoss(df, hist, 10, 8, group_min=3, form=form)
     y = torch.from_numpy(y.astype(np.float64))
     losses = []
     for t in (0, 3):  # first track of group a, of group b
         yp = y.clone()
         yp[:, t] *= 1.5
         losses.append(loss_fn(yp, y).item())
-    assert losses[0] > 0
+    assert losses[0] != 0
     np.testing.assert_allclose(losses[0], losses[1], rtol=0.02)
 
 
@@ -210,3 +211,70 @@ def test_per_dataset_weights():
     assert per_dataset([0.1, 0.9], 2, "w") == [0.1, 0.9]
     with pytest.raises(ValueError, match="one value per dataset"):
         per_dataset([0.1], 2, "w")
+
+
+FORMS = metrics.QmapCrossTrackLoss.FORMS
+
+
+@pytest.mark.parametrize("form", FORMS)
+def test_qmap_forms_finite(targets_df, form):
+    loss_fn, y = _qmap_loss(targets_df, form=form)
+    yp = torch.zeros_like(y).requires_grad_()  # constant preds: a = 0
+    (grad,) = torch.autograd.grad(loss_fn(yp, y), yp)
+    assert torch.isfinite(grad).all() and grad.abs().sum() > 0
+    assert grad[:, 5].abs().max().item() == 0
+
+
+@pytest.mark.parametrize("form", ["proj", "mn"])
+def test_qmap_forms_zero_at_target(targets_df, form):
+    loss_fn, y = _qmap_loss(targets_df, form=form)
+    yp = y.clone().requires_grad_()
+    loss = loss_fn(yp, y)
+    (grad,) = torch.autograd.grad(loss, yp)
+    assert abs(loss.item()) < 1e-6 and grad.abs().max().item() < 1e-6  # fp32
+
+
+def _mapped(targets_df, form):
+    """A form's loss, with synthetic mapped values (Tq = 4, B = 2, L = 16)."""
+    loss_fn = _qmap_loss(targets_df, form=form)[0].double()
+    loss_fn.position_weights = metrics.position_weights(16, 10, 8, "cpu").double()
+    rng = np.random.default_rng(0)
+    zy, zp = (torch.from_numpy(rng.gamma(0.5, 3, (4, 2, 16)) + 0.1) for _ in range(2))
+    return loss_fn, zp, zy
+
+
+def test_qmap_dot_gradient(targets_df):
+    """dot's gradient is -2b, whatever the prediction."""
+    loss_fn, zp, zy = _mapped(targets_df, "dot")
+    zp.requires_grad_()
+    (g,) = torch.autograd.grad(loss_fn.per_track(zp, zy).sum(), zp)
+    w = loss_fn.position_weights
+    b = zy - zy.mean(0, keepdim=True)
+    torch.testing.assert_close(g, -2 * w * b / (2 * w.sum()))
+
+
+def test_qmap_proj_direction_only(targets_df):
+    """proj: any positive multiple of b, plus a shift shared by the group, costs 0;
+    mse charges for the scale."""
+    loss_fn, zp, zy = _mapped(targets_df, "proj")
+    b = zy - zy.mean(0, keepdim=True)
+    zero = torch.zeros(4, dtype=b.dtype)
+    torch.testing.assert_close(loss_fn.per_track(2.5 * b + 7, zy), zero, atol=1e-12, rtol=0)
+    assert (loss_fn.per_track(-b, zy) > 0).all()
+    mse, _, _ = _mapped(targets_df, "mse")
+    assert (mse.per_track(2.5 * b + 7, zy) > 0).all()
+
+
+def test_qmap_mn_bin_scale(targets_df):
+    """mn sees only shares across tracks: a factor common to a bin costs nothing."""
+    loss_fn, zp, zy = _mapped(targets_df, "mn")
+    loss_fn.eps.zero_()
+    f = torch.from_numpy(np.random.default_rng(1).uniform(0.5, 4, (1, 2, 16)))
+    zero = torch.tensor(0.0, dtype=zy.dtype)
+    torch.testing.assert_close(loss_fn.per_track(zy * f, zy).sum(), zero, atol=1e-12, rtol=0)
+    assert loss_fn.per_track(zp, zy).sum() > 0
+
+
+def test_qmap_form_checked(targets_df):
+    with pytest.raises(ValueError, match="qmap form"):
+        _qmap_loss(targets_df, form="cos")
