@@ -523,31 +523,28 @@ The Dockerfile at [`dockerfiles/baskerville.Dockerfile`](../dockerfiles/baskervi
 installs `gcsfuse`, the `google-cloud-cli` (for `gcloud storage`), and the
 `gcprunner-entry` script at the right location.
 
-**To publish an image**, build it and push it to an Artifact Registry repo
-you control. By default gcprunner looks for images at
-`<region>-docker.pkg.dev/<GCPRUNNER_PROJECT>/baskerville/baskerville`;
-set `GCPRUNNER_IMAGE_BASE` if your repo lives elsewhere.
+**To publish an image**, create an Artifact Registry repo once, then build
+remotely with Cloud Build (about 10 minutes, no local Docker needed). By
+default gcprunner looks for images at
+`<region>-docker.pkg.dev/<GCPRUNNER_PROJECT>/baskerville/baskerville`; set
+`GCPRUNNER_IMAGE_BASE` if your repo lives elsewhere. `build.sh` reads the §8.3
+environment variables to locate it. Run it from a full clone, not a
+`git worktree`: setuptools_scm reads `.git`.
 
 ```bash
+# once per project
+gcloud services enable cloudbuild.googleapis.com --project=my-gcp-project
 gcloud artifacts repositories create baskerville \
     --repository-format=docker --location=us-central1 --project=my-gcp-project
-gcloud auth configure-docker us-central1-docker.pkg.dev
 
-IMAGE=us-central1-docker.pkg.dev/my-gcp-project/baskerville/baskerville
-docker build -f dockerfiles/baskerville.Dockerfile \
-    -t "$IMAGE:commit-$(git rev-parse HEAD)" -t "$IMAGE:latest" .
-docker push --all-tags "$IMAGE"
+dockerfiles/build.sh
 ```
 
-Or build remotely with Cloud Build, no local Docker needed (about 10 minutes).
-Run it from a full clone, not a `git worktree`: setuptools_scm reads `.git`.
-
-```bash
-gcloud services enable cloudbuild.googleapis.com --project=my-gcp-project
-gcloud builds submit --project=my-gcp-project --region=us-central1 \
-    --config=dockerfiles/cloudbuild.yaml --ignore-file=.dockerignore \
-    --substitutions=_IMAGE=$IMAGE,_SHA=$(git rev-parse HEAD) .
-```
+**Team rule: build only committed code.** The image is tagged with the HEAD
+commit, but the build uploads the working tree, so building with uncommitted
+changes gives an image that doesn't match its tag and overwrites any other
+build of that commit. `build.sh` refuses to build from a dirty tree. To test
+unfinished work, commit it to a branch, build, and run with `--gcp_branch`.
 
 The `commit-<full-git-sha>` tag is what `--gcp_branch` (below) looks up; tag
 CI-built images the same way if you automate this.
@@ -602,11 +599,6 @@ default. Notes and caveats:
 **Pull-side permission:** the Batch runtime SA from §8.1 needs read access to
 the image repo. Without it, jobs fail at the image-pull step before the
 container starts.
-
-#### 8.2.1 Local debug builds (optional)
-
-To iterate on the Dockerfile itself, push to a personal tag (e.g.
-`dev-<name>`) with the commands above and pass it via `--gcp_image`.
 
 ### 8.3 Caller environment
 
