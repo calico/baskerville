@@ -5,12 +5,17 @@ from torch import Tensor, einsum, nn
 import torch.nn.functional as F
 from typing import Optional
 
-try:
-    from mamba_ssm.ops.triton.layernorm_gated import RMSNorm as RMSNormGated
-    from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
-except (ImportError, RuntimeError):
-    RMSNormGated = None
-    mamba_chunk_scan_combined = None
+RMSNormGated = mamba_chunk_scan_combined = None
+
+
+def _import_mamba():
+    """Import mamba_ssm kernels on first use; the package import takes seconds."""
+    global RMSNormGated, mamba_chunk_scan_combined
+    try:
+        from mamba_ssm.ops.triton.layernorm_gated import RMSNorm as RMSNormGated
+        from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
+    except (ImportError, RuntimeError):
+        pass
 
 
 class HydraSp(nn.Module):
@@ -46,6 +51,7 @@ class HydraSp(nn.Module):
     ):
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
+        _import_mamba()
         from baskerville.layers import SpeciesEmbedding
 
         self.d_model = d_model

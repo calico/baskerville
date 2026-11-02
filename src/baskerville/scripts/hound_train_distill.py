@@ -48,7 +48,7 @@ The teacher models compute soft targets dynamically during training, which provi
 """
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Train a model using on-the-fly teacher predictions."
     )
@@ -106,7 +106,7 @@ def main():
         nargs="+",
         help="Data directories containing sequences (targets not required)",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     num_folds = dataset.discover_num_folds(args.data_dirs[0])
     if num_folds is not None and args.fold is None:

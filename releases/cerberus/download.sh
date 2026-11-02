@@ -10,6 +10,7 @@
 #
 # Each fold is one model with human and mouse heads. Files land at:
 #   DEST_DIR/models/f<FOLD>c0/model_best.pth
+#   DEST_DIR/models/LICENSE
 
 set -eu
 
@@ -33,5 +34,7 @@ for f in $FOLDS; do
   echo ">> $BASE/f${f}c0/model_best.pth"
   curl -fL --retry 3 -o "$outdir/model_best.pth" "$BASE/f${f}c0/model_best.pth"
 done
+
+curl -fL --retry 3 -o "$MODELDIR/LICENSE" "$BASE/LICENSE"
 
 echo "done -> $MODELDIR/"

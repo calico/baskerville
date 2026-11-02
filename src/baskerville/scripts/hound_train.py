@@ -31,7 +31,7 @@ Train Hound model using given parameters and data.
 """
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description="Train a model.")
     parser.add_argument(
         "-o",
@@ -63,7 +63,7 @@ def main():
     parser.add_argument(
         "data_dirs", nargs="+", help="Train/valid/test data directorie(s)"
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     # detect folds vs legacy split layout from the first data dir
     num_folds = dataset.discover_num_folds(args.data_dirs[0])

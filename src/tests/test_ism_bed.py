@@ -17,7 +17,6 @@
 import json
 import os
 import pathlib
-import subprocess
 import tempfile
 import pytest
 import h5py
@@ -508,9 +507,6 @@ def test_ism_bed_gene_track_selection(static_model_dir, stat):
             f.write("chrI\t990\t1010\tregion1\t0\t+\n")
 
         cmd = [
-            "python",
-            "-m",
-            "baskerville.scripts.hound_ism_bed",
             "-f",
             fasta_file,
             "-t",
@@ -528,8 +524,7 @@ def test_ism_bed_gene_track_selection(static_model_dir, stat):
             bed_file,
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        assert result.returncode == 0, f"Failed: {result.stderr}"
+        hound_ism_bed.main(cmd)
 
         with h5py.File(f"{temp_dir}/scores.h5", "r") as h5f:
             assert h5f[stat].shape[-1] == len(expected_targets)

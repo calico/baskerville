@@ -10,6 +10,7 @@
 #
 # Files land at:
 #   DEST_DIR/models_<species>/f<FOLD>c0/model_best.pth
+#   DEST_DIR/models_<species>/LICENSE
 
 set -eu
 
@@ -40,5 +41,7 @@ for f in $FOLDS; do
   echo ">> $FAMILY/f${f}c0/model_best.pth"
   curl -fL --retry 3 -o "$outdir/model_best.pth" "$FAMILY/f${f}c0/model_best.pth"
 done
+
+curl -fL --retry 3 -o "$FAMILYDIR/LICENSE" "$FAMILY/LICENSE"
 
 echo "done -> $FAMILYDIR/"
