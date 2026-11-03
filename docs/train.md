@@ -142,6 +142,14 @@ The sequence length must be a power of two. Only ratios between weights matter.
 - `proj`: |b|(1 − cos(a, b)) per track over the batch, which rewards direction only.
 - `mn`: a multinomial across the group's tracks at each position, on uncentered mapped values.
 
+The term's scale depends on the form and the track set, so set λ by its push: the ratio of its gradient at the trunk output to the main loss's. `hound_qmap_calibrate` measures that ratio R on train batches of a model trained without the term, and prints λ = push / median R per dataset (`--push`, default 0.1) as a params snippet:
+
+```
+hound_qmap_calibrate [--form proj] [--fold 0] params.json model_best.pth data_dir [data_dir ...]
+```
+
+It reads the main loss, `qmap_form`, and `spec_group_min` from `params.json`'s `train` section.
+
 ### Validation metrics and early stopping
 
 Each epoch, `log.txt` gets a summary line per dataset (`loss`, `r`, `r2`, `spec`), and `metrics.tsv` gets every metric as a long table with columns `epoch, split, dataset, group, metric, value`. Dataset-level rows have `group` = `all`.
