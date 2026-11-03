@@ -16,37 +16,39 @@ def _yy(shape, seed=0):
     return yp, y
 
 
-def _split_reference(yp, y, w, wsum, c, t):
-    """t·P(total) + Σ_k c_k Σ_nodes binomial split NLL, built level by level."""
+def _split_reference(yp, y, w, wsum, c, t, factors):
+    """t·P(total) + Σ_k c_k Σ_nodes multinomial split NLL, built level by level."""
     a, b = yp * w, y * w
     loss = 0
-    for ck in c:
-        al, ar = a[..., 0::2], a[..., 1::2]
-        bl, br = b[..., 0::2], b[..., 1::2]
-        ap = al + ar
-        loss = loss + ck * (-bl * torch.log(al / ap) - br * torch.log(ar / ap)).sum(-1)
-        a, b = ap, bl + br
+    for ck, f in zip(c, factors):
+        a, b = a.unflatten(-1, (-1, f)), b.unflatten(-1, (-1, f))
+        ap = a.sum(-1, keepdim=True)
+        loss = loss + ck * (-b * torch.log(a / ap)).sum((-2, -1))
+        a, b = ap.squeeze(-1), b.sum(-1)
     total = (a - b * torch.log(a)).sum(-1)
     return ((loss + t * total) / wsum).mean()
 
 
-def test_tree_matches_split_reference():
-    yp, y = _yy((2, 3, 8))
+@pytest.mark.parametrize("length", [8, 24])
+def test_tree_matches_split_reference(length):
+    yp, y = _yy((2, 3, length))
     t = 0.3
     loss_fn = metrics.PoissonTreeLoss(t, split_exp=0.5, split_knee=2, weight_range=10,
                                       weight_exp=8, epsilon=0)
     loss = loss_fn(yp, y)
     (grad,) = torch.autograd.grad(loss, yp)
-    w = metrics.position_weights(8, 10, 8).double()
-    c = metrics.split_profile(3, 0.5, 2)
-    ref = _split_reference(yp, y, w, loss_fn.weights_sum.double(), c, t)
+    w = metrics.position_weights(length, 10, 8).double()
+    factors = metrics.tree_factors(length)
+    c = metrics.split_profile(np.cumprod(factors), 0.5, 2)
+    ref = _split_reference(yp, y, w, loss_fn.weights_sum.double(), c, t, factors)
     (grad_ref,) = torch.autograd.grad(ref, yp)
     torch.testing.assert_close(loss, ref, rtol=1e-10, atol=1e-12)
     torch.testing.assert_close(grad, grad_ref, rtol=1e-10, atol=1e-12)
 
 
-def test_tree_flat_matches_poisson_mn():
-    yp, y = _yy((2, 3, 16))
+@pytest.mark.parametrize("length", [16, 24])
+def test_tree_flat_matches_poisson_mn(length):
+    yp, y = _yy((2, 3, length))
     grads = []
     for loss_fn in [metrics.PoissonMultinomialLoss(0.25, 10, 8),
                     metrics.PoissonTreeLoss(0.25, weight_range=10, weight_exp=8)]:
@@ -55,16 +57,18 @@ def test_tree_flat_matches_poisson_mn():
 
 
 def test_split_profile():
-    c = np.array(metrics.split_profile(14, 0.25, 32))
+    c = np.array(metrics.split_profile(2 ** np.arange(1, 15), 0.25, 32))
     np.testing.assert_allclose(c[:5], 1)
     np.testing.assert_allclose(c[5:], 2.0 ** (-0.25 * np.arange(1, 10)))
-    assert metrics.split_profile(2, 0.5, 1) == [2**-0.5, 0.5]
+    assert metrics.split_profile([2, 4], 0.5, 1) == [2**-0.5, 0.5]
 
 
-def test_tree_checks_lengths():
-    yp, y = _yy((1, 1, 12))
-    with pytest.raises(ValueError, match="power-of-two length"):
-        metrics.PoissonTreeLoss(0.25)(yp, y)
+def test_tree_factors():
+    assert metrics.tree_factors(16) == [2] * 4
+    assert metrics.tree_factors(24576) == [2] * 13 + [3]
+
+
+def test_tree_checks_knee():
     with pytest.raises(ValueError, match="split_knee"):
         metrics.PoissonTreeLoss(0.25, split_knee=24)
 
