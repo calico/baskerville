@@ -364,10 +364,8 @@ def score_snps(args):
             scores_out[cov_stat][si] = scores[cov_stat]
 
     def hdf5_write_pair(cov_scores, gene_head_scores, score_index):
-        for stat in covgene_stats:
-            scores_out[stat][score_index] = cov_scores[stat]
-        for stat in gene_stats:
-            scores_out[stat][score_index] = gene_head_scores[stat]
+        for stat, scores in {**cov_scores, **gene_head_scores}.items():
+            scores_out[stat][score_index] = scores
 
     # futures for cov writes; drained after the loop so a write failure
     # (e.g. a shape mismatch) raises instead of silently leaving zeros
@@ -514,10 +512,13 @@ def score_snps(args):
                     # gene-sliced scores (when GTF provided and SNP overlaps genes)
                     if gsc is not None and (covgene_stats or gene_stats):
                         for gi, gene in enumerate(gsc.genes):
+                            # coverage-based gene-sliced scores; empty when exons fall outside
+                            # the window or a stitched deletion removes them
                             gene_mask = score_gom[0, gi]
+                            cov_scores = {}
                             if not gene_mask.any():
                                 print(
-                                    f"WARNING: {gene.kv['gene_id']} exons fall outside prediction boundaries."
+                                    f"WARNING: {gene.kv['gene_id']} has no exon bins in the scored coordinates."
                                 )
                             else:
                                 rp_cov_gene = rp_cov[:, :, gene_mask]
@@ -531,23 +532,20 @@ def score_snps(args):
                                 rp_cov_gene = rp_cov_gene[:, track_mask, :]
                                 ap_cov_gene = ap_cov_gene[:, track_mask, :]
 
-                                # coverage-based gene-sliced scores
                                 cov_scores = compute_scores_cov(
                                     rp_cov_gene, ap_cov_gene, covgene_stats
                                 )
 
-                                # gene head scores
-                                gene_head_scores = {}
-                                if gene_stats and ref_gene_preds:
-                                    gene_head_scores = compute_scores_gene(
-                                        rp_gene[:, :, gi],
-                                        ap_gene[:, :, gi],
-                                        gene_stats,
-                                    )
-
-                                executor.submit(
-                                    hdf5_write_pair, cov_scores, gene_head_scores, sgi
+                            # gene head scores
+                            gene_head_scores = {}
+                            if gene_stats and ref_gene_preds:
+                                gene_head_scores = compute_scores_gene(
+                                    rp_gene[:, :, gi],
+                                    ap_gene[:, :, gi],
+                                    gene_stats,
                                 )
+
+                            executor.submit(hdf5_write_pair, cov_scores, gene_head_scores, sgi)
 
                             sgi += 1
 
@@ -741,10 +739,8 @@ def score_gene_snps(args):
 
     # write to HDF5 in CPU thread
     def hdf5_write_pair(cov_scores, gene_head_scores, score_index):
-        for stat in covgene_stats:
-            scores_out[stat][score_index] = cov_scores[stat]
-        for stat in gene_stats:
-            scores_out[stat][score_index] = gene_head_scores[stat]
+        for stat, scores in {**cov_scores, **gene_head_scores}.items():
+            scores_out[stat][score_index] = scores
 
     # SNP-gene pair index
     sgi = 0
@@ -846,10 +842,13 @@ def score_gene_snps(args):
                             rp_gene = rp_gene.repeat_interleave(2, dim=0)
 
                     for gi, gene in enumerate(gsc.genes):
+                        # coverage-based gene-sliced scores; empty when exons fall outside
+                        # the window or a stitched deletion removes them
                         gene_mask = score_gom[0, gi]
+                        cov_scores = {}
                         if not gene_mask.any():
                             print(
-                                f"WARNING: {gene.kv['gene_id']} exons fall outside prediction boundaries."
+                                f"WARNING: {gene.kv['gene_id']} has no exon bins in the scored coordinates."
                             )
                         else:
                             rp_cov_gene = rp_cov[:, :, gene_mask]
@@ -863,24 +862,21 @@ def score_gene_snps(args):
                             rp_cov_gene = rp_cov_gene[:, track_mask, :]
                             ap_cov_gene = ap_cov_gene[:, track_mask, :]
 
-                            # coverage-based gene-sliced scores
                             cov_scores = compute_scores_cov(
                                 rp_cov_gene, ap_cov_gene, covgene_stats
                             )
 
-                            # gene head scores
-                            gene_head_scores = {}
-                            if gene_stats and has_gene_head and ref_gene_preds:
-                                gene_head_scores = compute_scores_gene(
-                                    rp_gene[:, :, gi],
-                                    ap_gene[:, :, gi],
-                                    gene_stats,
-                                )
-
-                            # write
-                            executor.submit(
-                                hdf5_write_pair, cov_scores, gene_head_scores, sgi
+                        # gene head scores
+                        gene_head_scores = {}
+                        if gene_stats and has_gene_head and ref_gene_preds:
+                            gene_head_scores = compute_scores_gene(
+                                rp_gene[:, :, gi],
+                                ap_gene[:, :, gi],
+                                gene_stats,
                             )
+
+                        # write
+                        executor.submit(hdf5_write_pair, cov_scores, gene_head_scores, sgi)
 
                         # update SNP-gene index
                         sgi += 1
