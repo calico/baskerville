@@ -13,7 +13,7 @@ import torch
 
 from baskerville import dna
 from baskerville import dataset
-from baskerville.gene import Transcriptome, find_overlapping_genes
+from baskerville.gene import Transcriptome, find_overlapping_genes, interval_output_slice
 from baskerville import seqnn
 from baskerville.vcf import VCF, SNPCluster
 
@@ -406,27 +406,25 @@ def score_snps(args):
                 # build gene masks if this cluster has genes
                 gsc = sc_to_gsc.get(ci) if score_genes else None
                 if gsc is not None and (covgene_stats or gene_stats):
-                    gom, gp = build_gene_masks(
-                        gsc.genes,
-                        gsc.pstart,
-                        gsc.pend - gsc.pstart,
-                        output_stride,
-                        output_length,
-                        seqnn_model.device,
-                        span=getattr(args, "span", False),
-                    )
+
+                    def gene_masks(shift, indel_size=0, var_pos=0, gsc=gsc):
+                        return frame_gene_masks(
+                            gsc, shift, indel_size, var_pos, output_stride,
+                            output_length, seqnn_model.device,
+                            getattr(args, "span", False),
+                        )
+
+                    gom, _ = gene_masks(0)
                 else:
-                    gom = gp = None
+                    gene_masks = gom = None
 
-                # only pass masks to model when gene head exists
-                model_gom = gom if has_gene_head else None
-                model_gp = gp if has_gene_head else None
-
-                # predict reference
-                def predict(x_1hot, shifts):
+                # predict, passing gene masks to the model when a gene head exists
+                def predict(x_1hot, shifts, indel_size=0, var_pos=0):
+                    masks = None
+                    if has_gene_head and gene_masks is not None:
+                        masks = lambda shift: gene_masks(shift, indel_size, var_pos)
                     return predict_allele(
-                        seqnn_model, x_1hot, shifts, args.head, targets_df,
-                        model_gom, model_gp,
+                        seqnn_model, x_1hot, shifts, args.head, targets_df, masks
                     )
 
                 ref_cov_preds, ref_gene_preds = predict(ref_1hot, args.shifts)
@@ -439,7 +437,8 @@ def score_snps(args):
 
                     # variant bin position
                     indel_size = sc.snps[ai].indel_size()
-                    snp_seq_pos = sc.snps[ai].pos - sc.start - output_crop
+                    var_pos = sc.snps[ai].pos
+                    snp_seq_pos = var_pos - sc.start - output_crop
                     snp_seq_bin = snp_seq_pos // output_stride
 
                     # add left/right shifts to the longer allele: alternate
@@ -454,22 +453,24 @@ def score_snps(args):
                             alt_shifts.append(shift - indel_size)
 
                     # predict alternate
-                    alt_cov_preds, alt_gene_preds = predict(alt_1hot, alt_shifts)
+                    alt_cov_preds, alt_gene_preds = predict(
+                        alt_1hot, alt_shifts, indel_size, var_pos
+                    )
 
-                    # stitch indel shifts of the longer allele (coverage only)
-                    ref_cov_stitch, score_gom = ref_cov_preds, gom
+                    # stitch coverage of the longer allele; gene head averages shifts
+                    ref_cov_stitch, ref_gene_all, score_gom = (
+                        ref_cov_preds, ref_gene_preds, gom
+                    )
                     if ref_stitch:
-                        ref_del_preds, _ = predict(
+                        ref_del_cov, ref_del_gene = predict(
                             ref_1hot, [shift + indel_size for shift in args.shifts]
                         )
                         ref_cov_stitch = stitch_ref_deletion(
-                            ref_cov_preds, ref_del_preds, args.shifts, snp_seq_bin
+                            ref_cov_preds, ref_del_cov, args.shifts, snp_seq_bin
                         )
+                        ref_gene_all = ref_gene_preds + ref_del_gene
                         if gom is not None:
-                            score_gom = stitch_ref_deletion_mask(
-                                gom, gsc, indel_size, snp_seq_bin, output_stride,
-                                output_length, getattr(args, "span", False),
-                            )
+                            score_gom, _ = gene_masks(0, indel_size, var_pos)
                     elif indel_size != 0 and args.indel_shift == "stitch":
                         alt_cov_preds = stitch_preds(
                             alt_cov_preds, args.shifts, snp_seq_bin
@@ -481,12 +482,12 @@ def score_snps(args):
                         ap_cov = torch.stack(ref_cov_stitch)
                         if ref_gene_preds:
                             rp_gene = torch.stack(alt_gene_preds)
-                            ap_gene = torch.stack(ref_gene_preds)
+                            ap_gene = torch.stack(ref_gene_all)
                     else:
                         rp_cov = torch.stack(ref_cov_stitch)
                         ap_cov = torch.stack(alt_cov_preds)
                         if ref_gene_preds:
-                            rp_gene = torch.stack(ref_gene_preds)
+                            rp_gene = torch.stack(ref_gene_all)
                             ap_gene = torch.stack(alt_gene_preds)
 
                     # repeat reference predictions for averaged indel shifts
@@ -761,20 +762,21 @@ def score_gene_snps(args):
                 )
 
                 # build gene masks
-                gom, gp = build_gene_masks(
-                    gsc.genes,
-                    gsc.pstart,
-                    gsc.pend - gsc.pstart,
-                    output_stride,
-                    output_length,
-                    seqnn_model.device,
-                    span=args.span,
-                )
+                def gene_masks(shift, indel_size=0, var_pos=0, gsc=gsc):
+                    return frame_gene_masks(
+                        gsc, shift, indel_size, var_pos, output_stride,
+                        output_length, seqnn_model.device, args.span,
+                    )
 
-                # predict reference
-                def predict(x_1hot, shifts):
+                gom, _ = gene_masks(0)
+
+                # predict, passing gene masks to the model when a gene head exists
+                def predict(x_1hot, shifts, indel_size=0, var_pos=0):
+                    masks = None
+                    if has_gene_head:
+                        masks = lambda shift: gene_masks(shift, indel_size, var_pos)
                     return predict_allele(
-                        seqnn_model, x_1hot, shifts, args.head, targets_df, gom, gp
+                        seqnn_model, x_1hot, shifts, args.head, targets_df, masks
                     )
 
                 ref_cov_preds, ref_gene_preds = predict(ref_1hot, args.shifts)
@@ -798,23 +800,26 @@ def score_gene_snps(args):
                             alt_shifts.append(shift - indel_size)
 
                     # predict alternate
-                    alt_cov_preds, alt_gene_preds = predict(alt_1hot, alt_shifts)
-
-                    # stitch indel shifts of the longer allele (coverage only)
-                    snp_seq_pos = gsc.snps[ai].pos - gsc.start - output_crop
+                    var_pos = gsc.snps[ai].pos
+                    snp_seq_pos = var_pos - gsc.start - output_crop
                     snp_seq_bin = snp_seq_pos // output_stride
-                    ref_cov_stitch, score_gom = ref_cov_preds, gom
+                    alt_cov_preds, alt_gene_preds = predict(
+                        alt_1hot, alt_shifts, indel_size, var_pos
+                    )
+
+                    # stitch coverage of the longer allele; gene head averages shifts
+                    ref_cov_stitch, ref_gene_all, score_gom = (
+                        ref_cov_preds, ref_gene_preds, gom
+                    )
                     if ref_stitch:
-                        ref_del_preds, _ = predict(
+                        ref_del_cov, ref_del_gene = predict(
                             ref_1hot, [shift + indel_size for shift in args.shifts]
                         )
                         ref_cov_stitch = stitch_ref_deletion(
-                            ref_cov_preds, ref_del_preds, args.shifts, snp_seq_bin
+                            ref_cov_preds, ref_del_cov, args.shifts, snp_seq_bin
                         )
-                        score_gom = stitch_ref_deletion_mask(
-                            gom, gsc, indel_size, snp_seq_bin, output_stride,
-                            output_length, args.span,
-                        )
+                        ref_gene_all = ref_gene_preds + ref_del_gene
+                        score_gom, _ = gene_masks(0, indel_size, var_pos)
                     elif indel_size != 0 and args.indel_shift == "stitch":
                         alt_cov_preds = stitch_preds(
                             alt_cov_preds, args.shifts, snp_seq_bin
@@ -826,12 +831,12 @@ def score_gene_snps(args):
                         ap_cov = torch.stack(ref_cov_stitch)
                         if has_gene_head and ref_gene_preds:
                             rp_gene = torch.stack(alt_gene_preds)
-                            ap_gene = torch.stack(ref_gene_preds)
+                            ap_gene = torch.stack(ref_gene_all)
                     else:
                         rp_cov = torch.stack(ref_cov_stitch)
                         ap_cov = torch.stack(alt_cov_preds)
                         if has_gene_head and ref_gene_preds:
-                            rp_gene = torch.stack(ref_gene_preds)
+                            rp_gene = torch.stack(ref_gene_all)
                             ap_gene = torch.stack(alt_gene_preds)
 
                     # repeat reference predictions for averaged indel shifts
@@ -1453,14 +1458,19 @@ def stitch_preds(preds, shifts, pos=None):
     return preds_stitch
 
 
-def predict_allele(seqnn_model, x_1hot, shifts, head, targets_df, gom=None, gp=None):
+def predict_allele(seqnn_model, x_1hot, shifts, head, targets_df, gene_masks=None):
     """Predict untransformed coverage, and gene outputs if present, at each shift.
+
+    Args:
+        gene_masks (callable): Shift -> (gene_out_mask, gene_presence) in this
+          allele's coordinates, or None for no gene head.
 
     Returns:
         (list of torch.Tensor, list of torch.Tensor): TxL coverage and gene predictions.
     """
     cov_preds, gene_preds = [], []
     for shift in shifts:
+        gom, gp = gene_masks(shift) if gene_masks is not None else (None, None)
         output = seqnn_model(
             dna.torch_shift(x_1hot, shift), head, gene_out_mask=gom, gene_presence=gp
         )
@@ -1492,22 +1502,48 @@ def stitch_ref_deletion(ref_preds, ref_del_preds, shifts, pos):
     return stitch_preds(preds, shifts, pos)
 
 
-def stitch_ref_deletion_mask(gom, gsc, indel_size, pos, output_stride, output_length, span):
-    """Gene output masks in the alternate coordinates of a stitched deletion.
+def frame_gene_masks(
+    gsc, shift, indel_size, var_pos, output_stride, output_length, device, span=False
+):
+    """Gene output masks in the coordinates of a shifted allele sequence.
 
-    Bins from pos onward come from the reference shifted by indel_size, so
-    their masks shift with it.
+    Shifting a sequence by shift moves every genomic position shift nt. An
+    alternate allele also moves positions downstream of the variant by
+    indel_size nt, and deleted positions have no coordinates. Exons are split
+    at the variant and each part is mapped with its own offset.
+
+    Args:
+        gsc (GeneSNPCluster): Genes and prediction start.
+        shift (int): Sequence shift.
+        indel_size (int): Alternate allele indel size, or 0 for the reference.
+        var_pos (int): Variant VCF position (1-based anchor), i.e. the 0-based
+          start of sequence downstream of the anchor.
+
+    Returns:
+        gene_out_mask: (1, num_genes, output_length) bool tensor.
+        gene_presence: (1, num_genes) bool tensor.
     """
-    gom_del, _ = build_gene_masks(
-        gsc.genes,
-        gsc.pstart - indel_size,
-        gsc.pend - gsc.pstart,
-        output_stride,
-        output_length,
-        gom.device,
-        span=span,
-    )
-    return torch.cat((gom[..., :pos], gom_del[..., pos:]), dim=-1)
+    seq_len = gsc.pend - gsc.pstart
+    down_start = var_pos + max(-indel_size, 0)
+    gom = torch.zeros(1, len(gsc.genes), output_length, dtype=torch.bool, device=device)
+    for gi, gene in enumerate(gsc.genes):
+        intervals = [gene.span()] if span else [(e.begin, e.end) for e in gene.get_exons()]
+        for start, end in intervals:
+            if indel_size == 0:
+                parts = [(start, end, 0)]
+            else:
+                parts = [
+                    (start, min(end, var_pos), 0),
+                    (max(start, down_start), end, indel_size),
+                ]
+            for part_start, part_end, offset in parts:
+                if part_start < part_end:
+                    slice_start, slice_end = interval_output_slice(
+                        part_start, part_end, gsc.pstart - shift - offset,
+                        seq_len, output_stride, majority_overlap=span,
+                    )
+                    gom[0, gi, slice_start:slice_end] = True
+    return gom, gom.any(dim=-1)
 
 def write_quantiles(scores_out, snp_stats, norm_file=None):
     """Compute quantile values for each target and write to HDF5.

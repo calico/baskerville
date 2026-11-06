@@ -19,7 +19,7 @@ from baskerville.snps import (
     partition_snp_stats,
     stitch_preds,
     stitch_ref_deletion,
-    stitch_ref_deletion_mask,
+    frame_gene_masks,
 )
 
 
@@ -833,16 +833,23 @@ def test_stitch_indel_coordinates():
     assert torch.equal(alt_st[:, : L - k], predict(ref, 0)[:, : L - k])
 
 
-def test_stitch_deletion_gene_mask():
-    """Stitched deletion masks select exons in alternate coordinates."""
+def test_frame_gene_masks():
+    """Gene masks follow exons into shifted and alternate allele coordinates."""
     from types import SimpleNamespace
     from baskerville.gene import Gene
 
     gene = Gene("chr1", "+", {})
-    gene.add_exon(32, 64)  # upstream of the deletion: bin 1
-    gene.add_exon(320, 352)  # downstream: ref bin 10, alt bin 8 after 64 nt deleted
+    gene.add_exon(32, 64)  # upstream of the variant at 80 (bin 2): bin 1
+    gene.add_exon(64, 96)  # spans the variant
+    gene.add_exon(320, 352)  # downstream: bin 10 in the reference
     gsc = SimpleNamespace(genes=[gene], pstart=0, pend=640)
-    gom = torch.zeros(1, 1, 20, dtype=torch.bool)
-    gom[0, 0, gene.output_slice(0, 640, 32)] = True
-    mask = stitch_ref_deletion_mask(gom, gsc, -64, 2, 32, 20, False)
-    assert torch.nonzero(mask[0, 0]).flatten().tolist() == [1, 8]
+
+    def bins(shift, indel_size):
+        gom, gp = frame_gene_masks(gsc, shift, indel_size, 80, 32, 20, "cpu")
+        assert gp.item()
+        return torch.nonzero(gom[0, 0]).flatten().tolist()
+
+    assert bins(0, 0) == [1, 2, 10]
+    assert bins(0, -64) == [1, 2, 8]  # 64 nt deletion removes the spanning exon's 3' part
+    assert bins(0, 64) == [1, 2, 4, 12]  # 64 nt insertion splits the spanning exon
+    assert bins(-64, 0) == [0, 8]  # reference shifted left; first exon leaves window
