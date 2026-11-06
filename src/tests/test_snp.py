@@ -19,6 +19,7 @@ from baskerville.snps import (
     partition_snp_stats,
     stitch_preds,
     stitch_ref_deletion,
+    stitch_ref_deletion_mask,
 )
 
 
@@ -823,12 +824,25 @@ def test_stitch_indel_coordinates():
         return dna.torch_shift(x, shift, null_value=-1).squeeze(0)
 
     # deletion: stitch the reference, compare to the unshifted alternate
-    ref_st = stitch_ref_deletion(
-        lambda s: predict(ref, s), [predict(ref, 0)], [0], -k, p + 1
-    )[0]
+    ref_st = stitch_ref_deletion([predict(ref, 0)], [predict(ref, -k)], [0], p + 1)[0]
     assert torch.equal(ref_st[:, : L - k], predict(alt_del, 0)[:, : L - k])
 
     # insertion: stitch the alternate, compare to the reference
     alt_ins = torch.cat((ref[..., : p + 1], torch.full((1, 1, k), 99.0), ref[..., p + 1 : L - k]), -1)
     alt_st = stitch_preds([predict(alt_ins, 0), predict(alt_ins, -k)], [0], p + 1)[0]
     assert torch.equal(alt_st[:, : L - k], predict(ref, 0)[:, : L - k])
+
+
+def test_stitch_deletion_gene_mask():
+    """Stitched deletion masks select exons in alternate coordinates."""
+    from types import SimpleNamespace
+    from baskerville.gene import Gene
+
+    gene = Gene("chr1", "+", {})
+    gene.add_exon(32, 64)  # upstream of the deletion: bin 1
+    gene.add_exon(320, 352)  # downstream: ref bin 10, alt bin 8 after 64 nt deleted
+    gsc = SimpleNamespace(genes=[gene], pstart=0, pend=640)
+    gom = torch.zeros(1, 1, 20, dtype=torch.bool)
+    gom[0, 0, gene.output_slice(0, 640, 32)] = True
+    mask = stitch_ref_deletion_mask(gom, gsc, -64, 2, 32, 20, False)
+    assert torch.nonzero(mask[0, 0]).flatten().tolist() == [1, 8]
