@@ -451,8 +451,10 @@ def score_snps(args):
                     snp_seq_pos = sc.snps[ai].pos - sc.start - output_crop
                     snp_seq_bin = snp_seq_pos // output_stride
 
-                    # add left/right shifts for indels
-                    if indel_size == 0 or args.indel_shift == "default":
+                    # add left/right shifts to the longer allele: alternate
+                    # for insertions, reference for stitched deletions
+                    ref_stitch = indel_size < 0 and args.indel_shift == "stitch"
+                    if indel_size == 0 or args.indel_shift == "default" or ref_stitch:
                         alt_shifts = args.shifts
                     else:
                         alt_shifts = []
@@ -478,8 +480,25 @@ def score_snps(args):
                         if model_gom is not None and output.has_gene:
                             alt_gene_preds.append(output.gene.squeeze(0))
 
-                    # stitch indel shifts (coverage only)
-                    if indel_size != 0 and args.indel_shift == "stitch":
+                    # stitch indel shifts of the longer allele (coverage only)
+                    ref_cov_stitch = ref_cov_preds
+                    if ref_stitch:
+
+                        def predict_ref(shift):
+                            output = seqnn_model(
+                                dna.torch_shift(ref_1hot, shift),
+                                args.head,
+                                gene_out_mask=model_gom,
+                                gene_presence=model_gp,
+                            )
+                            return seqnn_model.untransform_fn(
+                                output.coverage.squeeze(0), targets_df
+                            )
+
+                        ref_cov_stitch = stitch_ref_deletion(
+                            predict_ref, ref_cov_preds, args.shifts, indel_size, snp_seq_bin
+                        )
+                    elif indel_size != 0 and args.indel_shift == "stitch":
                         alt_cov_preds = stitch_preds(
                             alt_cov_preds, args.shifts, snp_seq_bin
                         )
@@ -487,12 +506,12 @@ def score_snps(args):
                     # flip reference and alternate
                     if snps[si].flipped:
                         rp_cov = torch.stack(alt_cov_preds)
-                        ap_cov = torch.stack(ref_cov_preds)
+                        ap_cov = torch.stack(ref_cov_stitch)
                         if ref_gene_preds:
                             rp_gene = torch.stack(alt_gene_preds)
                             ap_gene = torch.stack(ref_gene_preds)
                     else:
-                        rp_cov = torch.stack(ref_cov_preds)
+                        rp_cov = torch.stack(ref_cov_stitch)
                         ap_cov = torch.stack(alt_cov_preds)
                         if ref_gene_preds:
                             rp_gene = torch.stack(ref_gene_preds)
@@ -804,9 +823,11 @@ def score_gene_snps(args):
                         alt_1hot, device=seqnn_model.device, dtype=torch.float32
                     )
 
-                    # add left/right shifts for indels
+                    # add left/right shifts to the longer allele: alternate
+                    # for insertions, reference for stitched deletions
                     indel_size = gsc.snps[ai].indel_size()
-                    if indel_size == 0 or args.indel_shift == "default":
+                    ref_stitch = indel_size < 0 and args.indel_shift == "stitch"
+                    if indel_size == 0 or args.indel_shift == "default" or ref_stitch:
                         alt_shifts = args.shifts
                     else:
                         alt_shifts = []
@@ -832,10 +853,27 @@ def score_gene_snps(args):
                         if has_gene_head and output.has_gene:
                             alt_gene_preds.append(output.gene.squeeze(0))
 
-                    # stitch indel shifts
-                    if indel_size != 0 and args.indel_shift == "stitch":
-                        snp_seq_pos = gsc.snps[ai].pos - gsc.start - output_crop
-                        snp_seq_bin = snp_seq_pos // output_stride
+                    # stitch indel shifts of the longer allele (coverage only)
+                    snp_seq_pos = gsc.snps[ai].pos - gsc.start - output_crop
+                    snp_seq_bin = snp_seq_pos // output_stride
+                    ref_cov_stitch = ref_cov_preds
+                    if ref_stitch:
+
+                        def predict_ref(shift):
+                            output = seqnn_model(
+                                dna.torch_shift(ref_1hot, shift),
+                                args.head,
+                                gene_out_mask=gom,
+                                gene_presence=gp,
+                            )
+                            return seqnn_model.untransform_fn(
+                                output.coverage.squeeze(0), targets_df
+                            )
+
+                        ref_cov_stitch = stitch_ref_deletion(
+                            predict_ref, ref_cov_preds, args.shifts, indel_size, snp_seq_bin
+                        )
+                    elif indel_size != 0 and args.indel_shift == "stitch":
                         alt_cov_preds = stitch_preds(
                             alt_cov_preds, args.shifts, snp_seq_bin
                         )
@@ -843,12 +881,12 @@ def score_gene_snps(args):
                     # flip reference and alternate
                     if gsc.snps[ai].flipped:
                         rp_cov = torch.stack(alt_cov_preds)
-                        ap_cov = torch.stack(ref_cov_preds)
+                        ap_cov = torch.stack(ref_cov_stitch)
                         if has_gene_head and ref_gene_preds:
                             rp_gene = torch.stack(alt_gene_preds)
                             ap_gene = torch.stack(ref_gene_preds)
                     else:
-                        rp_cov = torch.stack(ref_cov_preds)
+                        rp_cov = torch.stack(ref_cov_stitch)
                         ap_cov = torch.stack(alt_cov_preds)
                         if has_gene_head and ref_gene_preds:
                             rp_gene = torch.stack(ref_gene_preds)
@@ -1471,6 +1509,30 @@ def stitch_preds(preds, shifts, pos=None):
         preds_stitch_i = torch.cat((preds[hil][:, :pos], preds[hir][:, pos:]), dim=1)
         preds_stitch.append(preds_stitch_i)
     return preds_stitch
+
+
+def stitch_ref_deletion(predict_ref, ref_preds, shifts, indel_size, pos):
+    """Stitch reference predictions for a deletion.
+
+    The reference is the longer allele, so it takes the left/right-matched
+    shifts an insertion's alternate would, and the stitched reference aligns
+    with the unshifted alternate. Stitching the alternate instead would
+    duplicate the nucleotides upstream of the deletion.
+
+    Args:
+        predict_ref (callable): Shift -> TxL reference prediction tensor.
+        ref_preds [list of torch.Tensor]: Reference predictions at shifts.
+        shifts [list of int]: List of shifts.
+        indel_size (int): Deletion size, negative.
+        pos (int): SNP position to stitch at.
+
+    Returns:
+        list of torch.Tensor: List of TxL prediction tensors
+    """
+    preds = []
+    for shift, ref_pred in zip(shifts, ref_preds):
+        preds += [ref_pred, predict_ref(shift + indel_size)]
+    return stitch_preds(preds, shifts, pos)
 
 
 def write_quantiles(scores_out, snp_stats, norm_file=None):
