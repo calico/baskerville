@@ -1317,10 +1317,14 @@ def initialize_output_h5(
                 covgene_stat,
                 shape=(num_pairs, covgene_out_depth),
                 dtype="float16",
+                fillvalue=np.nan,
             )
         for gene_stat in gene_stats:
             scores_out.create_dataset(
-                gene_stat, shape=(num_pairs, gene_depth), dtype="float16"
+                gene_stat,
+                shape=(num_pairs, gene_depth),
+                dtype="float16",
+                fillvalue=np.nan,
             )
 
     return scores_out
@@ -1552,7 +1556,7 @@ def write_quantiles(scores_out, snp_stats, norm_file=None):
                     score_q = norm_h5[quantiles_key][:]
             else:
                 # compute quantiles from current scores
-                score_q = np.quantile(scores_out[snp_stat], quantiles, axis=0).T
+                score_q = np.nanquantile(scores_out[snp_stat], quantiles, axis=0).T
 
             # convert to float16 and save
             score_q = score_q.astype("float16")

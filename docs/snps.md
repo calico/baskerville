@@ -169,8 +169,8 @@ python -m baskerville.scripts.hound_snp \
 
 1. Genes are read from the GTF (per-gene aggregation; transcripts are not distinguished once exons are merged per gene object in the loader).
 2. Genes are optionally clustered with `-c/--cluster_pct` exactly like SNP clustering, but using gene midpoints. A single reference forward pass is reused for all genes and SNPs in the cluster to reduce compute.
-3. Each cluster defines a genomic window sized to the model `seq_length`; SNPs inside are one-hot encoded for reference and alternate alleles. (Indels still honored; `--indel_stitch` works the same.)
-4. For every SNP and every gene in the cluster that contains that SNP, the model predictions are sliced to bins overlapping the gene's exonic output coordinates. Bins off the edges after output cropping are ignored (a warning prints if everything is outside).
+3. Each cluster defines a genomic window sized to the model `seq_length`; SNPs inside are one-hot encoded for reference and alternate alleles. Indels are handled as described in [Indels and Gene Annotations](#indels-and-gene-annotations).
+4. For every SNP and every gene in the cluster that contains that SNP, the model predictions are sliced to bins overlapping the gene's exonic output coordinates. Bins off the edges after output cropping are ignored; if none remain, a warning prints and the pair's `covgene/` scores are NaN.
 5. Target tensor is strand-filtered: if gene is `+`, only targets whose `strand != '-'` are retained; if gene is `-`, only targets whose `strand != '+'` are retained (mirrors plus/minus masks in code).
 6. Requested statistics (`--stats`) are computed on the sliced reference vs alternate predictions.
 
@@ -189,6 +189,15 @@ Normalization (if `-n` provided) is performed over SNP–gene pair score values 
 #### Gene Span vs Exons
 
 By default only exon-overlapping bins are used (union of all exons). Supplying `--span` switches to aggregating bins covering the entire gene span (from the earliest exon start to the latest exon end), including intronic regions within that span. This can smooth sparse signals but may dilute exon-specific effects for very long introns.
+
+#### Indels and Gene Annotations
+
+- Annotations are fixed. Exon structure is not re-derived for the alternate allele, so splice-site disruption or frameshifts register only through the model's predicted coverage.
+- Exons are split at the variant and mapped into each allele's coordinates: downstream parts take the indel offset, and deleted exon nucleotides drop out. Inserted nucleotides belong to no exon, so they are excluded beyond the variant bin.
+- With stitching, `covgene/` scores use the shorter allele's coordinates and compare only exon bins shared by both alleles; the variant bin mixes indel and flanking sequence.
+- With `--no-indel_stitch`, `covgene/` scores apply reference-coordinate masks to both alleles, so alternate bins downstream of the variant are offset by the indel size.
+- A gene head always receives masks in each prediction's own coordinates.
+- If a deletion removes every exon bin in the window, `covgene/` scores are NaN; `gene/` scores are still computed.
 
 #### Clustering Genes (`-c` with `-g`)
 
