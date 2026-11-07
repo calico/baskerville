@@ -13,7 +13,13 @@ import torch
 
 from baskerville.scripts import hound_snp
 from baskerville.scripts.hound_snp_folds import build_snp_cmd
-from baskerville.snps import parse_mix_dtype, partition_snp_stats
+from baskerville import dna
+from baskerville.snps import (
+    parse_mix_dtype,
+    partition_snp_stats,
+    stitch_preds,
+    frame_gene_masks,
+)
 
 
 @pytest.fixture
@@ -739,3 +745,52 @@ def test_snp_compile_matches_eager(static_model_dir, test_vcf_file):
             with h5py.File(f"{out_dir}/scores.h5", "r") as h5:
                 scores[len(compile_flag)] = h5["cov/logSUM"][:].astype("float32")
     np.testing.assert_allclose(scores[1], scores[0], rtol=1e-2, atol=1e-2)
+
+
+def test_stitch_indel_coordinates():
+    """Stitching the longer allele aligns every position with the shorter allele."""
+    L, p, k = 64, 30, 3  # length, anchor index, indel size
+    ref = torch.arange(L, dtype=torch.float32).reshape(1, 1, L)
+    alt_del = torch.cat(
+        (ref[..., : p + 1], ref[..., p + 1 + k :], -ref[..., :k] - 1), -1
+    )
+
+    def predict(x, shift):  # identity model: predictions are coordinate labels
+        return dna.torch_shift(x, shift, null_value=-1).squeeze(0)
+
+    # deletion: stitch the reference, compare to the unshifted alternate
+    ref_st = stitch_preds([predict(ref, 0)], [predict(ref, -k)], p + 1)[0]
+    assert torch.equal(ref_st[:, : L - k], predict(alt_del, 0)[:, : L - k])
+
+    # insertion: stitch the alternate, compare to the reference
+    alt_ins = torch.cat(
+        (ref[..., : p + 1], torch.full((1, 1, k), 99.0), ref[..., p + 1 : L - k]), -1
+    )
+    alt_st = stitch_preds([predict(alt_ins, 0)], [predict(alt_ins, -k)], p + 1)[0]
+    assert torch.equal(alt_st[:, : L - k], predict(ref, 0)[:, : L - k])
+
+
+def test_frame_gene_masks():
+    """Gene masks follow exons into shifted and alternate allele coordinates."""
+    from types import SimpleNamespace
+    from baskerville.gene import Gene
+
+    gene = Gene("chr1", "+", {})
+    gene.add_exon(32, 64)  # upstream of the variant at 80 (bin 2): bin 1
+    gene.add_exon(64, 96)  # spans the variant
+    gene.add_exon(320, 352)  # downstream: bin 10 in the reference
+    gsc = SimpleNamespace(genes=[gene], pstart=0, pend=640)
+
+    def bins(shift, indel_size):
+        gom, gp = frame_gene_masks(gsc, 32, 20, "cpu", False, shift, indel_size, 80)
+        assert gp.item()
+        return torch.nonzero(gom[0, 0]).flatten().tolist()
+
+    assert bins(0, 0) == [1, 2, 10]
+    assert bins(0, -64) == [
+        1,
+        2,
+        8,
+    ]  # 64 nt deletion removes the spanning exon's 3' part
+    assert bins(0, 64) == [1, 2, 4, 12]  # 64 nt insertion splits the spanning exon
+    assert bins(-64, 0) == [0, 8]  # reference shifted left; first exon leaves window

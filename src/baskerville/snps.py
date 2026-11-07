@@ -1,4 +1,5 @@
 import concurrent
+from functools import partial
 import json
 import os
 import sys
@@ -13,7 +14,11 @@ import torch
 
 from baskerville import dna
 from baskerville import dataset
-from baskerville.gene import Transcriptome, find_overlapping_genes
+from baskerville.gene import (
+    Transcriptome,
+    find_overlapping_genes,
+    interval_output_slice,
+)
 from baskerville import seqnn
 from baskerville.vcf import VCF, SNPCluster
 
@@ -364,10 +369,8 @@ def score_snps(args):
             scores_out[cov_stat][si] = scores[cov_stat]
 
     def hdf5_write_pair(cov_scores, gene_head_scores, score_index):
-        for stat in covgene_stats:
-            scores_out[stat][score_index] = cov_scores[stat]
-        for stat in gene_stats:
-            scores_out[stat][score_index] = gene_head_scores[stat]
+        for stat, scores in {**cov_scores, **gene_head_scores}.items():
+            scores_out[stat][score_index] = scores
 
     # futures for cov writes; drained after the loop so a write failure
     # (e.g. a shape mismatch) raises instead of silently leaving zeros
@@ -406,39 +409,28 @@ def score_snps(args):
                 # build gene masks if this cluster has genes
                 gsc = sc_to_gsc.get(ci) if score_genes else None
                 if gsc is not None and (covgene_stats or gene_stats):
-                    gom, gp = build_gene_masks(
-                        gsc.genes,
-                        gsc.pstart,
-                        gsc.pend - gsc.pstart,
+                    gene_masks = partial(
+                        frame_gene_masks,
+                        gsc,
                         output_stride,
                         output_length,
                         seqnn_model.device,
-                        span=getattr(args, "span", False),
+                        getattr(args, "span", False),
                     )
+                    gom, _ = gene_masks()
                 else:
-                    gom = gp = None
+                    gene_masks = gom = None
 
-                # only pass masks to model when gene head exists
-                model_gom = gom if has_gene_head else None
-                model_gp = gp if has_gene_head else None
+                # predict, passing gene masks to the model when a gene head exists
+                def predict(x_1hot, shifts, indel_size=0, var_pos=0):
+                    masks = None
+                    if has_gene_head and gene_masks is not None:
+                        masks = lambda shift: gene_masks(shift, indel_size, var_pos)
+                    return predict_allele(
+                        seqnn_model, x_1hot, shifts, args.head, targets_df, masks
+                    )
 
-                # predict reference
-                ref_cov_preds = []
-                ref_gene_preds = []
-                for shift in args.shifts:
-                    ref_1hot_shift = dna.torch_shift(ref_1hot, shift)
-                    output = seqnn_model(
-                        ref_1hot_shift,
-                        args.head,
-                        gene_out_mask=model_gom,
-                        gene_presence=model_gp,
-                    )
-                    ref_cov_shift = seqnn_model.untransform_fn(
-                        output.coverage.squeeze(0), targets_df
-                    )
-                    ref_cov_preds.append(ref_cov_shift)
-                    if model_gom is not None and output.has_gene:
-                        ref_gene_preds.append(output.gene.squeeze(0))
+                ref_cov_preds, ref_gene_preds = predict(ref_1hot, args.shifts)
 
                 for ai, alt_1hot in enumerate(snp_1hot_list[1:]):
                     alt_1hot = np.expand_dims(alt_1hot, axis=0)
@@ -446,63 +438,21 @@ def score_snps(args):
                         alt_1hot, device=seqnn_model.device, dtype=torch.float32
                     )
 
-                    # variant bin position
-                    indel_size = sc.snps[ai].indel_size()
-                    snp_seq_pos = sc.snps[ai].pos - sc.start - output_crop
-                    snp_seq_bin = snp_seq_pos // output_stride
-
-                    # add left/right shifts for indels
-                    if indel_size == 0:
-                        alt_shifts = args.shifts
-                    else:
-                        alt_shifts = []
-                        for shift in args.shifts:
-                            alt_shifts.append(shift)
-                            alt_shifts.append(shift - indel_size)
-
-                    # predict alternate
-                    alt_cov_preds = []
-                    alt_gene_preds = []
-                    for shift in alt_shifts:
-                        alt_1hot_shift = dna.torch_shift(alt_1hot, shift)
-                        output = seqnn_model(
-                            alt_1hot_shift,
-                            args.head,
-                            gene_out_mask=model_gom,
-                            gene_presence=model_gp,
-                        )
-                        alt_cov_shift = seqnn_model.untransform_fn(
-                            output.coverage.squeeze(0), targets_df
-                        )
-                        alt_cov_preds.append(alt_cov_shift)
-                        if model_gom is not None and output.has_gene:
-                            alt_gene_preds.append(output.gene.squeeze(0))
-
-                    # stitch indel shifts (coverage only)
-                    if indel_size != 0 and args.indel_stitch:
-                        alt_cov_preds = stitch_preds(
-                            alt_cov_preds, args.shifts, snp_seq_bin
-                        )
-
-                    # flip reference and alternate
-                    if snps[si].flipped:
-                        rp_cov = torch.stack(alt_cov_preds)
-                        ap_cov = torch.stack(ref_cov_preds)
-                        if ref_gene_preds:
-                            rp_gene = torch.stack(alt_gene_preds)
-                            ap_gene = torch.stack(ref_gene_preds)
-                    else:
-                        rp_cov = torch.stack(ref_cov_preds)
-                        ap_cov = torch.stack(alt_cov_preds)
-                        if ref_gene_preds:
-                            rp_gene = torch.stack(ref_gene_preds)
-                            ap_gene = torch.stack(alt_gene_preds)
-
-                    # repeat reference predictions for indels w/o stitching
-                    if indel_size != 0 and not args.indel_stitch:
-                        rp_cov = rp_cov.repeat_interleave(2, dim=0)
-                        if ref_gene_preds:
-                            rp_gene = rp_gene.repeat_interleave(2, dim=0)
+                    snp = sc.snps[ai]
+                    snp_seq_bin = (snp.pos - sc.start - output_crop) // output_stride
+                    rp_cov, ap_cov, rp_gene, ap_gene, score_gom = predict_variant(
+                        predict,
+                        ref_1hot,
+                        alt_1hot,
+                        ref_cov_preds,
+                        ref_gene_preds,
+                        snp,
+                        snp_seq_bin,
+                        args.shifts,
+                        args.indel_stitch,
+                        gene_masks,
+                        gom,
+                    )
 
                     # full-sequence coverage scores (always)
                     if cov_stats:
@@ -522,10 +472,13 @@ def score_snps(args):
                     # gene-sliced scores (when GTF provided and SNP overlaps genes)
                     if gsc is not None and (covgene_stats or gene_stats):
                         for gi, gene in enumerate(gsc.genes):
-                            gene_mask = gom[0, gi]
+                            # coverage-based gene-sliced scores; empty when exons fall outside
+                            # the window or a stitched deletion removes them
+                            gene_mask = score_gom[0, gi]
+                            cov_scores = {}
                             if not gene_mask.any():
                                 print(
-                                    f"WARNING: {gene.kv['gene_id']} exons fall outside prediction boundaries."
+                                    f"WARNING: {gene.kv['gene_id']} has no exon bins in the scored coordinates."
                                 )
                             else:
                                 rp_cov_gene = rp_cov[:, :, gene_mask]
@@ -539,27 +492,26 @@ def score_snps(args):
                                 rp_cov_gene = rp_cov_gene[:, track_mask, :]
                                 ap_cov_gene = ap_cov_gene[:, track_mask, :]
 
-                                # coverage-based gene-sliced scores
                                 cov_scores = compute_scores_cov(
                                     rp_cov_gene, ap_cov_gene, covgene_stats
                                 )
 
-                                # gene head scores
-                                gene_head_scores = {}
-                                if gene_stats and ref_gene_preds:
-                                    gene_head_scores = compute_scores_gene(
-                                        rp_gene[:, :, gi],
-                                        ap_gene[:, :, gi],
-                                        gene_stats,
-                                    )
-
-                                executor.submit(
-                                    hdf5_write_pair, cov_scores, gene_head_scores, sgi
+                            # gene head scores
+                            gene_head_scores = {}
+                            if gene_stats and ref_gene_preds:
+                                gene_head_scores = compute_scores_gene(
+                                    rp_gene[:, :, gi],
+                                    ap_gene[:, :, gi],
+                                    gene_stats,
                                 )
+
+                            executor.submit(
+                                hdf5_write_pair, cov_scores, gene_head_scores, sgi
+                            )
 
                             sgi += 1
 
-                    del ap_cov, alt_cov_preds
+                    del ap_cov
                     si += 1
 
                 # clean reference
@@ -749,10 +701,8 @@ def score_gene_snps(args):
 
     # write to HDF5 in CPU thread
     def hdf5_write_pair(cov_scores, gene_head_scores, score_index):
-        for stat in covgene_stats:
-            scores_out[stat][score_index] = cov_scores[stat]
-        for stat in gene_stats:
-            scores_out[stat][score_index] = gene_head_scores[stat]
+        for stat, scores in {**cov_scores, **gene_head_scores}.items():
+            scores_out[stat][score_index] = scores
 
     # SNP-gene pair index
     sgi = 0
@@ -770,33 +720,26 @@ def score_gene_snps(args):
                 )
 
                 # build gene masks
-                gom, gp = build_gene_masks(
-                    gsc.genes,
-                    gsc.pstart,
-                    gsc.pend - gsc.pstart,
+                gene_masks = partial(
+                    frame_gene_masks,
+                    gsc,
                     output_stride,
                     output_length,
                     seqnn_model.device,
-                    span=args.span,
+                    args.span,
                 )
+                gom, _ = gene_masks()
 
-                # predict reference
-                ref_cov_preds = []
-                ref_gene_preds = []
-                for shift in args.shifts:
-                    ref_1hot_shift = dna.torch_shift(ref_1hot, shift)
-                    output = seqnn_model(
-                        ref_1hot_shift,
-                        args.head,
-                        gene_out_mask=gom,
-                        gene_presence=gp,
+                # predict, passing gene masks to the model when a gene head exists
+                def predict(x_1hot, shifts, indel_size=0, var_pos=0):
+                    masks = None
+                    if has_gene_head:
+                        masks = lambda shift: gene_masks(shift, indel_size, var_pos)
+                    return predict_allele(
+                        seqnn_model, x_1hot, shifts, args.head, targets_df, masks
                     )
-                    ref_cov_shift = seqnn_model.untransform_fn(
-                        output.coverage.squeeze(0), targets_df
-                    )
-                    ref_cov_preds.append(ref_cov_shift)
-                    if has_gene_head and output.has_gene:
-                        ref_gene_preds.append(output.gene.squeeze(0))
+
+                ref_cov_preds, ref_gene_preds = predict(ref_1hot, args.shifts)
 
                 for ai, alt_1hot in enumerate(snp_1hot_list[1:]):
                     alt_1hot = np.expand_dims(alt_1hot, axis=0)
@@ -804,67 +747,30 @@ def score_gene_snps(args):
                         alt_1hot, device=seqnn_model.device, dtype=torch.float32
                     )
 
-                    # add left/right shifts for indels
-                    indel_size = gsc.snps[ai].indel_size()
-                    if indel_size == 0:
-                        alt_shifts = args.shifts
-                    else:
-                        alt_shifts = []
-                        for shift in args.shifts:
-                            alt_shifts.append(shift)
-                            alt_shifts.append(shift - indel_size)
-
-                    # predict alternate
-                    alt_cov_preds = []
-                    alt_gene_preds = []
-                    for shift in alt_shifts:
-                        alt_1hot_shift = dna.torch_shift(alt_1hot, shift)
-                        output = seqnn_model(
-                            alt_1hot_shift,
-                            args.head,
-                            gene_out_mask=gom,
-                            gene_presence=gp,
-                        )
-                        alt_cov_shift = seqnn_model.untransform_fn(
-                            output.coverage.squeeze(0), targets_df
-                        )
-                        alt_cov_preds.append(alt_cov_shift)
-                        if has_gene_head and output.has_gene:
-                            alt_gene_preds.append(output.gene.squeeze(0))
-
-                    # stitch indel shifts
-                    if indel_size != 0 and args.indel_stitch:
-                        snp_seq_pos = gsc.snps[ai].pos - gsc.start - output_crop
-                        snp_seq_bin = snp_seq_pos // output_stride
-                        alt_cov_preds = stitch_preds(
-                            alt_cov_preds, args.shifts, snp_seq_bin
-                        )
-
-                    # flip reference and alternate
-                    if gsc.snps[ai].flipped:
-                        rp_cov = torch.stack(alt_cov_preds)
-                        ap_cov = torch.stack(ref_cov_preds)
-                        if has_gene_head and ref_gene_preds:
-                            rp_gene = torch.stack(alt_gene_preds)
-                            ap_gene = torch.stack(ref_gene_preds)
-                    else:
-                        rp_cov = torch.stack(ref_cov_preds)
-                        ap_cov = torch.stack(alt_cov_preds)
-                        if has_gene_head and ref_gene_preds:
-                            rp_gene = torch.stack(ref_gene_preds)
-                            ap_gene = torch.stack(alt_gene_preds)
-
-                    # repeat reference predictions for indels w/o stitching
-                    if indel_size != 0 and not args.indel_stitch:
-                        rp_cov = rp_cov.repeat_interleave(2, dim=0)
-                        if has_gene_head and ref_gene_preds:
-                            rp_gene = rp_gene.repeat_interleave(2, dim=0)
+                    snp = gsc.snps[ai]
+                    snp_seq_bin = (snp.pos - gsc.start - output_crop) // output_stride
+                    rp_cov, ap_cov, rp_gene, ap_gene, score_gom = predict_variant(
+                        predict,
+                        ref_1hot,
+                        alt_1hot,
+                        ref_cov_preds,
+                        ref_gene_preds,
+                        snp,
+                        snp_seq_bin,
+                        args.shifts,
+                        args.indel_stitch,
+                        gene_masks,
+                        gom,
+                    )
 
                     for gi, gene in enumerate(gsc.genes):
-                        gene_mask = gom[0, gi]
+                        # coverage-based gene-sliced scores; empty when exons fall outside
+                        # the window or a stitched deletion removes them
+                        gene_mask = score_gom[0, gi]
+                        cov_scores = {}
                         if not gene_mask.any():
                             print(
-                                f"WARNING: {gene.kv['gene_id']} exons fall outside prediction boundaries."
+                                f"WARNING: {gene.kv['gene_id']} has no exon bins in the scored coordinates."
                             )
                         else:
                             rp_cov_gene = rp_cov[:, :, gene_mask]
@@ -878,31 +784,30 @@ def score_gene_snps(args):
                             rp_cov_gene = rp_cov_gene[:, track_mask, :]
                             ap_cov_gene = ap_cov_gene[:, track_mask, :]
 
-                            # coverage-based gene-sliced scores
                             cov_scores = compute_scores_cov(
                                 rp_cov_gene, ap_cov_gene, covgene_stats
                             )
 
-                            # gene head scores
-                            gene_head_scores = {}
-                            if gene_stats and has_gene_head and ref_gene_preds:
-                                gene_head_scores = compute_scores_gene(
-                                    rp_gene[:, :, gi],
-                                    ap_gene[:, :, gi],
-                                    gene_stats,
-                                )
-
-                            # write
-                            executor.submit(
-                                hdf5_write_pair, cov_scores, gene_head_scores, sgi
+                        # gene head scores
+                        gene_head_scores = {}
+                        if gene_stats and has_gene_head and ref_gene_preds:
+                            gene_head_scores = compute_scores_gene(
+                                rp_gene[:, :, gi],
+                                ap_gene[:, :, gi],
+                                gene_stats,
                             )
+
+                        # write
+                        executor.submit(
+                            hdf5_write_pair, cov_scores, gene_head_scores, sgi
+                        )
 
                         # update SNP-gene index
                         sgi += 1
 
                 # clean up memory
                 del rp_cov, ref_cov_preds
-                del ap_cov, alt_cov_preds
+                del ap_cov
                 torch.cuda.empty_cache()
 
     # close open files
@@ -1412,10 +1317,14 @@ def initialize_output_h5(
                 covgene_stat,
                 shape=(num_pairs, covgene_out_depth),
                 dtype="float16",
+                fillvalue=np.nan,
             )
         for gene_stat in gene_stats:
             scores_out.create_dataset(
-                gene_stat, shape=(num_pairs, gene_depth), dtype="float16"
+                gene_stat,
+                shape=(num_pairs, gene_depth),
+                dtype="float16",
+                fillvalue=np.nan,
             )
 
     return scores_out
@@ -1451,26 +1360,155 @@ def map_snps_genes(snps, genesnp_clusters):
         genesnp_clusters[gi].add_snp(snps[si])
 
 
-def stitch_preds(preds, shifts, pos=None):
-    """Stitch indel left and right compensation shifts.
+def stitch_preds(left, right, pos):
+    """Join predictions left of pos with predictions from pos onward, per shift.
 
     Args:
-        preds [list of torch.Tensor]: List of TxL prediction tensors
-        shifts [list of int]: List of shifts.
-        pos (int): SNP position to stitch at.
+        left [list of torch.Tensor]: TxL predictions supplying bins before pos.
+        right [list of torch.Tensor]: TxL predictions supplying bins from pos on.
+        pos (int): Variant bin.
 
     Returns:
         list of torch.Tensor: List of TxL prediction tensors
     """
-    if pos is None:
-        pos = preds[0].shape[1] // 2
-    preds_stitch = []
-    for hi, shift in enumerate(shifts):
-        hil = 2 * hi
-        hir = hil + 1
-        preds_stitch_i = torch.cat((preds[hil][:, :pos], preds[hir][:, pos:]), dim=1)
-        preds_stitch.append(preds_stitch_i)
-    return preds_stitch
+    return [torch.cat((l[:, :pos], r[:, pos:]), dim=1) for l, r in zip(left, right)]
+
+
+def predict_allele(seqnn_model, x_1hot, shifts, head, targets_df, gene_masks=None):
+    """Predict untransformed coverage, and gene outputs if present, at each shift.
+
+    Args:
+        gene_masks (callable): Shift -> (gene_out_mask, gene_presence) in this
+          allele's coordinates, or None for no gene head.
+
+    Returns:
+        (list of torch.Tensor, list of torch.Tensor): TxL coverage and gene predictions.
+    """
+    cov_preds, gene_preds = [], []
+    for shift in shifts:
+        gom, gp = gene_masks(shift) if gene_masks is not None else (None, None)
+        output = seqnn_model(
+            dna.torch_shift(x_1hot, shift), head, gene_out_mask=gom, gene_presence=gp
+        )
+        cov_preds.append(
+            seqnn_model.untransform_fn(output.coverage.squeeze(0), targets_df)
+        )
+        if gom is not None and output.has_gene:
+            gene_preds.append(output.gene.squeeze(0))
+    return cov_preds, gene_preds
+
+
+def predict_variant(
+    predict,
+    ref_1hot,
+    alt_1hot,
+    ref_cov,
+    ref_gene,
+    snp,
+    snp_seq_bin,
+    shifts,
+    stitch,
+    gene_masks=None,
+    gom=None,
+):
+    """Reference and alternate predictions for one variant, oriented by snp.flipped.
+
+    With stitch, the longer allele (alternate for insertions, reference for
+    deletions) is also predicted at shifts - |indel_size|, and its coverage is
+    stitched at the variant bin so that every other bin covers the same
+    nucleotides as the shorter allele's. Its gene head predictions average
+    both shift sets.
+
+    Args:
+        predict (callable): (x_1hot, shifts, indel_size=0, var_pos=0) ->
+          (coverage list, gene list); indel_size and var_pos frame the
+          alternate's gene masks.
+        ref_cov, ref_gene [list of torch.Tensor]: Reference predictions at shifts.
+        gene_masks (callable): (shift, indel_size, var_pos) -> gene masks.
+        gom (torch.Tensor): Reference-frame gene output mask, or None.
+
+    Returns:
+        rp_cov, ap_cov, rp_gene, ap_gene (gene None without gene predictions),
+        and the gene output mask in the scored coordinates.
+    """
+    indel_size = snp.indel_size()
+    alt_cov, alt_gene = predict(alt_1hot, shifts, indel_size, snp.pos)
+    score_gom = gom
+    if stitch and indel_size != 0:
+        shifts2 = [shift - abs(indel_size) for shift in shifts]
+        if indel_size > 0:
+            alt_cov2, alt_gene2 = predict(alt_1hot, shifts2, indel_size, snp.pos)
+            alt_cov = stitch_preds(alt_cov, alt_cov2, snp_seq_bin)
+            alt_gene = alt_gene + alt_gene2
+        else:
+            ref_cov2, ref_gene2 = predict(ref_1hot, shifts2)
+            ref_cov = stitch_preds(ref_cov, ref_cov2, snp_seq_bin)
+            ref_gene = ref_gene + ref_gene2
+            if gom is not None:
+                score_gom, _ = gene_masks(0, indel_size, snp.pos)
+
+    if snp.flipped:
+        ref_cov, alt_cov, ref_gene, alt_gene = alt_cov, ref_cov, alt_gene, ref_gene
+    rp_gene = torch.stack(ref_gene) if ref_gene else None
+    ap_gene = torch.stack(alt_gene) if alt_gene else None
+    return torch.stack(ref_cov), torch.stack(alt_cov), rp_gene, ap_gene, score_gom
+
+
+def frame_gene_masks(
+    gsc,
+    output_stride,
+    output_length,
+    device,
+    span=False,
+    shift=0,
+    indel_size=0,
+    var_pos=0,
+):
+    """Gene output masks in the coordinates of a shifted allele sequence.
+
+    Shifting a sequence by shift moves every genomic position shift nt. An
+    alternate allele also moves positions downstream of the variant by
+    indel_size nt, and deleted positions have no coordinates. Exons are split
+    at the variant and each part is mapped with its own offset.
+
+    Args:
+        gsc (GeneSNPCluster): Genes and prediction start.
+        shift (int): Sequence shift.
+        indel_size (int): Alternate allele indel size, or 0 for the reference.
+        var_pos (int): Variant VCF position (1-based anchor), i.e. the 0-based
+          start of sequence downstream of the anchor.
+
+    Returns:
+        gene_out_mask: (1, num_genes, output_length) bool tensor.
+        gene_presence: (1, num_genes) bool tensor.
+    """
+    seq_len = gsc.pend - gsc.pstart
+    down_start = var_pos + max(-indel_size, 0)
+    gom = torch.zeros(1, len(gsc.genes), output_length, dtype=torch.bool, device=device)
+    for gi, gene in enumerate(gsc.genes):
+        intervals = (
+            [gene.span()] if span else [(e.begin, e.end) for e in gene.get_exons()]
+        )
+        for start, end in intervals:
+            if indel_size == 0:
+                parts = [(start, end, 0)]
+            else:
+                parts = [
+                    (start, min(end, var_pos), 0),
+                    (max(start, down_start), end, indel_size),
+                ]
+            for part_start, part_end, offset in parts:
+                if part_start < part_end:
+                    slice_start, slice_end = interval_output_slice(
+                        part_start,
+                        part_end,
+                        gsc.pstart - shift - offset,
+                        seq_len,
+                        output_stride,
+                        majority_overlap=span,
+                    )
+                    gom[0, gi, slice_start:slice_end] = True
+    return gom, gom.any(dim=-1)
 
 
 def write_quantiles(scores_out, snp_stats, norm_file=None):
@@ -1518,7 +1556,7 @@ def write_quantiles(scores_out, snp_stats, norm_file=None):
                     score_q = norm_h5[quantiles_key][:]
             else:
                 # compute quantiles from current scores
-                score_q = np.quantile(scores_out[snp_stat], quantiles, axis=0).T
+                score_q = np.nanquantile(scores_out[snp_stat], quantiles, axis=0).T
 
             # convert to float16 and save
             score_q = score_q.astype("float16")

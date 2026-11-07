@@ -13,7 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # =========================================================================
-from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
+from argparse import (
+    ArgumentParser,
+    ArgumentDefaultsHelpFormatter,
+    BooleanOptionalAction,
+)
 import os
 import shutil
 
@@ -97,10 +101,9 @@ def main():
     )
     snp_group.add_argument(
         "--indel_stitch",
-        dest="indel_stitch",
-        default=False,
-        action="store_true",
-        help="Stitch indel compensation shifts",
+        default=True,
+        action=BooleanOptionalAction,
+        help="Stitch the longer indel allele to align with the shorter [Default: %(default)s]",
     )
     snp_group.add_argument(
         "--local_window",
@@ -664,8 +667,8 @@ def build_snp_cmd(args, model_file, start_i, end_i, out_dir=None, fold_cross=Non
     if hasattr(args, "center_gene") and args.center_gene:
         cmd_parts.append("--center_gene")
 
-    if hasattr(args, "indel_stitch") and args.indel_stitch:
-        cmd_parts.append("--indel_stitch")
+    if hasattr(args, "indel_stitch") and not args.indel_stitch:
+        cmd_parts.append("--no-indel_stitch")
 
     if hasattr(args, "local_window") and args.local_window != 2048:
         cmd_parts.extend(["--local_window", str(args.local_window)])

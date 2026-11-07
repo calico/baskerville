@@ -87,10 +87,9 @@ def main(argv=None):
     )
     parser.add_argument(
         "--indel_stitch",
-        dest="indel_stitch",
-        default=False,
-        action="store_true",
-        help="Stitch indel compensation shifts",
+        default=True,
+        action=argparse.BooleanOptionalAction,
+        help="Stitch the longer indel allele to align with the shorter [Default: %(default)s]",
     )
     parser.add_argument(
         "--local_window",
