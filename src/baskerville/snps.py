@@ -13,7 +13,11 @@ import torch
 
 from baskerville import dna
 from baskerville import dataset
-from baskerville.gene import Transcriptome, find_overlapping_genes, interval_output_slice
+from baskerville.gene import (
+    Transcriptome,
+    find_overlapping_genes,
+    interval_output_slice,
+)
 from baskerville import seqnn
 from baskerville.vcf import VCF, SNPCluster
 
@@ -407,8 +411,13 @@ def score_snps(args):
 
                     def gene_masks(shift, indel_size=0, var_pos=0, gsc=gsc):
                         return frame_gene_masks(
-                            gsc, shift, indel_size, var_pos, output_stride,
-                            output_length, seqnn_model.device,
+                            gsc,
+                            shift,
+                            indel_size,
+                            var_pos,
+                            output_stride,
+                            output_length,
+                            seqnn_model.device,
                             getattr(args, "span", False),
                         )
 
@@ -436,9 +445,17 @@ def score_snps(args):
                     snp = sc.snps[ai]
                     snp_seq_bin = (snp.pos - sc.start - output_crop) // output_stride
                     rp_cov, ap_cov, rp_gene, ap_gene, score_gom = predict_variant(
-                        predict, ref_1hot, alt_1hot, ref_cov_preds, ref_gene_preds,
-                        snp, snp_seq_bin, args.shifts, args.indel_shift == "stitch",
-                        gene_masks, gom,
+                        predict,
+                        ref_1hot,
+                        alt_1hot,
+                        ref_cov_preds,
+                        ref_gene_preds,
+                        snp,
+                        snp_seq_bin,
+                        args.shifts,
+                        args.indel_shift == "stitch",
+                        gene_masks,
+                        gom,
                     )
 
                     # full-sequence coverage scores (always)
@@ -492,7 +509,9 @@ def score_snps(args):
                                     gene_stats,
                                 )
 
-                            executor.submit(hdf5_write_pair, cov_scores, gene_head_scores, sgi)
+                            executor.submit(
+                                hdf5_write_pair, cov_scores, gene_head_scores, sgi
+                            )
 
                             sgi += 1
 
@@ -707,8 +726,14 @@ def score_gene_snps(args):
                 # build gene masks
                 def gene_masks(shift, indel_size=0, var_pos=0, gsc=gsc):
                     return frame_gene_masks(
-                        gsc, shift, indel_size, var_pos, output_stride,
-                        output_length, seqnn_model.device, args.span,
+                        gsc,
+                        shift,
+                        indel_size,
+                        var_pos,
+                        output_stride,
+                        output_length,
+                        seqnn_model.device,
+                        args.span,
                     )
 
                 gom, _ = gene_masks(0)
@@ -733,9 +758,17 @@ def score_gene_snps(args):
                     snp = gsc.snps[ai]
                     snp_seq_bin = (snp.pos - gsc.start - output_crop) // output_stride
                     rp_cov, ap_cov, rp_gene, ap_gene, score_gom = predict_variant(
-                        predict, ref_1hot, alt_1hot, ref_cov_preds, ref_gene_preds,
-                        snp, snp_seq_bin, args.shifts, args.indel_shift == "stitch",
-                        gene_masks, gom,
+                        predict,
+                        ref_1hot,
+                        alt_1hot,
+                        ref_cov_preds,
+                        ref_gene_preds,
+                        snp,
+                        snp_seq_bin,
+                        args.shifts,
+                        args.indel_shift == "stitch",
+                        gene_masks,
+                        gom,
                     )
 
                     for gi, gene in enumerate(gsc.genes):
@@ -773,7 +806,9 @@ def score_gene_snps(args):
                             )
 
                         # write
-                        executor.submit(hdf5_write_pair, cov_scores, gene_head_scores, sgi)
+                        executor.submit(
+                            hdf5_write_pair, cov_scores, gene_head_scores, sgi
+                        )
 
                         # update SNP-gene index
                         sgi += 1
@@ -1359,15 +1394,26 @@ def predict_allele(seqnn_model, x_1hot, shifts, head, targets_df, gene_masks=Non
         output = seqnn_model(
             dna.torch_shift(x_1hot, shift), head, gene_out_mask=gom, gene_presence=gp
         )
-        cov_preds.append(seqnn_model.untransform_fn(output.coverage.squeeze(0), targets_df))
+        cov_preds.append(
+            seqnn_model.untransform_fn(output.coverage.squeeze(0), targets_df)
+        )
         if gom is not None and output.has_gene:
             gene_preds.append(output.gene.squeeze(0))
     return cov_preds, gene_preds
 
 
 def predict_variant(
-    predict, ref_1hot, alt_1hot, ref_cov, ref_gene, snp, snp_seq_bin, shifts,
-    stitch, gene_masks=None, gom=None,
+    predict,
+    ref_1hot,
+    alt_1hot,
+    ref_cov,
+    ref_gene,
+    snp,
+    snp_seq_bin,
+    shifts,
+    stitch,
+    gene_masks=None,
+    gom=None,
 ):
     """Reference and alternate predictions for one variant, oriented by snp.flipped.
 
@@ -1437,7 +1483,9 @@ def frame_gene_masks(
     down_start = var_pos + max(-indel_size, 0)
     gom = torch.zeros(1, len(gsc.genes), output_length, dtype=torch.bool, device=device)
     for gi, gene in enumerate(gsc.genes):
-        intervals = [gene.span()] if span else [(e.begin, e.end) for e in gene.get_exons()]
+        intervals = (
+            [gene.span()] if span else [(e.begin, e.end) for e in gene.get_exons()]
+        )
         for start, end in intervals:
             if indel_size == 0:
                 parts = [(start, end, 0)]
@@ -1449,11 +1497,16 @@ def frame_gene_masks(
             for part_start, part_end, offset in parts:
                 if part_start < part_end:
                     slice_start, slice_end = interval_output_slice(
-                        part_start, part_end, gsc.pstart - shift - offset,
-                        seq_len, output_stride, majority_overlap=span,
+                        part_start,
+                        part_end,
+                        gsc.pstart - shift - offset,
+                        seq_len,
+                        output_stride,
+                        majority_overlap=span,
                     )
                     gom[0, gi, slice_start:slice_end] = True
     return gom, gom.any(dim=-1)
+
 
 def write_quantiles(scores_out, snp_stats, norm_file=None):
     """Compute quantile values for each target and write to HDF5.
