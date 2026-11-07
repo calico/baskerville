@@ -848,7 +848,7 @@ def test_frame_gene_masks():
     gsc = SimpleNamespace(genes=[gene], pstart=0, pend=640)
 
     def bins(shift, indel_size):
-        gom, gp = frame_gene_masks(gsc, shift, indel_size, 80, 32, 20, "cpu")
+        gom, gp = frame_gene_masks(gsc, 32, 20, "cpu", False, shift, indel_size, 80)
         assert gp.item()
         return torch.nonzero(gom[0, 0]).flatten().tolist()
 

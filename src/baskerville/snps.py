@@ -1,4 +1,5 @@
 import concurrent
+from functools import partial
 import json
 import os
 import sys
@@ -408,20 +409,15 @@ def score_snps(args):
                 # build gene masks if this cluster has genes
                 gsc = sc_to_gsc.get(ci) if score_genes else None
                 if gsc is not None and (covgene_stats or gene_stats):
-
-                    def gene_masks(shift, indel_size=0, var_pos=0, gsc=gsc):
-                        return frame_gene_masks(
-                            gsc,
-                            shift,
-                            indel_size,
-                            var_pos,
-                            output_stride,
-                            output_length,
-                            seqnn_model.device,
-                            getattr(args, "span", False),
-                        )
-
-                    gom, _ = gene_masks(0)
+                    gene_masks = partial(
+                        frame_gene_masks,
+                        gsc,
+                        output_stride,
+                        output_length,
+                        seqnn_model.device,
+                        getattr(args, "span", False),
+                    )
+                    gom, _ = gene_masks()
                 else:
                     gene_masks = gom = None
 
@@ -724,19 +720,15 @@ def score_gene_snps(args):
                 )
 
                 # build gene masks
-                def gene_masks(shift, indel_size=0, var_pos=0, gsc=gsc):
-                    return frame_gene_masks(
-                        gsc,
-                        shift,
-                        indel_size,
-                        var_pos,
-                        output_stride,
-                        output_length,
-                        seqnn_model.device,
-                        args.span,
-                    )
-
-                gom, _ = gene_masks(0)
+                gene_masks = partial(
+                    frame_gene_masks,
+                    gsc,
+                    output_stride,
+                    output_length,
+                    seqnn_model.device,
+                    args.span,
+                )
+                gom, _ = gene_masks()
 
                 # predict, passing gene masks to the model when a gene head exists
                 def predict(x_1hot, shifts, indel_size=0, var_pos=0):
@@ -1459,7 +1451,14 @@ def predict_variant(
 
 
 def frame_gene_masks(
-    gsc, shift, indel_size, var_pos, output_stride, output_length, device, span=False
+    gsc,
+    output_stride,
+    output_length,
+    device,
+    span=False,
+    shift=0,
+    indel_size=0,
+    var_pos=0,
 ):
     """Gene output masks in the coordinates of a shifted allele sequence.
 
