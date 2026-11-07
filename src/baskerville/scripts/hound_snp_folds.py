@@ -98,8 +98,8 @@ def main():
     snp_group.add_argument(
         "--indel_shift",
         dest="indel_shift",
-        default="average",
-        choices=["default", "average", "stitch"],
+        default="stitch",
+        choices=["default", "stitch"],
         help="Indel compensating shift strategy [Default: %(default)s]",
     )
     snp_group.add_argument(

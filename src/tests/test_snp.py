@@ -18,7 +18,6 @@ from baskerville.snps import (
     parse_mix_dtype,
     partition_snp_stats,
     stitch_preds,
-    stitch_ref_deletion,
     frame_gene_masks,
 )
 
@@ -824,12 +823,12 @@ def test_stitch_indel_coordinates():
         return dna.torch_shift(x, shift, null_value=-1).squeeze(0)
 
     # deletion: stitch the reference, compare to the unshifted alternate
-    ref_st = stitch_ref_deletion([predict(ref, 0)], [predict(ref, -k)], [0], p + 1)[0]
+    ref_st = stitch_preds([predict(ref, 0)], [predict(ref, -k)], p + 1)[0]
     assert torch.equal(ref_st[:, : L - k], predict(alt_del, 0)[:, : L - k])
 
     # insertion: stitch the alternate, compare to the reference
     alt_ins = torch.cat((ref[..., : p + 1], torch.full((1, 1, k), 99.0), ref[..., p + 1 : L - k]), -1)
-    alt_st = stitch_preds([predict(alt_ins, 0), predict(alt_ins, -k)], [0], p + 1)[0]
+    alt_st = stitch_preds([predict(alt_ins, 0)], [predict(alt_ins, -k)], p + 1)[0]
     assert torch.equal(alt_st[:, : L - k], predict(ref, 0)[:, : L - k])
 
 

@@ -49,7 +49,7 @@ python -m baskerville.scripts.hound_snp \
 
 - `--rc`: Average forward and reverse complement predictions
 - `--shifts`: Ensemble prediction shifts (comma-separated, default: "0")
-- `--indel_shift {default,average,stitch}`: Indel scoring strategy. `default` compares unshifted alleles; `average` averages over the alternate allele left- and right-matched to the reference; `stitch` stitches those two shifts at the variant bin (works best when variants are centered, i.e. -c 0). [Default: average]
+- `--indel_shift {default,stitch}`: Indel scoring strategy. `default` compares unshifted alleles; `stitch` predicts the longer allele (alternate for insertions, reference for deletions) left- and right-matched to the shorter one and stitches the two at the variant bin, so every other bin covers the same nucleotides in both alleles. [Default: stitch]
 - `--span`: (Gene mode only) Aggregate across the entire gene span (min exon start to max exon end) instead of exon-only bins.
 
 **Windowed Scoring**
