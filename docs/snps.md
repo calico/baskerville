@@ -49,7 +49,7 @@ python -m baskerville.scripts.hound_snp \
 
 - `--rc`: Average forward and reverse complement predictions
 - `--shifts`: Ensemble prediction shifts (comma-separated, default: "0")
-- `--indel_shift {default,stitch}`: Indel scoring strategy. `default` compares unshifted alleles; `stitch` predicts the longer allele (alternate for insertions, reference for deletions) left- and right-matched to the shorter one and stitches the two at the variant bin, so every other bin covers the same nucleotides in both alleles. [Default: stitch]
+- `--indel_stitch` / `--no-indel_stitch`: Indel scoring. Stitching predicts the longer allele (alternate for insertions, reference for deletions) left- and right-matched to the shorter one and stitches the two at the variant bin, so every other bin covers the same nucleotides in both alleles; `--no-indel_stitch` compares unshifted alleles. [Default: stitch]
 - `--span`: (Gene mode only) Aggregate across the entire gene span (min exon start to max exon end) instead of exon-only bins.
 
 **Windowed Scoring**
@@ -169,7 +169,7 @@ python -m baskerville.scripts.hound_snp \
 
 1. Genes are read from the GTF (per-gene aggregation; transcripts are not distinguished once exons are merged per gene object in the loader).
 2. Genes are optionally clustered with `-c/--cluster_pct` exactly like SNP clustering, but using gene midpoints. A single reference forward pass is reused for all genes and SNPs in the cluster to reduce compute.
-3. Each cluster defines a genomic window sized to the model `seq_length`; SNPs inside are one-hot encoded for reference and alternate alleles. (Indels still honored; `--indel_shift` works the same.)
+3. Each cluster defines a genomic window sized to the model `seq_length`; SNPs inside are one-hot encoded for reference and alternate alleles. (Indels still honored; `--indel_stitch` works the same.)
 4. For every SNP and every gene in the cluster that contains that SNP, the model predictions are sliced to bins overlapping the gene's exonic output coordinates. Bins off the edges after output cropping are ignored (a warning prints if everything is outside).
 5. Target tensor is strand-filtered: if gene is `+`, only targets whose `strand != '-'` are retained; if gene is `-`, only targets whose `strand != '+'` are retained (mirrors plus/minus masks in code).
 6. Requested statistics (`--stats`) are computed on the sliced reference vs alternate predictions.

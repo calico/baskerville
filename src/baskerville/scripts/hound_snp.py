@@ -86,11 +86,10 @@ def main():
         help="Start index for SNP processing (0-based, inclusive)",
     )
     parser.add_argument(
-        "--indel_shift",
-        dest="indel_shift",
-        default="stitch",
-        choices=["default", "stitch"],
-        help="Indel compensating shift strategy [Default: %(default)s]",
+        "--indel_stitch",
+        default=True,
+        action=argparse.BooleanOptionalAction,
+        help="Stitch the longer indel allele to align with the shorter [Default: %(default)s]",
     )
     parser.add_argument(
         "--local_window",

@@ -453,7 +453,7 @@ def score_snps(args):
                         snp,
                         snp_seq_bin,
                         args.shifts,
-                        args.indel_shift == "stitch",
+                        args.indel_stitch,
                         gene_masks,
                         gom,
                     )
@@ -766,7 +766,7 @@ def score_gene_snps(args):
                         snp,
                         snp_seq_bin,
                         args.shifts,
-                        args.indel_shift == "stitch",
+                        args.indel_stitch,
                         gene_masks,
                         gom,
                     )
