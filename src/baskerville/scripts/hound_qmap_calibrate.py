@@ -128,6 +128,7 @@ def main(argv=None):
         t.get("weight_exp", 1),
         t.get("split_exp", 0),
         t.get("split_knee", 1),
+        t.get("split_step", 0),
     )
 
     lambdas = []
