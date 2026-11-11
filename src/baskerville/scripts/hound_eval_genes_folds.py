@@ -77,7 +77,7 @@ def main():
         "-g",
         "--genes_gtf",
         required=True,
-        help="GTF file with gene annotations.",
+        help="GTF file with gene annotations; comma-separated for one per data dir.",
     )
     parser.add_argument(
         "-o",
@@ -209,6 +209,11 @@ def eval_genes_folds(args):
     # bare names resolved against the in-container mount. Must run before
     # make_runner() so the rewritten paths bake into the gcprunner.Job kwargs.
     gcp_backend = getattr(args, "backend", None) == "gcp"
+    genes_gtfs = args.genes_gtf.split(",")
+    if len(genes_gtfs) == 1:
+        genes_gtfs *= len(args.data_dirs)
+    if len(genes_gtfs) != len(args.data_dirs):
+        raise ValueError("--genes_gtf needs one GTF, or one per data dir")
     container_params = None
     container_models_dir = None  # staged-models mode (local tree → cache)
     container_data_dirs = None
@@ -254,7 +259,11 @@ def eval_genes_folds(args):
         params_sha, container_params = stage_cache.stage_file(
             args.params_file, "params"
         )
-        gtf_sha, container_gtf = stage_cache.stage_file(args.genes_gtf, "gtf")
+        staged = [stage_cache.stage_file(g, "gtf") for g in genes_gtfs]
+        gtf_sha = staged[0][0]
+        if len(set(genes_gtfs)) > 1:
+            gtf_sha = stage_cache.hash_text("".join(sha for sha, _ in staged))
+        container_gtf = [path for _, path in staged]
         models_sha = None
         if gcs_models_dir is None:
             models_sha, container_models_dir = stage_cache.stage_dir(
@@ -328,7 +337,7 @@ def eval_genes_folds(args):
     else:
         params_file = os.path.abspath(args.params_file)
         data_dirs = [os.path.abspath(data_dir) for data_dir in args.data_dirs]
-        genes_gtf = os.path.abspath(args.genes_gtf)
+        genes_gtf = [os.path.abspath(g) for g in genes_gtfs]
         targets_file = args.targets_file
 
     #######################################################
@@ -450,7 +459,7 @@ def eval_genes_folds(args):
                 cmd += f" {params_file}"
                 cmd += f" {model_file}"
                 cmd += f" {data_dirs[di]}"
-                cmd += f" {genes_gtf}"
+                cmd += f" {genes_gtf[di]}"
 
                 job_mem = 90000 if args.span else 30000
 

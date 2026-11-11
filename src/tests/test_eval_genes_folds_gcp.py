@@ -284,6 +284,37 @@ def test_local_backend_builds_command(tmp_path, monkeypatch):
     assert cmd.rstrip().endswith(os.path.abspath(args.genes_gtf))  # gtf positional last
 
 
+def test_one_gtf_per_data_dir(tmp_path, monkeypatch):
+    """-g a.gtf,b.gtf pairs each data dir (and head) with its own GTF."""
+    out_dir = _make_models_dir(tmp_path, num_folds=2, test_fold=0, valid_fold=1)
+    data_dirs = []
+    for name in ["hg38", "mm10"]:
+        (tmp_path / name).mkdir()
+        with open(tmp_path / name / "statistics.json", "w") as f:
+            json.dump({"fold0": {}, "fold1": {}}, f)
+        data_dirs.append(str(tmp_path / name))
+
+    captured = []
+    monkeypatch.setattr(hegf.utils, "exec_par", lambda jobs, **k: captured.extend(jobs))
+    args = MockArgs(
+        out_dir=out_dir,
+        data_dirs=data_dirs,
+        genes_gtf="h.gtf,m.gtf",
+        backend="slurm",
+        local=True,
+        gcp_data_dir=None,
+    )
+    hegf.eval_genes_folds(args)
+
+    f0 = [c for c in captured if "/f0c0/" in c]
+    assert " --head 0" in f0[0] and f0[0].rstrip().endswith(os.path.abspath("h.gtf"))
+    assert " --head 1" in f0[1] and f0[1].rstrip().endswith(os.path.abspath("m.gtf"))
+
+    args.genes_gtf = "h.gtf,m.gtf,x.gtf"
+    with pytest.raises(ValueError):
+        hegf.eval_genes_folds(args)
+
+
 def test_gcp_requires_data_dir(tmp_path, monkeypatch):
     out_dir = _make_models_dir(tmp_path, num_folds=2, test_fold=0, valid_fold=1)
     _patch_gcp(monkeypatch, num_folds=2)
