@@ -49,7 +49,7 @@ python -m baskerville.scripts.hound_snp \
 
 - `--rc`: Average forward and reverse complement predictions
 - `--shifts`: Ensemble prediction shifts (comma-separated, default: "0")
-- `--indel_stitch` / `--no-indel_stitch`: Indel scoring. Stitching predicts the longer allele (alternate for insertions, reference for deletions) left- and right-matched to the shorter one and stitches the two at the variant bin, so every other bin covers the same nucleotides in both alleles; `--no-indel_stitch` compares unshifted alleles. [Default: stitch]
+- `--indel_stitch` / `--no-indel_stitch`: Indel scoring. Stitching predicts the longer allele (alternate for insertions, reference for deletions) left- and right-matched to the shorter one and stitches the two at the variant bin, so every other bin covers the same nucleotides in both alleles; `--no-indel_stitch` predicts each allele once and realigns the alternate's bins downstream of the variant to the reference by the nearest whole number of bins (round(|indel| / bin width)); bins without a counterpart (inserted or deleted span, the alternate's far edge) take the reference's values and contribute no difference. The sub-bin remainder and the shifted pooling partition remain, so indels shorter than half a bin are compared unshifted. [Default: stitch]
 - `--span`: (Gene mode only) Aggregate across the entire gene span (min exon start to max exon end) instead of exon-only bins.
 
 **Windowed Scoring**
@@ -195,7 +195,7 @@ By default only exon-overlapping bins are used (union of all exons). Supplying `
 - Annotations are fixed. Exon structure is not re-derived for the alternate allele, so splice-site disruption or frameshifts register only through the model's predicted coverage.
 - Exons are split at the variant and mapped into each allele's coordinates: downstream parts take the indel offset, and deleted exon nucleotides drop out. Inserted nucleotides belong to no exon, so they are excluded beyond the variant bin.
 - With stitching, `covgene/` scores use the shorter allele's coordinates and compare only exon bins shared by both alleles; the variant bin mixes indel and flanking sequence.
-- With `--no-indel_stitch`, `covgene/` scores apply reference-coordinate masks to both alleles, so alternate bins downstream of the variant are offset by the indel size.
+- With `--no-indel_stitch`, the alternate is realigned to reference coordinates by whole bins and `covgene/` scores apply reference-coordinate masks to both alleles. Exon bins inside a deletion take the reference's values in the alternate, so they enter both sums unchanged rather than dropping out.
 - A gene head always receives masks in each prediction's own coordinates.
 - If a deletion removes every exon bin in the window, `covgene/` scores are NaN; `gene/` scores are still computed.
 
