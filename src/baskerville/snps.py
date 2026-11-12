@@ -1385,7 +1385,8 @@ def stitch_preds(left, right, pos):
 
 def realign_preds(ref, alt, pos, indel_size, stride):
     """Move the alternate's bins from pos onward by the nearest whole number of bins
-    (round(|indel_size| / stride)) so they cover the reference's nucleotides, per shift.
+    so they cover the reference's nucleotides, per shift. Ties (|indel_size| an odd
+    multiple of stride / 2) round down: either choice leaves half a bin of offset.
 
     Bins without a counterpart, the inserted or deleted span and the alternate's far
     edge, take the reference's values, so they contribute no difference.
@@ -1399,7 +1400,7 @@ def realign_preds(ref, alt, pos, indel_size, stride):
     Returns:
         list of torch.Tensor: TxL alternate predictions in reference bin coordinates.
     """
-    r = (abs(indel_size) + stride // 2) // stride
+    r = (abs(indel_size) + stride // 2 - 1) // stride
     out = []
     for rf, a in zip(ref, alt):
         L = a.shape[1]
