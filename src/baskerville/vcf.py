@@ -524,26 +524,32 @@ class SNPCluster:
         # for snp in self.snps:
         #     snp.seq_pos = snp.pos - 1 - self.start
 
-    def get_1hots(self, genome_open):
-        """Get list of one hot coded sequences."""
+    def get_1hots(self, genome_open, flank=0):
+        """Get list of one hot coded sequences: reference, then each alternate.
+
+        Args:
+            flank (int): Extra reference nucleotides on each side of the window,
+              from which alleles are built before any slicing.
+        """
         seqs1_list = []
+        start, end = self.start - flank, self.end + flank
 
         # extract reference
-        if self.start < 0:
+        if start < 0:
             ref_seq = (
-                "N" * (-self.start) + genome_open.fetch(self.chr, 0, self.end).upper()
+                "N" * (-start) + genome_open.fetch(self.chr, 0, end).upper()
             )
         else:
-            ref_seq = genome_open.fetch(self.chr, self.start, self.end).upper()
+            ref_seq = genome_open.fetch(self.chr, start, end).upper()
 
         # extend to full length
-        if len(ref_seq) < self.end - self.start:
-            ref_seq += "N" * (self.end - self.start - len(ref_seq))
+        if len(ref_seq) < end - start:
+            ref_seq += "N" * (end - start - len(ref_seq))
 
         # verify reference alleles
         for snp in self.snps:
             ref_n = len(snp.ref_allele)
-            snp_pos = snp.pos - 1 - self.start
+            snp_pos = snp.pos - 1 - start
             ref_snp = ref_seq[snp_pos : snp_pos + ref_n]
             if snp.ref_allele != ref_snp:
                 print(
@@ -559,7 +565,7 @@ class SNPCluster:
         # make alternative 1 hot coded sequences
         # (assuming SNP is 1-based indexed)
         for snp in self.snps:
-            snp_pos = snp.pos - 1 - self.start
+            snp_pos = snp.pos - 1 - start
             alt_1hot = make_alt_1hot(ref_1hot, snp_pos, snp.ref_allele, snp.alt_allele)
             seqs1_list.append(alt_1hot)
 

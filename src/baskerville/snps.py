@@ -389,7 +389,7 @@ def score_snps(args):
         ):
             # initialize 1 hot encoding
             sc0 = snp_clusters[0]
-            s1l = executor.submit(sc0.get_1hots, genome_open)
+            s1l = executor.submit(sc0.get_1hots, genome_open, seq_flank(sc0, args.shifts))
 
             for ci, sc in enumerate(
                 tqdm(snp_clusters, unit=" cluster", desc="SNP clusters")
@@ -404,7 +404,7 @@ def score_snps(args):
                 # submit next 1 hot encoding
                 if ci + 1 < len(snp_clusters):
                     sc1 = snp_clusters[ci + 1]
-                    s1l = executor.submit(sc1.get_1hots, genome_open)
+                    s1l = executor.submit(sc1.get_1hots, genome_open, seq_flank(sc1, args.shifts))
 
                 # build gene masks if this cluster has genes
                 gsc = sc_to_gsc.get(ci) if score_genes else None
@@ -714,7 +714,7 @@ def score_gene_snps(args):
             torch.autocast(device_type=seqnn_model.device, dtype=args.mix_dtype),
         ):
             for gsc in tqdm(genesnp_clusters, unit=" cluster", desc="gene clusters"):
-                snp_1hot_list = gsc.get_1hots(genome_open)
+                snp_1hot_list = gsc.get_1hots(genome_open, seq_flank(gsc, args.shifts))
                 ref_1hot = np.expand_dims(snp_1hot_list[0], axis=0)
                 ref_1hot = torch.tensor(
                     ref_1hot, device=seqnn_model.device, dtype=torch.float32
@@ -1413,10 +1413,18 @@ def realign_preds(ref, alt, pos, indel_size, stride):
     return out
 
 
+def seq_flank(sc, shifts):
+    """Flank (nt per side) that keeps every ensemble and stitch shift of a
+    cluster's alleles within real sequence."""
+    return max(abs(s) for s in shifts) + max(abs(snp.indel_size()) for snp in sc.snps)
+
+
 def predict_allele(seqnn_model, x_1hot, shifts, head, targets_df, gene_masks=None):
     """Predict untransformed coverage and optional gene outputs at each shift.
 
-    After shifting, crop inputs on the right to the model's sequence length.
+    x_1hot may carry equal flanks of reference sequence beyond the model's
+    sequence length; each shift then slices real sequence from them, and only
+    shifts beyond the flank pad with N.
 
     Args:
         gene_masks (callable): Shift -> (gene_out_mask, gene_presence) in this
@@ -1425,10 +1433,12 @@ def predict_allele(seqnn_model, x_1hot, shifts, head, targets_df, gene_masks=Non
     Returns:
         (list of torch.Tensor, list of torch.Tensor): TxL coverage and gene predictions.
     """
+    m, odd = divmod(x_1hot.shape[-1] - seqnn_model.seq_length, 2)
+    assert m >= 0 and not odd, "x_1hot needs equal flanks beyond seq_length"
     cov_preds, gene_preds = [], []
     for shift in shifts:
         gom, gp = gene_masks(shift) if gene_masks is not None else (None, None)
-        x = dna.torch_shift(x_1hot, shift)[..., : seqnn_model.seq_length]
+        x = dna.torch_shift(x_1hot, shift)[..., m : m + seqnn_model.seq_length]
         output = seqnn_model(x, head, gene_out_mask=gom, gene_presence=gp)
         cov_preds.append(
             seqnn_model.untransform_fn(output.coverage.squeeze(0), targets_df)
@@ -1457,9 +1467,8 @@ def predict_variant(
     With stitch, predict the longer allele again at shifts - abs(indel_size).
     Join its original coverage before the variant bin to its shifted coverage
     from that bin onward, aligning downstream sequence with the shorter allele.
-    For insertions, restore truncated reference bases before shifting the
-    alternate. For deletions, both the alternate and shifted reference end in
-    padding. Retain both shift sets for averaging the longer allele's gene outputs.
+    Allele sequences flanked by seq_flank keep every shifted input in real
+    sequence. Retain both shift sets for averaging the longer allele's gene outputs.
 
     Without stitch, if output_stride is provided, realign alternate coverage
     downstream of the variant by the nearest whole number of bins. Sub-bin
@@ -1484,9 +1493,7 @@ def predict_variant(
     if stitch and indel_size != 0:
         shifts2 = [shift - abs(indel_size) for shift in shifts]
         if indel_size > 0:
-            # restore the reference nucleotides the insertion pushed off the right edge
-            alt_ext = torch.cat((alt_1hot, ref_1hot[..., -indel_size:]), dim=-1)
-            alt_cov2, alt_gene2 = predict(alt_ext, shifts2, indel_size, snp.pos)
+            alt_cov2, alt_gene2 = predict(alt_1hot, shifts2, indel_size, snp.pos)
             alt_cov = stitch_preds(alt_cov, alt_cov2, snp_seq_bin)
             alt_gene = alt_gene + alt_gene2
         else:

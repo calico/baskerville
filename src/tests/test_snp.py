@@ -872,15 +872,25 @@ def test_frame_gene_masks():
     assert bins(-64, 0) == [0, 8]  # reference shifted left; first exon leaves window
 
 
-def test_stitch_insertion_shift_has_no_padding():
-    """Stitched insertion inputs restore truncated reference bases at the right edge."""
+@pytest.mark.parametrize("ref_allele,alt_allele", [("A", "ATTT"), ("ATTT", "A")])
+def test_stitch_flanked_inputs_have_no_padding(ref_allele, alt_allele):
+    """With alleles built on a seq_flank window, every model input is real sequence,
+    and the shifted longer allele is the right-matched sequence."""
     from types import SimpleNamespace
     from baskerville import dna
-    from baskerville.snps import predict_allele, predict_variant
+    from baskerville.snps import predict_allele, predict_variant, seq_flank
+    from baskerville.vcf import make_alt_1hot
 
-    L, p, k = 12, 5, 3
-    ref = torch.tensor(dna.dna_1hot("ACGTACGTTGCA").T[None], dtype=torch.float32)
-    alt = torch.cat((ref[..., :p], ref[..., [0, 1, 2]], ref[..., p : L - k]), dim=-1)
+    L, p, shifts = 12, 6, [-1, 0, 1]
+    snp = SimpleNamespace(
+        indel_size=lambda: len(alt_allele) - len(ref_allele), pos=0, flipped=False
+    )
+    m = seq_flank(SimpleNamespace(snps=[snp]), shifts)
+    seq = "".join(np.random.default_rng(0).choice(list("ACGT"), L + 2 * m))
+    seq = seq[: m + p] + ref_allele + seq[m + p + len(ref_allele) :]
+    ref_np = dna.dna_1hot(seq)
+    alt_np = make_alt_1hot(ref_np, m + p, ref_allele, alt_allele)
+    ref, alt = (torch.tensor(x.T[None], dtype=torch.float32) for x in (ref_np, alt_np))
     inputs = []
 
     class Model:  # records its inputs and returns them as coverage
@@ -896,7 +906,9 @@ def test_stitch_insertion_shift_has_no_padding():
     def predict(x, shifts, indel_size=0, var_pos=0):
         return predict_allele(Model(), x, shifts, None, None)
 
-    snp = SimpleNamespace(indel_size=lambda: k, pos=0, flipped=False)
-    predict_variant(predict, ref, alt, [ref[0]], [], snp, p, [0], True)
-    right_matched = torch.cat((ref[..., k:p], alt[..., p : p + k], ref[..., p:]), dim=-1)
-    torch.testing.assert_close(inputs[-1], right_matched)
+    ref_cov, _ = predict(ref, shifts)
+    predict_variant(predict, ref, alt, ref_cov, [], snp, p, shifts, True)
+    assert all(x.shape[-1] == L and (x.sum(1) == 1).all() for x in inputs)
+    k = abs(snp.indel_size())
+    longer = alt if snp.indel_size() > 0 else ref
+    torch.testing.assert_close(inputs[-2], longer[..., m + k : m + k + L])  # shift 0 - k
