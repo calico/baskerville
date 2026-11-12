@@ -825,8 +825,12 @@ def test_predict_variant_realigns_without_stitch(indel_nt):
     L, p, stride = 16, 5, 32
     ref = torch.arange(L, dtype=torch.float32).reshape(1, L)  # bin labels
     k = round(abs(indel_nt) / stride)
-    if indel_nt > 0:  # inserted bins (-1) after the variant bin; reference pushed off the edge
-        alt = torch.cat((ref[:, :p], torch.full((1, k), -1.0), ref[:, p : L - k]), dim=1)
+    if (
+        indel_nt > 0
+    ):  # inserted bins (-1) after the variant bin; reference pushed off the edge
+        alt = torch.cat(
+            (ref[:, :p], torch.full((1, k), -1.0), ref[:, p : L - k]), dim=1
+        )
     else:  # deleted bins removed; padding (-9) at the edge
         alt = torch.cat((ref[:, :p], ref[:, p + k :], torch.full((1, k), -9.0)), dim=1)
     snp = SimpleNamespace(indel_size=lambda: indel_nt, pos=0, flipped=False)
@@ -834,8 +838,9 @@ def test_predict_variant_realigns_without_stitch(indel_nt):
     def predict(x, shifts, indel_size=0, var_pos=0):
         return [x], []
 
-    _, ap, _, _, _ = predict_variant(predict, None, alt, [ref], [], snp, p, [0], False,
-                                     output_stride=stride)
+    _, ap, _, _, _ = predict_variant(
+        predict, None, alt, [ref], [], snp, p, [0], False, output_stride=stride
+    )
     torch.testing.assert_close(ap[0], ref if k else alt)
     _, ap, _, _, _ = predict_variant(predict, None, alt, [ref], [], snp, p, [0], False)
     torch.testing.assert_close(ap[0], alt)

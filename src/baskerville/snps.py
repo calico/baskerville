@@ -1407,7 +1407,9 @@ def realign_preds(ref, alt, pos, indel_size, stride):
         elif indel_size > 0:  # alternate's downstream sequence sits k bins right
             out.append(torch.cat((a[:, :pos], a[:, pos + k :], rf[:, L - k :]), dim=1))
         else:  # alternate's downstream sequence sits k bins left
-            out.append(torch.cat((a[:, :pos], rf[:, pos : pos + k], a[:, pos : L - k]), dim=1))
+            out.append(
+                torch.cat((a[:, :pos], rf[:, pos : pos + k], a[:, pos : L - k]), dim=1)
+            )
     return out
 
 
@@ -1489,7 +1491,9 @@ def predict_variant(
             if gom is not None:
                 score_gom, _ = gene_masks(0, indel_size, snp.pos)
     elif indel_size != 0 and output_stride:
-        alt_cov = realign_preds(ref_cov, alt_cov, snp_seq_bin, indel_size, output_stride)
+        alt_cov = realign_preds(
+            ref_cov, alt_cov, snp_seq_bin, indel_size, output_stride
+        )
 
     if snp.flipped:
         ref_cov, alt_cov, ref_gene, alt_gene = alt_cov, ref_cov, alt_gene, ref_gene
