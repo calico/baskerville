@@ -1373,7 +1373,11 @@ def stitch_preds(left, right, pos):
     Returns:
         list of torch.Tensor: List of TxL prediction tensors
     """
-    return [torch.cat((l[:, :pos], r[:, pos:]), dim=1) for l, r in zip(left, right)]
+    out = []
+    for l, r in zip(left, right):
+        p = max(0, min(pos, l.shape[1]))  # variant outside the output window
+        out.append(torch.cat((l[:, :p], r[:, p:]), dim=1))
+    return out
 
 
 def realign_preds(ref, alt, pos, indel_size, stride):

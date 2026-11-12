@@ -797,6 +797,50 @@ def test_realign_preds_boundaries(pos, indel_bins, expected):
     torch.testing.assert_close(aligned, torch.tensor([expected], dtype=ref.dtype))
 
 
+@pytest.mark.parametrize(
+    "pos,expected",
+    [
+        (-2, [100, 101, 102, 103, 104, 105, 106, 107]),
+        (-1, [100, 101, 102, 103, 104, 105, 106, 107]),
+        (0, [100, 101, 102, 103, 104, 105, 106, 107]),
+        (3, [0, 1, 2, 103, 104, 105, 106, 107]),
+        (8, [0, 1, 2, 3, 4, 5, 6, 7]),
+        (9, [0, 1, 2, 3, 4, 5, 6, 7]),
+    ],
+)
+def test_stitch_preds_boundaries(pos, expected):
+    """A variant upstream of the output window takes every bin from the right prediction."""
+    left = torch.arange(8, dtype=torch.float32).reshape(1, 8)
+    stitched = stitch_preds([left], [left + 100], pos)[0]
+    torch.testing.assert_close(stitched, torch.tensor([expected], dtype=left.dtype))
+
+
+@pytest.mark.parametrize("indel_nt", [64, -64, 10, -10])
+def test_predict_variant_realigns_without_stitch(indel_nt):
+    """Without stitch, predict_variant realigns the alternate by whole bins; indels shorter
+    than half a bin, and calls without output_stride, leave it unchanged."""
+    from types import SimpleNamespace
+    from baskerville.snps import predict_variant
+
+    L, p, stride = 16, 5, 32
+    ref = torch.arange(L, dtype=torch.float32).reshape(1, L)  # bin labels
+    k = round(abs(indel_nt) / stride)
+    if indel_nt > 0:  # inserted bins (-1) after the variant bin; reference pushed off the edge
+        alt = torch.cat((ref[:, :p], torch.full((1, k), -1.0), ref[:, p : L - k]), dim=1)
+    else:  # deleted bins removed; padding (-9) at the edge
+        alt = torch.cat((ref[:, :p], ref[:, p + k :], torch.full((1, k), -9.0)), dim=1)
+    snp = SimpleNamespace(indel_size=lambda: indel_nt, pos=0, flipped=False)
+
+    def predict(x, shifts, indel_size=0, var_pos=0):
+        return [x], []
+
+    _, ap, _, _, _ = predict_variant(predict, None, alt, [ref], [], snp, p, [0], False,
+                                     output_stride=stride)
+    torch.testing.assert_close(ap[0], ref if k else alt)
+    _, ap, _, _, _ = predict_variant(predict, None, alt, [ref], [], snp, p, [0], False)
+    torch.testing.assert_close(ap[0], alt)
+
+
 def test_frame_gene_masks():
     """Gene masks follow exons into shifted and alternate allele coordinates."""
     from types import SimpleNamespace
