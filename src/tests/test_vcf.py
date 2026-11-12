@@ -6,6 +6,7 @@ import pytest
 import pysam
 import numpy as np
 
+from baskerville.dna import dna_1hot
 from baskerville.vcf import (
     VCF,
     SNP,
@@ -159,6 +160,32 @@ chr1	100	rs100	A	T,G	60	PASS	AF=0.5,0.3
             for a, b in zip(plain, flanked):
                 np.testing.assert_array_equal(b[:, 7 : 7 + n], a[:, :n])
         genome_open.close()
+
+    @pytest.mark.parametrize("kind", ["insertion", "deletion"])
+    def test_snp_cluster_flank_indels(self, kind):
+        """Flanked indel alleles end in genome sequence, not padding: the deletion
+        allele's right edge, and the insertion allele's right edge at stitch shift -k."""
+        L, flank, k, pos = 1000, 10, 4, 5000
+        genome_open = pysam.Fastafile("src/tests/data/sc3.fa.gz")
+        ref_allele = genome_open.fetch(
+            "chrI", pos - 1, pos + (k if kind == "deletion" else 0)
+        )
+        alt_allele = ref_allele[0] + ("GGAT" if kind == "insertion" else "")
+        cluster = SNPCluster()
+        cluster.add_snp(SNP(f"chrI\t{pos}\tv\t{ref_allele}\t{alt_allele}"))
+        cluster.delimit(L)
+        alt_1hot = cluster.get_1hots(genome_open, flank)[1]
+        if kind == "insertion":  # right-matched: R[k:p] + inserted + R[p:L]
+            x, edge = (
+                alt_1hot[:, flank + k : flank + k + L],
+                (cluster.end - k, cluster.end),
+            )
+        else:  # R[:p] + R[p+k : L+k]
+            x, edge = alt_1hot[:, flank : flank + L], (cluster.end, cluster.end + k)
+        expected = dna_1hot(genome_open.fetch("chrI", *edge)).T
+        genome_open.close()
+        assert ((x == 0) | (x == 1)).all() and (x.sum(0) == 1).all()
+        np.testing.assert_array_equal(x[:, -k:], expected)
 
     def test_snp_cluster_sequences(self, test_vcf_file):
         """Test SNPCluster sequence generation (replacement for get_sequences)."""

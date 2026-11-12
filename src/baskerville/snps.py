@@ -12,7 +12,6 @@ import pysam
 from tqdm import tqdm
 import torch
 
-from baskerville import dna
 from baskerville import dataset
 from baskerville.gene import (
     Transcriptome,
@@ -1418,17 +1417,16 @@ def realign_preds(ref, alt, pos, indel_size, stride):
 
 
 def seq_flank(sc, shifts):
-    """Flank (nt per side) that keeps every ensemble and stitch shift of a
-    cluster's alleles within real sequence."""
+    """Flank (nt per side) that covers every ensemble and stitch shift of a
+    cluster's alleles."""
     return max(abs(s) for s in shifts) + max(abs(snp.indel_size()) for snp in sc.snps)
 
 
 def predict_allele(seqnn_model, x_1hot, shifts, head, targets_df, gene_masks=None):
     """Predict untransformed coverage and optional gene outputs at each shift.
 
-    x_1hot may carry equal flanks of reference sequence beyond the model's
-    sequence length; each shift then slices real sequence from them, and only
-    shifts beyond the flank pad with N.
+    x_1hot carries equal flanks beyond the model's sequence length, at least
+    as wide as every shift (seq_flank); each shift slices its input from them.
 
     Args:
         gene_masks (callable): Shift -> (gene_out_mask, gene_presence) in this
@@ -1437,12 +1435,13 @@ def predict_allele(seqnn_model, x_1hot, shifts, head, targets_df, gene_masks=Non
     Returns:
         (list of torch.Tensor, list of torch.Tensor): TxL coverage and gene predictions.
     """
-    m, odd = divmod(x_1hot.shape[-1] - seqnn_model.seq_length, 2)
-    assert m >= 0 and not odd, "x_1hot needs equal flanks beyond seq_length"
+    L = seqnn_model.seq_length
+    flank, odd = divmod(x_1hot.shape[-1] - L, 2)
+    assert not odd and flank >= max(map(abs, shifts)), "flanks must cover shifts"
     cov_preds, gene_preds = [], []
     for shift in shifts:
         gom, gp = gene_masks(shift) if gene_masks is not None else (None, None)
-        x = dna.torch_shift(x_1hot, shift)[..., m : m + seqnn_model.seq_length]
+        x = x_1hot[..., flank - shift : flank - shift + L]
         output = seqnn_model(x, head, gene_out_mask=gom, gene_presence=gp)
         cov_preds.append(
             seqnn_model.untransform_fn(output.coverage.squeeze(0), targets_df)
@@ -1471,8 +1470,9 @@ def predict_variant(
     With stitch, predict the longer allele again at shifts - abs(indel_size).
     Join its original coverage before the variant bin to its shifted coverage
     from that bin onward, aligning downstream sequence with the shorter allele.
-    Allele sequences flanked by seq_flank keep every shifted input in real
-    sequence. Retain both shift sets for averaging the longer allele's gene outputs.
+    Flanks sized by seq_flank prevent shifting and allele construction from
+    introducing padding into model inputs; missing reference sequence remains
+    N. Retain both shift sets for averaging the longer allele's gene outputs.
 
     Without stitch, if output_stride is provided, realign alternate coverage
     downstream of the variant by the nearest whole number of bins. Sub-bin

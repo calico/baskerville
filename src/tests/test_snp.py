@@ -908,9 +908,12 @@ def test_stitch_flanked_inputs_have_no_padding(ref_allele, alt_allele):
 
     ref_cov, _ = predict(ref, shifts)
     predict_variant(predict, ref, alt, ref_cov, [], snp, p, shifts, True)
-    assert all(x.shape[-1] == L and (x.sum(1) == 1).all() for x in inputs)
     k = abs(snp.indel_size())
     longer = alt if snp.indel_size() > 0 else ref
-    torch.testing.assert_close(
-        inputs[-2], longer[..., m + k : m + k + L]
-    )  # shift 0 - k
+    expected = [ref[..., m - s : m - s + L] for s in shifts]
+    expected += [alt[..., m - s : m - s + L] for s in shifts]
+    expected += [longer[..., m - s + k : m - s + k + L] for s in shifts]
+    assert len(inputs) == len(expected)
+    for x, e in zip(inputs, expected):
+        assert ((x == 0) | (x == 1)).all() and (x.sum(1) == 1).all()  # no N
+        torch.testing.assert_close(x, e)
