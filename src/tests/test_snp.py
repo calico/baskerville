@@ -17,6 +17,7 @@ from baskerville import dna
 from baskerville.snps import (
     parse_mix_dtype,
     partition_snp_stats,
+    realign_preds,
     stitch_preds,
     frame_gene_masks,
 )
@@ -768,6 +769,32 @@ def test_stitch_indel_coordinates():
     )
     alt_st = stitch_preds([predict(alt_ins, 0)], [predict(alt_ins, -k)], p + 1)[0]
     assert torch.equal(alt_st[:, : L - k], predict(ref, 0)[:, : L - k])
+
+
+@pytest.mark.parametrize(
+    "pos,indel_bins,expected",
+    [
+        (-1, 1, [101, 102, 103, 104, 105, 106, 107, 7]),
+        (-1, -1, [0, 100, 101, 102, 103, 104, 105, 106]),
+        (-2, 1, [101, 102, 103, 104, 105, 106, 107, 7]),
+        (-2, -1, [0, 100, 101, 102, 103, 104, 105, 106]),
+        (3, 1, [100, 101, 102, 104, 105, 106, 107, 7]),
+        (3, -1, [100, 101, 102, 3, 103, 104, 105, 106]),
+        (8, 1, [100, 101, 102, 103, 104, 105, 106, 107]),
+        (8, -1, [100, 101, 102, 103, 104, 105, 106, 107]),
+        (9, 1, [100, 101, 102, 103, 104, 105, 106, 107]),
+        (9, -1, [100, 101, 102, 103, 104, 105, 106, 107]),
+        (-1, 10, [0, 1, 2, 3, 4, 5, 6, 7]),
+        (-1, -10, [0, 1, 2, 3, 4, 5, 6, 7]),
+        (3, 10, [100, 101, 102, 3, 4, 5, 6, 7]),
+        (3, -10, [100, 101, 102, 3, 4, 5, 6, 7]),
+    ],
+)
+def test_realign_preds_boundaries(pos, indel_bins, expected):
+    ref = torch.arange(8, dtype=torch.float32).reshape(1, 8)
+    alt = ref + 100
+    aligned = realign_preds([ref], [alt], pos, indel_bins * 32, 32)[0]
+    torch.testing.assert_close(aligned, torch.tensor([expected], dtype=ref.dtype))
 
 
 def test_frame_gene_masks():

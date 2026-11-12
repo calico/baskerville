@@ -1396,6 +1396,7 @@ def realign_preds(ref, alt, pos, indel_size, stride):
     out = []
     for rf, a in zip(ref, alt):
         L = a.shape[1]
+        pos = max(0, min(pos, L))
         k = min(r, L - pos)
         if k == 0:
             out.append(a)
