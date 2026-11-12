@@ -873,8 +873,7 @@ def test_frame_gene_masks():
 
 
 def test_stitch_insertion_shift_has_no_padding():
-    """The shifted insertion allele is the right-matched sequence: reference nucleotides
-    fill the right edge, so no padding enters the input."""
+    """Stitched insertion inputs restore truncated reference bases at the right edge."""
     from types import SimpleNamespace
     from baskerville import dna
     from baskerville.snps import predict_allele, predict_variant

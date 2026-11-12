@@ -1414,14 +1414,13 @@ def realign_preds(ref, alt, pos, indel_size, stride):
 
 
 def predict_allele(seqnn_model, x_1hot, shifts, head, targets_df, gene_masks=None):
-    """Predict untransformed coverage, and gene outputs if present, at each shift.
+    """Predict untransformed coverage and optional gene outputs at each shift.
+
+    After shifting, crop inputs on the right to the model's sequence length.
 
     Args:
         gene_masks (callable): Shift -> (gene_out_mask, gene_presence) in this
           allele's coordinates, or None for no gene head.
-
-    Inputs longer than the model's sequence length are cropped on the right after
-    shifting.
 
     Returns:
         (list of torch.Tensor, list of torch.Tensor): TxL coverage and gene predictions.
@@ -1453,18 +1452,18 @@ def predict_variant(
     gom=None,
     output_stride=None,
 ):
-    """Reference and alternate predictions for one variant, oriented by snp.flipped.
+    """Predict reference and alternate alleles, swapping outputs if snp.flipped.
 
-    With stitch, the longer allele (alternate for insertions, reference for
-    deletions) is also predicted at shifts - |indel_size|, and its coverage is
-    stitched at the variant bin so that every other bin covers the same
-    nucleotides as the shorter allele's. The shifted insertion allele ends in
-    the reference nucleotides the insertion pushed off the right edge; the
-    shifted deletion reference ends in padding, as does the deletion allele.
-    Its gene head predictions average both shift sets. Without stitch, given output_stride, the alternate's bins
-    downstream of the variant are realigned to the reference by the nearest
-    whole number of bins (realign_preds); the sub-bin remainder and the shifted
-    pooling partition remain.
+    With stitch, predict the longer allele again at shifts - abs(indel_size).
+    Join its original coverage before the variant bin to its shifted coverage
+    from that bin onward, aligning downstream sequence with the shorter allele.
+    For insertions, restore truncated reference bases before shifting the
+    alternate. For deletions, both the alternate and shifted reference end in
+    padding. Retain both shift sets for averaging the longer allele's gene outputs.
+
+    Without stitch, if output_stride is provided, realign alternate coverage
+    downstream of the variant by the nearest whole number of bins. Sub-bin
+    offsets and differences in pooling boundaries remain.
 
     Args:
         predict (callable): (x_1hot, shifts, indel_size=0, var_pos=0) ->
