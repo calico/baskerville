@@ -11,7 +11,6 @@ import pysam
 from tqdm import tqdm
 import torch
 
-from baskerville import dna
 from baskerville import dataset
 from baskerville.gene import Transcriptome, find_overlapping_genes, interval_output_slice
 from baskerville import seqnn
@@ -384,7 +383,7 @@ def score_snps(args):
         ):
             # initialize 1 hot encoding
             sc0 = snp_clusters[0]
-            s1l = executor.submit(sc0.get_1hots, genome_open)
+            s1l = executor.submit(sc0.get_1hots, genome_open, seq_flank(sc0, args.shifts))
 
             for ci, sc in enumerate(
                 tqdm(snp_clusters, unit=" cluster", desc="SNP clusters")
@@ -399,7 +398,7 @@ def score_snps(args):
                 # submit next 1 hot encoding
                 if ci + 1 < len(snp_clusters):
                     sc1 = snp_clusters[ci + 1]
-                    s1l = executor.submit(sc1.get_1hots, genome_open)
+                    s1l = executor.submit(sc1.get_1hots, genome_open, seq_flank(sc1, args.shifts))
 
                 # build gene masks if this cluster has genes
                 gsc = sc_to_gsc.get(ci) if score_genes else None
@@ -751,7 +750,7 @@ def score_gene_snps(args):
             torch.autocast(device_type=seqnn_model.device, dtype=args.mix_dtype),
         ):
             for gsc in tqdm(genesnp_clusters, unit=" cluster", desc="gene clusters"):
-                snp_1hot_list = gsc.get_1hots(genome_open)
+                snp_1hot_list = gsc.get_1hots(genome_open, seq_flank(gsc, args.shifts))
                 ref_1hot = np.expand_dims(snp_1hot_list[0], axis=0)
                 ref_1hot = torch.tensor(
                     ref_1hot, device=seqnn_model.device, dtype=torch.float32
@@ -1454,8 +1453,17 @@ def stitch_preds(preds, shifts, pos=None):
     return preds_stitch
 
 
+def seq_flank(sc, shifts):
+    """Flank (nt per side) that covers every ensemble and indel shift of a
+    cluster's alleles."""
+    return max(abs(s) for s in shifts) + max(abs(snp.indel_size()) for snp in sc.snps)
+
+
 def predict_allele(seqnn_model, x_1hot, shifts, head, targets_df, gene_masks=None):
     """Predict untransformed coverage, and gene outputs if present, at each shift.
+
+    x_1hot carries equal flanks beyond the model's sequence length, at least
+    as wide as every shift (seq_flank); each shift slices its input from them.
 
     Args:
         gene_masks (callable): Shift -> (gene_out_mask, gene_presence) in this
@@ -1464,12 +1472,14 @@ def predict_allele(seqnn_model, x_1hot, shifts, head, targets_df, gene_masks=Non
     Returns:
         (list of torch.Tensor, list of torch.Tensor): TxL coverage and gene predictions.
     """
+    L = seqnn_model.seq_length
+    flank, odd = divmod(x_1hot.shape[-1] - L, 2)
+    assert not odd and flank >= max(map(abs, shifts)), "flanks must cover shifts"
     cov_preds, gene_preds = [], []
     for shift in shifts:
         gom, gp = gene_masks(shift) if gene_masks is not None else (None, None)
-        output = seqnn_model(
-            dna.torch_shift(x_1hot, shift), head, gene_out_mask=gom, gene_presence=gp
-        )
+        x = x_1hot[..., flank - shift : flank - shift + L]
+        output = seqnn_model(x, head, gene_out_mask=gom, gene_presence=gp)
         cov_preds.append(seqnn_model.untransform_fn(output.coverage.squeeze(0), targets_df))
         if gom is not None and output.has_gene:
             gene_preds.append(output.gene.squeeze(0))

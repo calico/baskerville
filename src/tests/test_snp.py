@@ -853,3 +853,41 @@ def test_frame_gene_masks():
     assert bins(0, -64) == [1, 2, 8]  # 64 nt deletion removes the spanning exon's 3' part
     assert bins(0, 64) == [1, 2, 4, 12]  # 64 nt insertion splits the spanning exon
     assert bins(-64, 0) == [0, 8]  # reference shifted left; first exon leaves window
+
+
+@pytest.mark.parametrize("ref_allele,alt_allele", [("A", "ATTT"), ("ATTT", "A")])
+def test_flanked_shifts_have_no_padding(ref_allele, alt_allele):
+    """With alleles built on a seq_flank window, left- and right-matched inputs of
+    either allele (shifts 0 and -indel_size, plus ensemble shifts) are real sequence."""
+    from types import SimpleNamespace
+    from baskerville import dna
+    from baskerville.snps import predict_allele, seq_flank
+    from baskerville.vcf import make_alt_1hot
+
+    L, p, ens = 12, 6, [-1, 0, 1]
+    snp = SimpleNamespace(indel_size=lambda: len(alt_allele) - len(ref_allele))
+    k = snp.indel_size()
+    m = seq_flank(SimpleNamespace(snps=[snp]), ens)
+    seq = "".join(np.random.default_rng(0).choice(list("ACGT"), L + 2 * m))
+    seq = seq[: m + p] + ref_allele + seq[m + p + len(ref_allele) :]
+    ref_np = dna.dna_1hot(seq)
+    alt_np = make_alt_1hot(ref_np, m + p, ref_allele, alt_allele)
+    inputs = []
+
+    class Model:  # records its inputs and returns them as coverage
+        seq_length = L
+
+        def __call__(self, x, head, gene_out_mask=None, gene_presence=None):
+            inputs.append(x)
+            return SimpleNamespace(coverage=x, has_gene=False)
+
+        def untransform_fn(self, x, targets_df):
+            return x
+
+    shifts = ens + [s - k for s in ens] + [s + k for s in ens]
+    for x_np in (ref_np, alt_np):
+        x = torch.tensor(x_np.T[None], dtype=torch.float32)
+        predict_allele(Model(), x, shifts, None, None)
+        for s, xi in zip(shifts, inputs[-len(shifts) :]):
+            assert xi.shape[-1] == L and ((xi == 0) | (xi == 1)).all()
+            torch.testing.assert_close(xi, x[..., m - s : m - s + L])

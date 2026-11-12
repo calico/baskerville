@@ -146,6 +146,20 @@ chr1	100	rs100	A	T,G	60	PASS	AF=0.5,0.3
             if os.path.exists(temp_file):
                 os.unlink(temp_file)
 
+    def test_snp_cluster_flank(self, test_vcf_file):
+        """A flanked window's center equals the unflanked window."""
+        genome_open = pysam.Fastafile("src/tests/data/sc3.fa.gz")
+        for variant in VCF(test_vcf_file).snps:
+            cluster = SNPCluster()
+            cluster.add_snp(variant)
+            cluster.delimit(1000)
+            plain = cluster.get_1hots(genome_open)
+            flanked = cluster.get_1hots(genome_open, flank=7)
+            n = 1000 + min(0, variant.indel_size())  # deletions differ in the N fill
+            for a, b in zip(plain, flanked):
+                np.testing.assert_array_equal(b[:, 7 : 7 + n], a[:, :n])
+        genome_open.close()
+
     def test_snp_cluster_sequences(self, test_vcf_file):
         """Test SNPCluster sequence generation (replacement for get_sequences)."""
         vcf_obj = VCF(test_vcf_file)
