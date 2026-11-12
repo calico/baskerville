@@ -17,6 +17,7 @@ from baskerville import dna
 from baskerville.snps import (
     parse_mix_dtype,
     partition_snp_stats,
+    realign_preds,
     stitch_preds,
     frame_gene_masks,
 )
@@ -768,6 +769,81 @@ def test_stitch_indel_coordinates():
     )
     alt_st = stitch_preds([predict(alt_ins, 0)], [predict(alt_ins, -k)], p + 1)[0]
     assert torch.equal(alt_st[:, : L - k], predict(ref, 0)[:, : L - k])
+
+
+@pytest.mark.parametrize(
+    "pos,indel_bins,expected",
+    [
+        (-1, 1, [101, 102, 103, 104, 105, 106, 107, 7]),
+        (-1, -1, [0, 100, 101, 102, 103, 104, 105, 106]),
+        (-2, 1, [101, 102, 103, 104, 105, 106, 107, 7]),
+        (-2, -1, [0, 100, 101, 102, 103, 104, 105, 106]),
+        (3, 1, [100, 101, 102, 104, 105, 106, 107, 7]),
+        (3, -1, [100, 101, 102, 3, 103, 104, 105, 106]),
+        (8, 1, [100, 101, 102, 103, 104, 105, 106, 107]),
+        (8, -1, [100, 101, 102, 103, 104, 105, 106, 107]),
+        (9, 1, [100, 101, 102, 103, 104, 105, 106, 107]),
+        (9, -1, [100, 101, 102, 103, 104, 105, 106, 107]),
+        (-1, 10, [0, 1, 2, 3, 4, 5, 6, 7]),
+        (-1, -10, [0, 1, 2, 3, 4, 5, 6, 7]),
+        (3, 10, [100, 101, 102, 3, 4, 5, 6, 7]),
+        (3, -10, [100, 101, 102, 3, 4, 5, 6, 7]),
+    ],
+)
+def test_realign_preds_boundaries(pos, indel_bins, expected):
+    ref = torch.arange(8, dtype=torch.float32).reshape(1, 8)
+    alt = ref + 100
+    aligned = realign_preds([ref], [alt], pos, indel_bins * 32, 32)[0]
+    torch.testing.assert_close(aligned, torch.tensor([expected], dtype=ref.dtype))
+
+
+@pytest.mark.parametrize(
+    "pos,expected",
+    [
+        (-2, [100, 101, 102, 103, 104, 105, 106, 107]),
+        (-1, [100, 101, 102, 103, 104, 105, 106, 107]),
+        (0, [100, 101, 102, 103, 104, 105, 106, 107]),
+        (3, [0, 1, 2, 103, 104, 105, 106, 107]),
+        (8, [0, 1, 2, 3, 4, 5, 6, 7]),
+        (9, [0, 1, 2, 3, 4, 5, 6, 7]),
+    ],
+)
+def test_stitch_preds_boundaries(pos, expected):
+    """A variant upstream of the output window takes every bin from the right prediction."""
+    left = torch.arange(8, dtype=torch.float32).reshape(1, 8)
+    stitched = stitch_preds([left], [left + 100], pos)[0]
+    torch.testing.assert_close(stitched, torch.tensor([expected], dtype=left.dtype))
+
+
+@pytest.mark.parametrize("indel_nt", [64, -64, 48, -48, 16, -16, 10, -10])
+def test_predict_variant_realigns_without_stitch(indel_nt):
+    """Without stitch, predict_variant realigns the alternate by whole bins, rounding ties
+    down; indels of at most half a bin, and calls without output_stride, leave it unchanged."""
+    from types import SimpleNamespace
+    from baskerville.snps import predict_variant
+
+    L, p, stride = 16, 5, 32
+    ref = torch.arange(L, dtype=torch.float32).reshape(1, L)  # bin labels
+    k = {64: 2, 48: 1, 16: 0, 10: 0}[abs(indel_nt)]
+    if (
+        indel_nt > 0
+    ):  # inserted bins (-1) after the variant bin; reference pushed off the edge
+        alt = torch.cat(
+            (ref[:, :p], torch.full((1, k), -1.0), ref[:, p : L - k]), dim=1
+        )
+    else:  # deleted bins removed; padding (-9) at the edge
+        alt = torch.cat((ref[:, :p], ref[:, p + k :], torch.full((1, k), -9.0)), dim=1)
+    snp = SimpleNamespace(indel_size=lambda: indel_nt, pos=0, flipped=False)
+
+    def predict(x, shifts, indel_size=0, var_pos=0):
+        return [x], []
+
+    _, ap, _, _, _ = predict_variant(
+        predict, None, alt, [ref], [], snp, p, [0], False, output_stride=stride
+    )
+    torch.testing.assert_close(ap[0], ref if k else alt)
+    _, ap, _, _, _ = predict_variant(predict, None, alt, [ref], [], snp, p, [0], False)
+    torch.testing.assert_close(ap[0], alt)
 
 
 def test_frame_gene_masks():

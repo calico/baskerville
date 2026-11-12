@@ -89,7 +89,7 @@ def main(argv=None):
         "--indel_stitch",
         default=True,
         action=argparse.BooleanOptionalAction,
-        help="Stitch the longer indel allele to align with the shorter [Default: %(default)s]",
+        help="Stitch the longer indel allele to align with the shorter; otherwise realign the alternate's downstream bins by the nearest whole bin [Default: %(default)s]",
     )
     parser.add_argument(
         "--local_window",

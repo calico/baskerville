@@ -452,6 +452,7 @@ def score_snps(args):
                         args.indel_stitch,
                         gene_masks,
                         gom,
+                        output_stride,
                     )
 
                     # full-sequence coverage scores (always)
@@ -761,6 +762,7 @@ def score_gene_snps(args):
                         args.indel_stitch,
                         gene_masks,
                         gom,
+                        output_stride,
                     )
 
                     for gi, gene in enumerate(gsc.genes):
@@ -1371,7 +1373,45 @@ def stitch_preds(left, right, pos):
     Returns:
         list of torch.Tensor: List of TxL prediction tensors
     """
-    return [torch.cat((l[:, :pos], r[:, pos:]), dim=1) for l, r in zip(left, right)]
+    out = []
+    for l, r in zip(left, right):
+        p = max(0, min(pos, l.shape[1]))  # variant outside the output window
+        out.append(torch.cat((l[:, :p], r[:, p:]), dim=1))
+    return out
+
+
+def realign_preds(ref, alt, pos, indel_size, stride):
+    """Move the alternate's bins from pos onward by the nearest whole number of bins
+    so they cover the reference's nucleotides, per shift. Ties (|indel_size| an odd
+    multiple of stride / 2) round down: either choice leaves half a bin of offset.
+
+    Bins without a counterpart, the inserted or deleted span and the alternate's far
+    edge, take the reference's values, so they contribute no difference.
+
+    Args:
+        ref, alt [list of torch.Tensor]: TxL reference and alternate predictions.
+        pos (int): Variant bin.
+        indel_size (int): Alternate allele indel size (> 0 insertion, < 0 deletion).
+        stride (int): Output bin width (nt).
+
+    Returns:
+        list of torch.Tensor: TxL alternate predictions in reference bin coordinates.
+    """
+    r = (abs(indel_size) + stride // 2 - 1) // stride
+    out = []
+    for rf, a in zip(ref, alt):
+        L = a.shape[1]
+        pos = max(0, min(pos, L))
+        k = min(r, L - pos)
+        if k == 0:
+            out.append(a)
+        elif indel_size > 0:  # alternate's downstream sequence sits k bins right
+            out.append(torch.cat((a[:, :pos], a[:, pos + k :], rf[:, L - k :]), dim=1))
+        else:  # alternate's downstream sequence sits k bins left
+            out.append(
+                torch.cat((a[:, :pos], rf[:, pos : pos + k], a[:, pos : L - k]), dim=1)
+            )
+    return out
 
 
 def predict_allele(seqnn_model, x_1hot, shifts, head, targets_df, gene_masks=None):
@@ -1410,6 +1450,7 @@ def predict_variant(
     stitch,
     gene_masks=None,
     gom=None,
+    output_stride=None,
 ):
     """Reference and alternate predictions for one variant, oriented by snp.flipped.
 
@@ -1417,7 +1458,10 @@ def predict_variant(
     deletions) is also predicted at shifts - |indel_size|, and its coverage is
     stitched at the variant bin so that every other bin covers the same
     nucleotides as the shorter allele's. Its gene head predictions average
-    both shift sets.
+    both shift sets. Without stitch, given output_stride, the alternate's bins
+    downstream of the variant are realigned to the reference by the nearest
+    whole number of bins (realign_preds); the sub-bin remainder and the shifted
+    pooling partition remain.
 
     Args:
         predict (callable): (x_1hot, shifts, indel_size=0, var_pos=0) ->
@@ -1426,6 +1470,7 @@ def predict_variant(
         ref_cov, ref_gene [list of torch.Tensor]: Reference predictions at shifts.
         gene_masks (callable): (shift, indel_size, var_pos) -> gene masks.
         gom (torch.Tensor): Reference-frame gene output mask, or None.
+        output_stride (int): Output bin width, for realignment without stitch.
 
     Returns:
         rp_cov, ap_cov, rp_gene, ap_gene (gene None without gene predictions),
@@ -1446,6 +1491,10 @@ def predict_variant(
             ref_gene = ref_gene + ref_gene2
             if gom is not None:
                 score_gom, _ = gene_masks(0, indel_size, snp.pos)
+    elif indel_size != 0 and output_stride:
+        alt_cov = realign_preds(
+            ref_cov, alt_cov, snp_seq_bin, indel_size, output_stride
+        )
 
     if snp.flipped:
         ref_cov, alt_cov, ref_gene, alt_gene = alt_cov, ref_cov, alt_gene, ref_gene
