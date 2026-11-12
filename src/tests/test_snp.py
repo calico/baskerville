@@ -815,16 +815,16 @@ def test_stitch_preds_boundaries(pos, expected):
     torch.testing.assert_close(stitched, torch.tensor([expected], dtype=left.dtype))
 
 
-@pytest.mark.parametrize("indel_nt", [64, -64, 10, -10])
+@pytest.mark.parametrize("indel_nt", [64, -64, 48, -48, 16, -16, 10, -10])
 def test_predict_variant_realigns_without_stitch(indel_nt):
-    """Without stitch, predict_variant realigns the alternate by whole bins; indels shorter
-    than half a bin, and calls without output_stride, leave it unchanged."""
+    """Without stitch, predict_variant realigns the alternate by whole bins, rounding ties
+    down; indels of at most half a bin, and calls without output_stride, leave it unchanged."""
     from types import SimpleNamespace
     from baskerville.snps import predict_variant
 
     L, p, stride = 16, 5, 32
     ref = torch.arange(L, dtype=torch.float32).reshape(1, L)  # bin labels
-    k = round(abs(indel_nt) / stride)
+    k = {64: 2, 48: 1, 16: 0, 10: 0}[abs(indel_nt)]
     if (
         indel_nt > 0
     ):  # inserted bins (-1) after the variant bin; reference pushed off the edge
