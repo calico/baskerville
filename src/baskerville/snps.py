@@ -1420,15 +1420,17 @@ def predict_allele(seqnn_model, x_1hot, shifts, head, targets_df, gene_masks=Non
         gene_masks (callable): Shift -> (gene_out_mask, gene_presence) in this
           allele's coordinates, or None for no gene head.
 
+    Inputs longer than the model's sequence length are cropped on the right after
+    shifting.
+
     Returns:
         (list of torch.Tensor, list of torch.Tensor): TxL coverage and gene predictions.
     """
     cov_preds, gene_preds = [], []
     for shift in shifts:
         gom, gp = gene_masks(shift) if gene_masks is not None else (None, None)
-        output = seqnn_model(
-            dna.torch_shift(x_1hot, shift), head, gene_out_mask=gom, gene_presence=gp
-        )
+        x = dna.torch_shift(x_1hot, shift)[..., : seqnn_model.seq_length]
+        output = seqnn_model(x, head, gene_out_mask=gom, gene_presence=gp)
         cov_preds.append(
             seqnn_model.untransform_fn(output.coverage.squeeze(0), targets_df)
         )
@@ -1456,8 +1458,10 @@ def predict_variant(
     With stitch, the longer allele (alternate for insertions, reference for
     deletions) is also predicted at shifts - |indel_size|, and its coverage is
     stitched at the variant bin so that every other bin covers the same
-    nucleotides as the shorter allele's. Its gene head predictions average
-    both shift sets. Without stitch, given output_stride, the alternate's bins
+    nucleotides as the shorter allele's. The shifted insertion allele ends in
+    the reference nucleotides the insertion pushed off the right edge; the
+    shifted deletion reference ends in padding, as does the deletion allele.
+    Its gene head predictions average both shift sets. Without stitch, given output_stride, the alternate's bins
     downstream of the variant are realigned to the reference by the nearest
     whole number of bins (realign_preds); the sub-bin remainder and the shifted
     pooling partition remain.
@@ -1481,7 +1485,9 @@ def predict_variant(
     if stitch and indel_size != 0:
         shifts2 = [shift - abs(indel_size) for shift in shifts]
         if indel_size > 0:
-            alt_cov2, alt_gene2 = predict(alt_1hot, shifts2, indel_size, snp.pos)
+            # restore the reference nucleotides the insertion pushed off the right edge
+            alt_ext = torch.cat((alt_1hot, ref_1hot[..., -indel_size:]), dim=-1)
+            alt_cov2, alt_gene2 = predict(alt_ext, shifts2, indel_size, snp.pos)
             alt_cov = stitch_preds(alt_cov, alt_cov2, snp_seq_bin)
             alt_gene = alt_gene + alt_gene2
         else:

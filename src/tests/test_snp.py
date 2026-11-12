@@ -870,3 +870,34 @@ def test_frame_gene_masks():
     ]  # 64 nt deletion removes the spanning exon's 3' part
     assert bins(0, 64) == [1, 2, 4, 12]  # 64 nt insertion splits the spanning exon
     assert bins(-64, 0) == [0, 8]  # reference shifted left; first exon leaves window
+
+
+def test_stitch_insertion_shift_has_no_padding():
+    """The shifted insertion allele is the right-matched sequence: reference nucleotides
+    fill the right edge, so no padding enters the input."""
+    from types import SimpleNamespace
+    from baskerville import dna
+    from baskerville.snps import predict_allele, predict_variant
+
+    L, p, k = 12, 5, 3
+    ref = torch.tensor(dna.dna_1hot("ACGTACGTTGCA").T[None], dtype=torch.float32)
+    alt = torch.cat((ref[..., :p], ref[..., [0, 1, 2]], ref[..., p : L - k]), dim=-1)
+    inputs = []
+
+    class Model:  # records its inputs and returns them as coverage
+        seq_length = L
+
+        def __call__(self, x, head, gene_out_mask=None, gene_presence=None):
+            inputs.append(x)
+            return SimpleNamespace(coverage=x, has_gene=False)
+
+        def untransform_fn(self, x, targets_df):
+            return x
+
+    def predict(x, shifts, indel_size=0, var_pos=0):
+        return predict_allele(Model(), x, shifts, None, None)
+
+    snp = SimpleNamespace(indel_size=lambda: k, pos=0, flipped=False)
+    predict_variant(predict, ref, alt, [ref[0]], [], snp, p, [0], True)
+    right_matched = torch.cat((ref[..., k:p], alt[..., p : p + k], ref[..., p:]), dim=-1)
+    torch.testing.assert_close(inputs[-1], right_matched)
