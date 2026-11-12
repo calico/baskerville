@@ -536,9 +536,7 @@ class SNPCluster:
 
         # extract reference
         if start < 0:
-            ref_seq = (
-                "N" * (-start) + genome_open.fetch(self.chr, 0, end).upper()
-            )
+            ref_seq = "N" * (-start) + genome_open.fetch(self.chr, 0, end).upper()
         else:
             ref_seq = genome_open.fetch(self.chr, start, end).upper()
 

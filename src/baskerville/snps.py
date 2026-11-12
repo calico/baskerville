@@ -389,7 +389,9 @@ def score_snps(args):
         ):
             # initialize 1 hot encoding
             sc0 = snp_clusters[0]
-            s1l = executor.submit(sc0.get_1hots, genome_open, seq_flank(sc0, args.shifts))
+            s1l = executor.submit(
+                sc0.get_1hots, genome_open, seq_flank(sc0, args.shifts)
+            )
 
             for ci, sc in enumerate(
                 tqdm(snp_clusters, unit=" cluster", desc="SNP clusters")
@@ -404,7 +406,9 @@ def score_snps(args):
                 # submit next 1 hot encoding
                 if ci + 1 < len(snp_clusters):
                     sc1 = snp_clusters[ci + 1]
-                    s1l = executor.submit(sc1.get_1hots, genome_open, seq_flank(sc1, args.shifts))
+                    s1l = executor.submit(
+                        sc1.get_1hots, genome_open, seq_flank(sc1, args.shifts)
+                    )
 
                 # build gene masks if this cluster has genes
                 gsc = sc_to_gsc.get(ci) if score_genes else None

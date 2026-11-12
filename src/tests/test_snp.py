@@ -911,4 +911,6 @@ def test_stitch_flanked_inputs_have_no_padding(ref_allele, alt_allele):
     assert all(x.shape[-1] == L and (x.sum(1) == 1).all() for x in inputs)
     k = abs(snp.indel_size())
     longer = alt if snp.indel_size() > 0 else ref
-    torch.testing.assert_close(inputs[-2], longer[..., m + k : m + k + L])  # shift 0 - k
+    torch.testing.assert_close(
+        inputs[-2], longer[..., m + k : m + k + L]
+    )  # shift 0 - k
