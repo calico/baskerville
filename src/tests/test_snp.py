@@ -870,3 +870,50 @@ def test_frame_gene_masks():
     ]  # 64 nt deletion removes the spanning exon's 3' part
     assert bins(0, 64) == [1, 2, 4, 12]  # 64 nt insertion splits the spanning exon
     assert bins(-64, 0) == [0, 8]  # reference shifted left; first exon leaves window
+
+
+@pytest.mark.parametrize("ref_allele,alt_allele", [("A", "ATTT"), ("ATTT", "A")])
+def test_stitch_flanked_inputs_have_no_padding(ref_allele, alt_allele):
+    """With alleles built on a seq_flank window, every model input is real sequence,
+    and the shifted longer allele is the right-matched sequence."""
+    from types import SimpleNamespace
+    from baskerville import dna
+    from baskerville.snps import predict_allele, predict_variant, seq_flank
+    from baskerville.vcf import make_alt_1hot
+
+    L, p, shifts = 12, 6, [-1, 0, 1]
+    snp = SimpleNamespace(
+        indel_size=lambda: len(alt_allele) - len(ref_allele), pos=0, flipped=False
+    )
+    m = seq_flank(SimpleNamespace(snps=[snp]), shifts)
+    seq = "".join(np.random.default_rng(0).choice(list("ACGT"), L + 2 * m))
+    seq = seq[: m + p] + ref_allele + seq[m + p + len(ref_allele) :]
+    ref_np = dna.dna_1hot(seq)
+    alt_np = make_alt_1hot(ref_np, m + p, ref_allele, alt_allele)
+    ref, alt = (torch.tensor(x.T[None], dtype=torch.float32) for x in (ref_np, alt_np))
+    inputs = []
+
+    class Model:  # records its inputs and returns them as coverage
+        seq_length = L
+
+        def __call__(self, x, head, gene_out_mask=None, gene_presence=None):
+            inputs.append(x)
+            return SimpleNamespace(coverage=x, has_gene=False)
+
+        def untransform_fn(self, x, targets_df):
+            return x
+
+    def predict(x, shifts, indel_size=0, var_pos=0):
+        return predict_allele(Model(), x, shifts, None, None)
+
+    ref_cov, _ = predict(ref, shifts)
+    predict_variant(predict, ref, alt, ref_cov, [], snp, p, shifts, True)
+    k = abs(snp.indel_size())
+    longer = alt if snp.indel_size() > 0 else ref
+    expected = [ref[..., m - s : m - s + L] for s in shifts]
+    expected += [alt[..., m - s : m - s + L] for s in shifts]
+    expected += [longer[..., m - s + k : m - s + k + L] for s in shifts]
+    assert len(inputs) == len(expected)
+    for x, e in zip(inputs, expected):
+        assert ((x == 0) | (x == 1)).all() and (x.sum(1) == 1).all()  # no N
+        torch.testing.assert_close(x, e)
