@@ -698,7 +698,7 @@ def build_snp_cmd(args, model_file, start_i, end_i, out_dir=None, fold_cross=Non
     if hasattr(args, "shifts") and args.shifts != "0":
         cmd_parts.extend(["--shifts", args.shifts])
 
-    if hasattr(args, "gene_cov_t") and args.gene_cov_t > 0:
+    if hasattr(args, "gene_cov_t") and args.gene_cov_t >= 0:
         cmd_parts.extend(["--gene_cov_t", str(args.gene_cov_t)])
 
     if hasattr(args, "span") and args.span:
