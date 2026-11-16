@@ -1,5 +1,6 @@
 import copy
 import itertools
+import math
 import operator
 
 import numpy as np
@@ -661,12 +662,15 @@ class PoissonMultinomialLoss(_Loss):
         return weighted_reduce(loss, target_weights, self.reduction)
 
 
-def split_profile(sizes: list, split_exp: float, split_knee: int) -> list:
-    """Split weights c = min(1, (size / split_knee)^−split_exp), one per tree level.
+def split_profile(sizes: list, split_exp: float, split_knee: int, split_step: float = 0) -> list:
+    """Split weights, one per tree level; sizes holds each level's parent block size in bins.
 
-    sizes holds each level's parent block size in bins. Splits weigh 1 up to blocks
-    of split_knee bins, then fall by 2^−split_exp per doubling of block size.
+    Splits weigh 1 up to blocks of split_knee bins. Past the knee, weights fall by
+    2^−split_exp per doubling of block size (power law), or, if split_step > 0, by
+    split_step per doubling (linear in log size, floored at 0).
     """
+    if split_step:
+        return [max(0.0, 1 - split_step * max(0.0, math.log2(s / split_knee))) for s in sizes]
     return [min(1.0, (s / split_knee) ** -split_exp) for s in sizes]
 
 
@@ -687,7 +691,10 @@ class PoissonTreeLoss(PoissonMultinomialLoss):
     halves K' times, then the window into m blocks (tree_factors). Computed as
     Σ_ℓ a_ℓ·P_ℓ, P_ℓ the Poisson NLL sum-pooled to level ℓ's blocks:
     a_0 = c_1, a_ℓ = c_{ℓ+1} − c_ℓ, a_K = t − c_K. split_exp 0 gives
-    PoissonMultinomialLoss(total_weight) up to a constant.
+    PoissonMultinomialLoss(total_weight) up to a constant. split_step > 0 makes the
+    profile linear in log block size and sets t to its next step (one more doubling),
+    so every pooling past the knee gets the same coefficient −split_step; total_weight
+    is then unused.
     """
 
     def __init__(
@@ -699,12 +706,14 @@ class PoissonTreeLoss(PoissonMultinomialLoss):
         weight_exp: int = 4,
         epsilon: float = 1e-9,
         reduction: str = "mean",
+        split_step: float = 0,
     ):
         super().__init__(total_weight, weight_range, weight_exp, epsilon, reduction=reduction)
         if split_knee < 1 or split_knee & (split_knee - 1):
             raise ValueError("split_knee must be a power of two (bins)")
         self.split_exp = split_exp
         self.split_knee = split_knee
+        self.split_step = split_step
 
     def forward(self, y_pred, y_true, target_weights=None):
         seq_len = y_true.shape[-1]
@@ -714,8 +723,11 @@ class PoissonTreeLoss(PoissonMultinomialLoss):
         y_pred = y_pred * self.position_weights
 
         sizes = list(itertools.accumulate(factors, operator.mul))
-        c = split_profile(sizes, self.split_exp, self.split_knee)
-        coefs = [c[0]] + [b - a for a, b in zip(c, c[1:])] + [self.total_weight - c[-1]]
+        c = split_profile(sizes, self.split_exp, self.split_knee, self.split_step)
+        t = self.total_weight
+        if self.split_step:
+            t = split_profile([2 * sizes[-1]], 0, self.split_knee, self.split_step)[0]
+        coefs = [c[0]] + [b - a for a, b in zip(c, c[1:])] + [t - c[-1]]
         loss = 0
         for level, coef in enumerate(coefs):
             if coef != 0:

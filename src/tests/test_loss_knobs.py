@@ -63,6 +63,28 @@ def test_split_profile():
     assert metrics.split_profile([2, 4], 0.5, 1) == [2**-0.5, 0.5]
 
 
+def test_split_profile_linear():
+    c = metrics.split_profile(2 ** np.arange(1, 15), 0, 32, split_step=0.09)
+    np.testing.assert_allclose(c, [1] * 5 + [1 - 0.09 * j for j in range(1, 10)])
+    assert metrics.split_profile([2 ** 20], 0, 32, split_step=0.09) == [0.0]
+
+
+@pytest.mark.parametrize("length", [8, 24])
+def test_tree_linear_matches_split_reference(length):
+    """Linear profile: c from split_step, and t is the profile one doubling past the root."""
+    yp, y = _yy((2, 3, length))
+    loss_fn = metrics.PoissonTreeLoss(5.0, split_knee=2, weight_range=10, weight_exp=8,
+                                      epsilon=0, split_step=0.2)
+    loss = loss_fn(yp, y)
+    w = metrics.position_weights(length, 10, 8).double()
+    factors = metrics.tree_factors(length)
+    sizes = np.cumprod(factors)
+    c = metrics.split_profile(sizes, 0, 2, 0.2)
+    t = metrics.split_profile([2 * sizes[-1]], 0, 2, 0.2)[0]
+    ref = _split_reference(yp, y, w, loss_fn.weights_sum.double(), c, t, factors)
+    torch.testing.assert_close(loss, ref, rtol=1e-10, atol=1e-12)
+
+
 def test_tree_factors():
     assert metrics.tree_factors(16) == [2] * 4
     assert metrics.tree_factors(24576) == [2] * 13 + [3]

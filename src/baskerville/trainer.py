@@ -202,6 +202,8 @@ class Trainer:
         self.weight_range = self.params.get("weight_range", 1)
         self.weight_exp = self.params.get("weight_exp", 1)
         self.loss = self.params.get("loss", "poisson").lower()
+        if self.params.get("split_step") and "total_weight" in self.params:
+            raise ValueError("split_step sets the window-total weight; drop total_weight")
         self.is_mlm = self.loss == "mlm"
         if self.loss != "mlm":
             self.loss_fn = parse_loss(
@@ -212,6 +214,7 @@ class Trainer:
                 self.weight_exp,
                 self.params.get("split_exp", 0),
                 self.params.get("split_knee", 1),
+                self.params.get("split_step", 0),
             )
 
         # gene expression loss
@@ -1423,6 +1426,7 @@ def parse_loss(
     weight_exp: int = 1,
     split_exp: float = 0,
     split_knee: int = 1,
+    split_step: float = 0,
 ):
     """Parse loss function from label, strategy, and fitting method.
 
@@ -1434,6 +1438,8 @@ def parse_loss(
         weight_exp (int): Weight exponent for PoissionMultinomial.
         split_exp (float): Split-weight decline per block doubling for PoissonTree.
         split_knee (int): Block size (bins) where PoissonTree's split weights start to fall.
+        split_step (float): If > 0, PoissonTree's linear split-weight decline per doubling;
+            the window-total weight continues the line.
 
     Returns:
       loss_fn: Torch loss
@@ -1451,6 +1457,7 @@ def parse_loss(
             split_knee=split_knee,
             weight_range=weight_range,
             weight_exp=weight_exp,
+            split_step=split_step,
         )
     else:
         raise ValueError(f"Loss function {loss_label} not recognized")
