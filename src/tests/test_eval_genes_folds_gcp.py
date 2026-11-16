@@ -314,6 +314,15 @@ def test_one_gtf_per_data_dir(tmp_path, monkeypatch):
     with pytest.raises(ValueError):
         hegf.eval_genes_folds(args)
 
+    # -t likewise: one targets table per data dir
+    captured.clear()
+    args.genes_gtf = "h.gtf,m.gtf"
+    args.targets_file = "h.txt,m.txt"
+    hegf.eval_genes_folds(args)
+    f0 = [c for c in captured if "/f0c0/" in c]
+    assert f" -t {os.path.abspath('h.txt')} " in f0[0]
+    assert f" -t {os.path.abspath('m.txt')} " in f0[1]
+
 
 def test_gcp_requires_data_dir(tmp_path, monkeypatch):
     out_dir = _make_models_dir(tmp_path, num_folds=2, test_fold=0, valid_fold=1)
@@ -406,3 +415,4 @@ def test_gcp_output_dir_keyed_on_options(tmp_path, monkeypatch):
     assert _gcp_output_dir(tmp_path, monkeypatch) == base
     assert _gcp_output_dir(tmp_path, monkeypatch, rc=True) != base
     assert _gcp_output_dir(tmp_path, monkeypatch, valid=True) != base
+    assert _gcp_output_dir(tmp_path, monkeypatch, targets_file="t.txt") != base

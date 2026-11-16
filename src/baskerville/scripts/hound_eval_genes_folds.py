@@ -125,7 +125,7 @@ def main():
         "-t",
         "--targets_file",
         default=None,
-        help="File specifying target indexes and labels in table format",
+        help="Targets table selecting tracks; comma-separated for one per data dir.",
     )
     parser.add_argument(
         "--valid",
@@ -214,6 +214,11 @@ def eval_genes_folds(args):
         genes_gtfs *= len(args.data_dirs)
     if len(genes_gtfs) != len(args.data_dirs):
         raise ValueError("--genes_gtf needs one GTF, or one per data dir")
+    targets_files = (args.targets_file or "").split(",")
+    if len(targets_files) == 1:
+        targets_files *= len(args.data_dirs)
+    if len(targets_files) != len(args.data_dirs):
+        raise ValueError("--targets_file needs one file, or one per data dir")
     container_params = None
     container_models_dir = None  # staged-models mode (local tree → cache)
     container_data_dirs = None
@@ -269,8 +274,9 @@ def eval_genes_folds(args):
             models_sha, container_models_dir = stage_cache.stage_dir(
                 args.out_dir, "models", filename="model_best.pth"
             )
-        if args.targets_file:
-            _, container_targets = stage_cache.stage_file(args.targets_file, "targets")
+        container_targets = [
+            stage_cache.stage_file(t, "targets")[1] if t else "" for t in targets_files
+        ]
         data_names = [os.path.basename(d.rstrip("/")) for d in args.data_dirs]
         container_data_dirs = [f"{args.gcp_data_local}/{n}" for n in data_names]
         if not args.gcp_output_dir:
@@ -286,7 +292,9 @@ def eval_genes_folds(args):
             )
             # options too (and --valid, which changes the split written to the
             # same evalg/ dir), so changed options start fresh instead of resuming
-            opts = evalg_options(args, container_targets) + f" valid={args.valid}"
+            # one distinct targets file hashes as before
+            targets_key = ",".join(dict.fromkeys(container_targets))
+            opts = evalg_options(args, targets_key) + f" valid={args.valid}"
             run_id = stage_cache.build_run_id(
                 models_key,
                 params_sha,
@@ -338,7 +346,7 @@ def eval_genes_folds(args):
         params_file = os.path.abspath(args.params_file)
         data_dirs = [os.path.abspath(data_dir) for data_dir in args.data_dirs]
         genes_gtf = [os.path.abspath(g) for g in genes_gtfs]
-        targets_file = args.targets_file
+        targets_file = [os.path.abspath(t) if t else "" for t in targets_files]
 
     #######################################################
     # prep work
@@ -455,7 +463,7 @@ def eval_genes_folds(args):
                 cmd += f" --head {di}"
                 cmd += f" -o {eval_dir}"
                 cmd += f" --split fold{split_fold}"
-                cmd += evalg_options(args, targets_file)
+                cmd += evalg_options(args, targets_file[di])
                 cmd += f" {params_file}"
                 cmd += f" {model_file}"
                 cmd += f" {data_dirs[di]}"
