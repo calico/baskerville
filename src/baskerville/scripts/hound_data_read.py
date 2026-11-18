@@ -283,6 +283,7 @@ def read_blacklist(blacklist_bed, black_buffer=20):
 class CovFace:
     def __init__(self, cov_file):
         self.cov_file = cov_file
+        self.resolution = 1  # bp per stored value
 
         cov_ext = os.path.splitext(self.cov_file)[1].lower()
         if cov_ext == ".gz":
@@ -349,7 +350,9 @@ class CovFace:
 
         # true values; hdwig divides out the file's storage scale, and picks
         # float16 or, for a track that does not fit it, float32
+        # kept at the stored resolution; read() expands to bp
         with hdwig.open(self.cov_file) as track:
+            self.resolution = track.resolution
             info = np.finfo(track.dtype)
             self.chr_cov = {
                 # handle mysterious inf's; clip passes NaN through untouched
@@ -375,8 +378,14 @@ class CovFace:
 
     def read(self, chrm, start, end):
         if chrm in self.chr_cov:
-            # read coverage
-            cov = self.chr_cov[chrm][start:end]
+            # read coverage, expanding each stored value over its bp
+            r = self.resolution
+            if r == 1:
+                cov = self.chr_cov[chrm][start:end]
+            else:
+                values = self.chr_cov[chrm][start // r : -(-end // r)]
+                offset = start % r
+                cov = np.repeat(values, r)[offset : offset + end - start]
 
             # pad
             pad_zeros = end - start - len(cov)
