@@ -283,6 +283,7 @@ def read_blacklist(blacklist_bed, black_buffer=20):
 class CovFace:
     def __init__(self, cov_file):
         self.cov_file = cov_file
+        self.track = None  # hdwig
 
         cov_ext = os.path.splitext(self.cov_file)[1].lower()
         if cov_ext == ".gz":
@@ -347,15 +348,9 @@ class CovFace:
                 '(pip install ".[hdwig]"; not yet public)'
             ) from e
 
-        # true values; hdwig divides out the file's storage scale, and picks
-        # float16 or, for a track that does not fit it, float32
-        with hdwig.open(self.cov_file) as track:
-            info = np.finfo(track.dtype)
-            self.chr_cov = {
-                # handle mysterious inf's; clip passes NaN through untouched
-                chrm: np.clip(track.load(chrm), info.min, info.max)
-                for chrm in track.contigs
-            }
+        # true values, one per bp at any stored resolution
+        self.track = hdwig.open(self.cov_file, memory=True)
+        self.chr_cov = self.track.contigs
 
     def preprocess_wig5(self):
         """Read legacy .w5 (one dataset per contig) without hdwig."""
@@ -376,7 +371,13 @@ class CovFace:
     def read(self, chrm, start, end):
         if chrm in self.chr_cov:
             # read coverage
-            cov = self.chr_cov[chrm][start:end]
+            if self.track is None:
+                cov = self.chr_cov[chrm][start:end]
+            else:
+                cov = self.track.read(chrm, start, end)
+                # handle mysterious inf's; clip passes NaN through untouched
+                info = np.finfo(cov.dtype)
+                cov = np.clip(cov, info.min, info.max)
 
             # pad
             pad_zeros = end - start - len(cov)
