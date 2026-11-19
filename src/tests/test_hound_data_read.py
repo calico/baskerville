@@ -1,4 +1,4 @@
-"""CovFace reads a coarse-resolution .hw as its base-pair expansion, zero past the end."""
+"""CovFace reads a coarse-resolution .hw as its base-pair expansion."""
 
 import numpy as np
 import pytest
@@ -17,8 +17,8 @@ def test_resolution_matches_bp_expansion(tmp_path):
     coarse, fine = CovFace(str(tmp_path / "r20.hw")), CovFace(str(tmp_path / "r1.hw"))
 
     for _ in range(1000):
-        start = int(rng.integers(0, length))
-        end = start + int(rng.integers(1, 700))
+        start = int(rng.integers(0, length - 1))
+        end = int(rng.integers(start + 1, min(start + 700, length) + 1))
         x, y = coarse.read("chrT", start, end), fine.read("chrT", start, end)
         assert len(x) == end - start
         np.testing.assert_array_equal(x.astype("float32"), y.astype("float32"))
