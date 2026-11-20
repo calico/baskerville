@@ -7,7 +7,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.nn.modules.loss import _Loss
-import torchmetrics
 
 from baskerville import dataset
 
@@ -34,80 +33,117 @@ class Loss:
         self._count = 0
 
 
-class PearsonCorrCoef(torchmetrics.Metric):
+def _accumulation_device(device):
+    # MPS has no float64 storage or arithmetic.
+    device = torch.device(device)
+    return torch.device("cpu") if device.type == "mps" else device
+
+
+class TrackMetrics:
+    """Streaming per-track Pearson R and R² of (batch, tracks, positions) preds and targets.
+
+    update() takes an optional (batch, positions) mask of the positions to score (genes).
+    Each batch is reduced in float32 on its device to per-track means, centered sums of
+    squares and products, and squared error; these merge into a float64 running state
+    (Chan et al.). compute() returns per-track (r, r2) as float32 CPU tensors: NaN with
+    fewer than two pairs, and r NaN without variance. For constant targets R² is 1
+    for an exact fit and 0 otherwise. Nonfinite squared error gives NaN.
     """
-    Metric class to calculate the Pearson correlation coefficient for each task.
 
-    Args:
-        num_outputs: Number of tasks
-        average: If true, return the average metric across tasks.
-            Otherwise, return a separate value for each task
+    _chunk_pairs = 1 << 24  # 64 MiB per float32 temporary, or one track if larger
 
-    As input to forward and update the metric accepts the following input:
-        preds: Predictions of shape (N, n_tasks, L)
-        target: Ground truth labels of shape (N, n_tasks, L)
-
-    As output of forward and compute the metric returns the following output:
-        output: A tensor with the Pearson coefficient.
-    """
-
-    def __init__(self, num_outputs: int = 1, average: bool = True) -> None:
-        super().__init__()
-        self.pearson = torchmetrics.PearsonCorrCoef(num_outputs=num_outputs)
-        self.average = average
-
-    def update(self, preds: torch.Tensor, target: torch.Tensor) -> None:
-        preds = preds.swapaxes(1, 2).flatten(start_dim=0, end_dim=1)  # NxL, n_tasks
-        target = target.swapaxes(1, 2).flatten(start_dim=0, end_dim=1)  # NxL, n_tasks
-        self.pearson.update(preds, target)
-
-    def compute(self) -> torch.Tensor:
-        output = self.pearson.compute()
-        if self.average:
-            return output.nanmean()
-        else:
-            return output
+    def __init__(self, num_outputs: int):
+        self.num_outputs = num_outputs
+        self.reset()
 
     def reset(self):
-        self.pearson.reset()
+        self.moments = None  # (6, T): mean p, mean y, Spp, Syy, Spy, SSE
+        self.count = None
 
-
-class R2Score(torchmetrics.Metric):
-    """
-    Metric class to calculate the R2 score for each task.
-
-    Args:
-        average: If true, return the average metric across tasks.
-            Otherwise, return a separate value for each task
-
-    n_tasks is detected automatically from the input.
-    As input to forward and update the metric accepts the following input:
-        preds: Predictions of shape (N, n_tasks, L)
-        target: Ground truth labels of shape (N, n_tasks, L)
-
-    As output of forward and compute the metric returns the following output:
-        output: A tensor with the Pearson coefficient.
-    """
-
-    def __init__(self, average: bool = True) -> None:
-        super().__init__()
-        self.r2score = torchmetrics.R2Score(multioutput="raw_values")
-        self.average = average
-
-    def update(self, preds: torch.Tensor, target: torch.Tensor) -> None:
-        preds = preds.swapaxes(1, 2).flatten(start_dim=0, end_dim=1)  # NxL, n_tasks
-        target = target.swapaxes(1, 2).flatten(start_dim=0, end_dim=1)  # NxL, n_tasks
-        self.r2score.update(preds, target)
-
-    def compute(self) -> torch.Tensor:
-        output = self.r2score.compute()
-        if self.average:
-            return output.nanmean()
+    @torch.no_grad()
+    def update(self, preds, target, mask=None):
+        b, t, length = preds.shape
+        if target.shape != preds.shape or t != self.num_outputs:
+            raise ValueError(
+                f"preds and target must have the same (batch, {self.num_outputs}, "
+                f"positions) shape; got {tuple(preds.shape)}, {tuple(target.shape)}"
+            )
+        if mask is not None and mask.shape != (b, length):
+            raise ValueError(f"mask must have shape (batch, positions) = {(b, length)}")
+        if b * length == 0:
+            return
+        m = None if mask is None else mask.bool()[:, None, :]
+        if m is None:
+            n = torch.tensor(b * length, device=preds.device)
+            first_b, first_pos = 0, 0
         else:
-            return output
+            n = m.sum()
+            has_pairs = n > 0
+            first = m.reshape(-1).int().argmax().view(1)
+            first_b, first_pos = first // length, first % length
+        divisor = n.clamp(min=1)
 
-    def reset(self):
-        self.r2score.reset()
+        def total(x):
+            if m is not None:
+                x = torch.where(m, x, 0)
+            return x.sum(dim=(0, 2))
+
+        def mean(x):
+            # Center on an observed value so a constant track has exactly zero variance.
+            origin = x[first_b, :, first_pos].reshape(-1)
+            result = origin + total(x - origin[:, None]) / divisor
+            return result if m is None else torch.where(has_pairs, result, 0)
+
+        chunk = max(1, self._chunk_pairs // (b * length))
+        sums = torch.empty(8, t, device=preds.device, dtype=torch.float32)
+        for start in range(0, t, chunk):
+            sl = slice(start, start + chunk)
+            p, y = preds[:, sl].float(), target[:, sl].float()
+            mp, my = mean(p), mean(y)
+            dp, dy = p - mp[:, None], y - my[:, None]
+            sums[:, sl] = torch.stack(
+                (
+                    mp,
+                    my,
+                    total(dp),
+                    total(dy),
+                    total(dp * dp),
+                    total(dy * dy),
+                    total(dp * dy),
+                    total((y - p).square_()),
+                )
+            )
+        # Correct the float32 means and centered sums, then merge in float64.
+        device = _accumulation_device(preds.device)
+        mp, my, sp, sy, spp, syy, spy, sse = sums.to(device).double()
+        n = n.to(device).double()
+        divisor = n.clamp(min=1)
+        ep, ey = sp / divisor, sy / divisor
+        batch = torch.stack(
+            (mp + ep, my + ey, spp - sp * ep, syy - sy * ey, spy - sp * ey, sse)
+        )
+
+        if self.moments is None:
+            self.moments, self.count = torch.zeros_like(batch), torch.zeros_like(n)
+        count = self.count + n
+        weight = n / count.clamp(min=1)
+        dmp, dmy = batch[:2] - self.moments[:2]
+        self.moments[0] += dmp * weight
+        self.moments[1] += dmy * weight
+        between = torch.stack((dmp * dmp, dmy * dmy, dmp * dmy)) * (self.count * weight)
+        self.moments[2:5] += batch[2:5] + between
+        self.moments[5] += batch[5]
+        self.count = count
+
+    def compute(self):
+        nan = torch.full((self.num_outputs,), torch.nan)
+        if self.moments is None or self.count.item() < 2:
+            return nan, nan.clone()
+        spp, syy, spy, sse = self.moments[2:].cpu()
+        r = torch.where((spp > 0) & (syy > 0), spy / (spp * syy).sqrt(), torch.nan)
+        r2 = torch.where(syy == 0, (sse == 0).double(), 1 - sse / syy)
+        r2.masked_fill_(~sse.isfinite(), torch.nan)
+        return r.float(), r2.float()
 
 
 def qmap_tables(hists):
@@ -401,8 +437,8 @@ class SpecPearsonCorrCoef:
             for g in self.groups:
                 self.index[g] = tuple(ix.to(device) for ix in self.index[g])
                 self.table[g] = self.table[g].to(device)
-                self.track_sums[g] = self.track_sums[g].to(device)
-                self.mean_sums[g] = self.mean_sums[g].to(device)
+                self.track_sums[g] = self.track_sums[g].to(_accumulation_device(device))
+                self.mean_sums[g] = self.mean_sums[g].to(_accumulation_device(device))
         return self
 
     def _map(self, x, g):
@@ -418,8 +454,9 @@ class SpecPearsonCorrCoef:
         if self.enabled:
             for g in self.groups:
                 # Residual covariance subtracts large, nearly equal moments.
-                zp = self._map(preds, g).double()  # (tracks, P)
-                zy = self._map(target, g).double()
+                device = self.track_sums[g].device
+                zp = self._map(preds, g).to(device).double()  # (tracks, P)
+                zy = self._map(target, g).to(device).double()
                 mp, my = zp.mean(dim=0), zy.mean(dim=0)  # (P,)
 
                 def total(x):
@@ -479,7 +516,7 @@ class SpecPearsonCorrCoef:
 
     def reset(self):
         if self.enabled:
-            device = {g: t.device for g, t in self.table.items()}
+            device = {g: _accumulation_device(t.device) for g, t in self.table.items()}
             self.track_sums = {
                 g: torch.zeros(len(r), 9, dtype=torch.float64, device=device[g])
                 for g, (r, _) in self.groups.items()
@@ -489,58 +526,6 @@ class SpecPearsonCorrCoef:
                 for g in self.groups
             }
             self.count = {g: 0 for g in self.groups}
-
-
-class _MaskedGeneMetric(torchmetrics.Metric):
-    """Base class for gene metrics with masking support.
-
-    Subclasses set self.inner_metric in __init__.
-
-    Input shapes:
-        preds: (B, num_gene_targets, max_genes)
-        target: (B, num_gene_targets, max_genes)
-        mask: (B, max_genes) - boolean mask for valid genes
-    """
-
-    def __init__(self, average: bool = True) -> None:
-        super().__init__()
-        self.average = average
-
-    def update(
-        self, preds: torch.Tensor, target: torch.Tensor, mask: torch.Tensor
-    ) -> None:
-        preds_flat = preds.permute(0, 2, 1).reshape(-1, preds.shape[1])
-        target_flat = target.permute(0, 2, 1).reshape(-1, target.shape[1])
-        mask_flat = mask.reshape(-1)
-
-        preds_valid = preds_flat[mask_flat]
-        target_valid = target_flat[mask_flat]
-
-        if preds_valid.shape[0] > 0:
-            self.inner_metric.update(preds_valid, target_valid)
-
-    def compute(self) -> torch.Tensor:
-        output = self.inner_metric.compute()
-        return output.nanmean() if self.average else output
-
-    def reset(self):
-        self.inner_metric.reset()
-
-
-class GenePearsonCorrCoef(_MaskedGeneMetric):
-    """Pearson correlation for gene predictions with masking support."""
-
-    def __init__(self, num_outputs: int = 1, average: bool = True) -> None:
-        super().__init__(average=average)
-        self.inner_metric = torchmetrics.PearsonCorrCoef(num_outputs=num_outputs)
-
-
-class GeneR2Score(_MaskedGeneMetric):
-    """R2 score for gene predictions with masking support."""
-
-    def __init__(self, average: bool = True) -> None:
-        super().__init__(average=average)
-        self.inner_metric = torchmetrics.R2Score(multioutput="raw_values")
 
 
 def weighted_reduce(loss, target_weights, reduction):
@@ -808,8 +793,7 @@ class DatasetMetrics:
         # Coverage metrics
         self.spec = None
         if has_coverage and num_targets is not None:
-            self.r = PearsonCorrCoef(num_targets, average=False).to(device)
-            self.r2 = R2Score(average=False).to(device)
+            self.coverage = TrackMetrics(num_targets)
             if spec_like is not None:
                 self.spec = spec_like.fresh()
             elif targets_df is not None and len(targets_df) == num_targets:
@@ -817,16 +801,13 @@ class DatasetMetrics:
                     targets_df, target_hist, spec_group_min
                 ).to(device)
         else:
-            self.r = None
-            self.r2 = None
+            self.coverage = None
 
         # Gene metrics
         if has_gene and num_gene_targets is not None:
-            self.r_gene = GenePearsonCorrCoef(num_gene_targets).to(device)
-            self.r2_gene = GeneR2Score().to(device)
+            self.gene = TrackMetrics(num_gene_targets)
         else:
-            self.r_gene = None
-            self.r2_gene = None
+            self.gene = None
 
     def update(
         self,
@@ -850,16 +831,14 @@ class DatasetMetrics:
         self.loss.update(loss_val.item(), batch_size)
 
         # Coverage metrics
-        if y is not None and yh.has_coverage and self.r is not None:
-            self.r.update(yh.coverage, y)
-            self.r2.update(yh.coverage, y)
+        if y is not None and yh.has_coverage and self.coverage is not None:
+            self.coverage.update(yh.coverage, y)
             if self.spec is not None:
                 self.spec.update(yh.coverage, y)
 
         # Gene metrics
-        if yg is not None and self.r_gene is not None and yh.has_gene:
-            self.r_gene.update(yh.gene, yg, gene_presence)
-            self.r2_gene.update(yh.gene, yg, gene_presence)
+        if yg is not None and self.gene is not None and yh.has_gene:
+            self.gene.update(yh.gene, yg, gene_presence)
 
     def compute(self) -> dict:
         """Compute all metrics and return as a flat dict of floats.
@@ -870,9 +849,8 @@ class DatasetMetrics:
         """
         results = {"loss": self.loss.compute()}
 
-        if self.r is not None:
-            r = self.r.compute().float().cpu()
-            r2 = self.r2.compute().float().cpu()
+        if self.coverage is not None:
+            r, r2 = self.coverage.compute()
             results["r"] = r.nanmean().item()
             results["r2"] = r2.nanmean().item()
             if self.spec is not None:
@@ -890,9 +868,10 @@ class DatasetMetrics:
             results["r"] = None
             results["r2"] = None
 
-        if self.r_gene is not None:
-            results["r_gene"] = self.r_gene.compute().item()
-            results["r2_gene"] = self.r2_gene.compute().item()
+        if self.gene is not None:
+            r, r2 = self.gene.compute()
+            results["r_gene"] = r.nanmean().item()
+            results["r2_gene"] = r2.nanmean().item()
         else:
             results["r_gene"] = None
             results["r2_gene"] = None
@@ -902,14 +881,12 @@ class DatasetMetrics:
     def reset(self):
         """Reset all metrics."""
         self.loss.reset()
-        if self.r is not None:
-            self.r.reset()
-            self.r2.reset()
+        if self.coverage is not None:
+            self.coverage.reset()
         if self.spec is not None:
             self.spec.reset()
-        if self.r_gene is not None:
-            self.r_gene.reset()
-            self.r2_gene.reset()
+        if self.gene is not None:
+            self.gene.reset()
 
     def format_log(self, prefix: str, results: dict = None) -> str:
         """Format summary metrics for logging.

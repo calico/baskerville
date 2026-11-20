@@ -2,6 +2,8 @@
 
 Set up a test environment with `pip install -e ".[dev]"`.
 
+Format with `ruff format .` before committing. CI runs `uvx ruff@0.15 format --check .` and `npx prettier@3.8.2 --check .`.
+
 ## Code Design Principles
 
 Prioritize elegant, minimal implementations over feature-complete first drafts.

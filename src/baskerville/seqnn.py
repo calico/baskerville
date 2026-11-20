@@ -2,7 +2,6 @@ import os
 
 from natsort import natsorted
 import numpy as np
-import pdb
 import torch
 import torch.nn as nn
 from tqdm import tqdm
@@ -271,16 +270,12 @@ class SeqNN:
         data_load_iter = iter(data_load)
 
         # prepare coverage metrics
-        eval_metric_r = eval_metric_r2 = None
         if has_coverage:
             if self.output_slice is None:
                 num_targets = data.num_targets
             else:
                 num_targets = len(self.output_slice)
-            eval_metric_r = metrics.PearsonCorrCoef(num_targets, average=False)
-            eval_metric_r.to(self.device)
-            eval_metric_r2 = metrics.R2Score(average=False)
-            eval_metric_r2.to(self.device)
+            coverage_metrics = metrics.TrackMetrics(num_targets)
 
             # specificity, given the dataset's target histograms
             eval_metric_spec = None
@@ -298,15 +293,9 @@ class SeqNN:
                     eval_metric_spec.to(self.device)
 
         # prepare gene metrics
-        eval_metric_r_gene = eval_metric_r2_gene = None
         if has_gene:
             num_gene_targets = data.num_gene_targets
-            eval_metric_r_gene = metrics.GenePearsonCorrCoef(
-                num_gene_targets, average=False
-            )
-            eval_metric_r_gene.to(self.device)
-            eval_metric_r2_gene = metrics.GeneR2Score(average=False)
-            eval_metric_r2_gene.to(self.device)
+            gene_metrics = metrics.TrackMetrics(num_gene_targets)
 
         # initialize preds/targets storage
         preds = targets = gene_preds = gene_targets = gene_presence = None
@@ -412,8 +401,7 @@ class SeqNN:
 
                 # update coverage metrics
                 if has_coverage and y is not None:
-                    eval_metric_r.update(yh.coverage, y)
-                    eval_metric_r2.update(yh.coverage, y)
+                    coverage_metrics.update(yh.coverage, y)
                     if eval_metric_spec is not None:
                         eval_metric_spec.update(yh.coverage, y)
                     if return_values:
@@ -422,8 +410,7 @@ class SeqNN:
 
                 # update gene metrics
                 if has_gene and yg is not None and yh.has_gene:
-                    eval_metric_r_gene.update(yh.gene, yg, batch_gene_presence)
-                    eval_metric_r2_gene.update(yh.gene, yg, batch_gene_presence)
+                    gene_metrics.update(yh.gene, yg, batch_gene_presence)
                     if return_values:
                         gene_preds[si:sb] = (
                             yh.gene.to(torch.float16).detach().cpu().numpy()
@@ -440,8 +427,7 @@ class SeqNN:
         results = {}
 
         if has_coverage:
-            eval_r = eval_metric_r.compute().cpu().detach().numpy()
-            eval_r2 = eval_metric_r2.compute().cpu().detach().numpy()
+            eval_r, eval_r2 = (v.numpy() for v in coverage_metrics.compute())
             eval_spec = None
             if eval_metric_spec is not None:
                 eval_spec = eval_metric_spec.compute().numpy()
@@ -454,8 +440,7 @@ class SeqNN:
             }
 
         if has_gene:
-            eval_r_gene = eval_metric_r_gene.compute().cpu().detach().numpy()
-            eval_r2_gene = eval_metric_r2_gene.compute().cpu().detach().numpy()
+            eval_r_gene, eval_r2_gene = (v.numpy() for v in gene_metrics.compute())
             results["gene"] = {
                 "r": eval_r_gene,
                 "r2": eval_r2_gene,
