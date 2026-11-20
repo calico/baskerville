@@ -306,7 +306,7 @@ class Trainer:
                 self.spec_group_min,
                 form=self.params.get("qmap_form", "mse"),
             ).to(self.device)
-            if weight > 0
+            if weight > 0 and data.has_coverage
             else None
             for data, weight in zip(self.train_data, self.qmap_weight)
         ]

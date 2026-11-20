@@ -347,3 +347,17 @@ def test_zero_weight_dataset_needs_no_qmap(tmp_path, data_me_dir):
     trainer = Trainer(params, [enabled, disabled], [], tmp_path)
     assert isinstance(trainer.qmap_fns[0], metrics.QmapCrossTrackLoss)
     assert trainer.qmap_fns[1] is None
+
+
+def test_scalar_qmap_weight_skips_datasets_without_coverage(tmp_path, data_me_dir):
+    from baskerville.trainer import Trainer
+
+    coverage = dataset.SeqDataset(data_me_dir, "train")
+    coverage.targets_df["group"] = "CHIP"
+    gene_only = dataset.SeqDataset(data_me_dir, "train")
+    gene_only.targets_df = gene_only.targets_df.iloc[:0]
+    gene_only.num_targets, gene_only.has_coverage = 0, False
+    params = dict(batch_size=2, learning_rate=0.01, qmap_weight=0.1, spec_group_min=2)
+    trainer = Trainer(params, [coverage, gene_only], [], tmp_path)
+    assert isinstance(trainer.qmap_fns[0], metrics.QmapCrossTrackLoss)
+    assert trainer.qmap_fns[1] is None
