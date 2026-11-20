@@ -142,7 +142,7 @@ The term's scale depends on the form and the track set, so set λ by its push: t
 hound_qmap_calibrate [--form proj] [--fold 0] params.json model_best.pth data_dir [data_dir ...]
 ```
 
-Training and calibration fit their quantile maps to the selected training shards. Each new shard stores its counts in `shard_target_hist`. Older shards are counted from their targets when qmap is enabled. Calibration uses the training crop and requires a finite, positive median gradient ratio.
+Training and calibration fit their quantile maps to the selected training shards. These read each shard's `shard_target_hist`, which `hound_data` writes; for an older dataset, add it with the `write_target_hist` command above. Calibration uses the training crop and requires a finite, positive median gradient ratio.
 
 ### Validation metrics and early stopping
 

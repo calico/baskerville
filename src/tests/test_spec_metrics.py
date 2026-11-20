@@ -345,16 +345,12 @@ def test_write_target_hist(tmp_path):
         local = _hist_reference(values[fold], np.array([1, 0, 2]))
         np.testing.assert_array_equal(stored["shard_target_hist"][:], local)
 
-    # A legacy shard has only the pooled table. Count its own targets on demand.
+    # A legacy shard has only the pooled table; training refuses it.
     path = tmp_path / "examples/fold0.zarr"
     del zarr.open_group(path, mode="r+")["shard_target_hist"]
-    split = SimpleNamespace(
-        num_targets=3, strand_pair=np.array([1, 0, 2]), zarr_files=[path]
-    )
-    np.testing.assert_array_equal(
-        dataset.SeqDataset.split_target_hist(split),
-        _hist_reference(values[0], split.strand_pair),
-    )
+    split = SimpleNamespace(num_targets=3, zarr_files=[path], data_dir=str(tmp_path))
+    with pytest.raises(ValueError, match="write_target_hist"):
+        dataset.SeqDataset.split_target_hist(split)
 
 
 def test_write_target_hist_rejects_negative(tmp_path):

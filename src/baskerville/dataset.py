@@ -217,14 +217,16 @@ class SeqDataset(Dataset):
                 self.num_gene_targets = 0
 
     def split_target_hist(self):
-        """Count strand-summed targets in this split's shards only."""
+        """Sum the stored strand-summed target counts of this split's shards."""
         hist = np.zeros((self.num_targets, NUM_HIST_BINS), dtype=np.int64)
         for path in self.zarr_files:
             root = zarr.open_group(path, mode="r")
-            if "shard_target_hist" in root:
-                hist += root["shard_target_hist"][:]
-            else:
-                hist += _shard_target_hist(path, root, self.strand_pair)
+            if "shard_target_hist" not in root:
+                raise ValueError(
+                    f"{path} lacks shard_target_hist; run "
+                    f"dataset.write_target_hist('{self.data_dir}')"
+                )
+            hist += root["shard_target_hist"][:]
         return hist
 
     def _open_zarr(self):
@@ -898,18 +900,6 @@ def _target_block_hist(args):
     return hist
 
 
-def _shard_target_hist(path, root, pair, block_seqs=256, map_blocks=map):
-    num_seqs = root["target"].shape[0]
-    tasks = (
-        (path, start, min(start + block_seqs, num_seqs), pair)
-        for start in range(0, num_seqs, block_seqs)
-    )
-    hist = np.zeros((len(pair), NUM_HIST_BINS), dtype=np.int64)
-    for block in map_blocks(_target_block_hist, tasks):
-        hist += block
-    return hist
-
-
 def write_target_hist(data_dir, processes=16, block_seqs=256):
     """Write per-shard counts for training and whole-dataset counts for specificity.
 
@@ -919,23 +909,24 @@ def write_target_hist(data_dir, processes=16, block_seqs=256):
     targets_df = pd.read_csv(f"{data_dir}/targets.txt", sep="\t", index_col=0)
     pair = strand_pair_indices(targets_df)
     paths = natsorted(glob.glob(f"{data_dir}/examples/*.zarr"))
-    total = np.zeros((len(pair), NUM_HIST_BINS), dtype=np.int64)
-    with multiprocessing.get_context("spawn").Pool(processes) as pool:
-        for path in paths:
-            root = zarr.open_group(path, mode="r+")
-            hist = _shard_target_hist(path, root, pair, block_seqs, pool.imap_unordered)
-            root.create_array(
-                "shard_target_hist",
-                data=hist,
-                chunks=(1, NUM_HIST_BINS),
-                overwrite=True,
-            )
-            total += hist
-
+    tasks = []
     for path in paths:
-        zarr.open_group(path, mode="r+").create_array(
-            "target_hist", data=total, chunks=(1, NUM_HIST_BINS), overwrite=True
-        )
+        num_seqs = zarr.open(path, mode="r")["target"].shape[0]
+        for start in range(0, num_seqs, block_seqs):
+            tasks.append((path, start, min(start + block_seqs, num_seqs), pair))
+
+    shard_hists = {p: np.zeros((len(pair), NUM_HIST_BINS), np.int64) for p in paths}
+    with multiprocessing.get_context("spawn").Pool(processes) as pool:
+        for task, block in zip(tasks, pool.imap(_target_block_hist, tasks)):
+            shard_hists[task[0]] += block
+
+    total = sum(shard_hists.values())
+    for path, hist in shard_hists.items():
+        root = zarr.open_group(path, mode="r+")
+        for name, data in (("shard_target_hist", hist), ("target_hist", total)):
+            root.create_array(
+                name, data=data, chunks=(1, NUM_HIST_BINS), overwrite=True
+            )
     return total
 
 
