@@ -238,8 +238,16 @@ class QmapCrossTrackLoss(nn.Module):
 
     FORMS = ("mse", "dot", "proj", "mn")
 
-    def __init__(self, targets_df, target_hist, weight_range=1, weight_exp=4,
-                 group_min: int = 20, num_knots: int = 256, form: str = "mse"):
+    def __init__(
+        self,
+        targets_df,
+        target_hist,
+        weight_range=1,
+        weight_exp=4,
+        group_min: int = 20,
+        num_knots: int = 256,
+        form: str = "mse",
+    ):
         super().__init__()
         if form not in self.FORMS:
             raise ValueError(f"qmap form {form!r} is not one of {self.FORMS}")
@@ -321,9 +329,12 @@ class QmapCrossTrackLoss(nn.Module):
 
     def forward(self, y_pred, y_true):
         if self.position_weights is None:
-            self.register_buffer("position_weights", position_weights(
-                y_true.shape[-1], self.weight_range, self.weight_exp, y_true.device
-            ))
+            self.register_buffer(
+                "position_weights",
+                position_weights(
+                    y_true.shape[-1], self.weight_range, self.weight_exp, y_true.device
+                ),
+            )
         # fp32 throughout: the group mean is a matmul, which autocast would run in bf16
         with torch.autocast(y_true.device.type, enabled=False):
             with torch.no_grad():
@@ -589,7 +600,9 @@ def position_weights(seq_len, weight_range, weight_exp, device=None):
         return torch.ones((1, 1, seq_len), dtype=torch.float32, device=device)
 
     center = (seq_len - 1) / 2
-    distance = (torch.arange(seq_len, dtype=torch.float32, device=device) - center).abs()
+    distance = (
+        torch.arange(seq_len, dtype=torch.float32, device=device) - center
+    ).abs()
     weights = torch.exp(-math.log(weight_range) * (distance / center) ** weight_exp)
     return (weights / weights.max()).view(1, 1, -1)
 
@@ -669,7 +682,9 @@ class PoissonMultinomialLoss(_Loss):
         return weighted_reduce(loss, target_weights, self.reduction)
 
 
-def split_profile(sizes: list, split_exp: float, split_knee: int, split_step: float = 0) -> list:
+def split_profile(
+    sizes: list, split_exp: float, split_knee: int, split_step: float = 0
+) -> list:
     """Split weights, one per tree level; sizes holds each level's parent block size in bins.
 
     Splits weigh 1 up to blocks of split_knee bins. Past the knee, weights fall by
@@ -677,7 +692,10 @@ def split_profile(sizes: list, split_exp: float, split_knee: int, split_step: fl
     split_step per doubling (linear in log size, floored at 0).
     """
     if split_step:
-        return [max(0.0, 1 - split_step * max(0.0, math.log2(s / split_knee))) for s in sizes]
+        return [
+            max(0.0, 1 - split_step * max(0.0, math.log2(s / split_knee)))
+            for s in sizes
+        ]
     return [min(1.0, (s / split_knee) ** -split_exp) for s in sizes]
 
 
@@ -717,7 +735,9 @@ class PoissonTreeLoss(PoissonMultinomialLoss):
         reduction: str = "mean",
         split_step: float = 0,
     ):
-        super().__init__(total_weight, weight_range, weight_exp, epsilon, reduction=reduction)
+        super().__init__(
+            total_weight, weight_range, weight_exp, epsilon, reduction=reduction
+        )
         if split_knee < 1 or split_knee & (split_knee - 1):
             raise ValueError("split_knee must be a power of two (bins)")
         self.split_exp = split_exp

@@ -171,7 +171,14 @@ def main(argv=None):
         )
 
         r = gradient_ratios(
-            model, data, di, base_fn, qmap_fn, args.batches, args.batch_size, tw,
+            model,
+            data,
+            di,
+            base_fn,
+            qmap_fn,
+            args.batches,
+            args.batch_size,
+            tw,
             model_di=t.get("model_di"),
         )
         median = np.median(r)

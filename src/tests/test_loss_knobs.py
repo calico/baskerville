@@ -8,6 +8,7 @@ from baskerville import dataset, metrics
 
 def _yy(shape, seed=0):
     g = torch.Generator().manual_seed(seed)
+
     def rand():
         return torch.rand(shape, generator=g, dtype=torch.float64)
 
@@ -33,8 +34,9 @@ def _split_reference(yp, y, w, wsum, c, t, factors):
 def test_tree_matches_split_reference(length):
     yp, y = _yy((2, 3, length))
     t = 0.3
-    loss_fn = metrics.PoissonTreeLoss(t, split_exp=0.5, split_knee=2, weight_range=10,
-                                      weight_exp=8, epsilon=0)
+    loss_fn = metrics.PoissonTreeLoss(
+        t, split_exp=0.5, split_knee=2, weight_range=10, weight_exp=8, epsilon=0
+    )
     loss = loss_fn(yp, y)
     (grad,) = torch.autograd.grad(loss, yp)
     w = metrics.position_weights(length, 10, 8).double()
@@ -50,8 +52,10 @@ def test_tree_matches_split_reference(length):
 def test_tree_flat_matches_poisson_mn(length):
     yp, y = _yy((2, 3, length))
     grads = []
-    for loss_fn in [metrics.PoissonMultinomialLoss(0.25, 10, 8),
-                    metrics.PoissonTreeLoss(0.25, weight_range=10, weight_exp=8)]:
+    for loss_fn in [
+        metrics.PoissonMultinomialLoss(0.25, 10, 8),
+        metrics.PoissonTreeLoss(0.25, weight_range=10, weight_exp=8),
+    ]:
         grads.append(torch.autograd.grad(loss_fn(yp, y), yp)[0])
     torch.testing.assert_close(grads[0], grads[1], rtol=1e-6, atol=1e-9)
 
@@ -66,15 +70,16 @@ def test_split_profile():
 def test_split_profile_linear():
     c = metrics.split_profile(2 ** np.arange(1, 15), 0, 32, split_step=0.09)
     np.testing.assert_allclose(c, [1] * 5 + [1 - 0.09 * j for j in range(1, 10)])
-    assert metrics.split_profile([2 ** 20], 0, 32, split_step=0.09) == [0.0]
+    assert metrics.split_profile([2**20], 0, 32, split_step=0.09) == [0.0]
 
 
 @pytest.mark.parametrize("length", [8, 24])
 def test_tree_linear_matches_split_reference(length):
     """Linear profile: c from split_step, and t is the profile one doubling past the root."""
     yp, y = _yy((2, 3, length))
-    loss_fn = metrics.PoissonTreeLoss(5.0, split_knee=2, weight_range=10, weight_exp=8,
-                                      epsilon=0, split_step=0.2)
+    loss_fn = metrics.PoissonTreeLoss(
+        5.0, split_knee=2, weight_range=10, weight_exp=8, epsilon=0, split_step=0.2
+    )
     loss = loss_fn(yp, y)
     w = metrics.position_weights(length, 10, 8).double()
     factors = metrics.tree_factors(length)
@@ -103,7 +108,7 @@ def _values():
 def _hists(seed=0, tracks=3, n=4000):
     """Equal-total fp16 histograms with ties, a zero mass, and a long tail."""
     rng = np.random.default_rng(seed)
-    y = (rng.gamma(0.5, 3, (tracks, n)) * (rng.random((tracks, n)) < 0.6))
+    y = rng.gamma(0.5, 3, (tracks, n)) * (rng.random((tracks, n)) < 0.6)
     bits = y.astype(np.float16).view(np.uint16)
     return np.stack([np.bincount(b, minlength=dataset.NUM_HIST_BINS) for b in bits])
 
@@ -146,7 +151,9 @@ def test_qmap_constant_track():
 def test_qmap_flat_stretch():
     xk = np.array([[0.0, 1.0, 2.0, 3.0]])
     qk = np.array([[0.0, 1.0, 1.0, 2.0]])
-    x = torch.tensor([[1.5, 0.5, 2.5, -1.0, 4.0]], dtype=torch.float64, requires_grad=True)
+    x = torch.tensor(
+        [[1.5, 0.5, 2.5, -1.0, 4.0]], dtype=torch.float64, requires_grad=True
+    )
     q = _apply(x, xk, qk)
     np.testing.assert_allclose(q.detach().numpy(), [[1.0, 0.5, 1.5, 0.0, 2.0]])
     (grad,) = torch.autograd.grad(q.sum(), x)
@@ -175,7 +182,9 @@ def _qmap_loss(targets_df, seed=0, form="mse"):
     s = (y.astype(np.float32) + y[:, pair].astype(np.float32)).astype(np.float16)
     bits = s.view(np.uint16).transpose(1, 0, 2).reshape(6, -1)
     hist = np.stack([np.bincount(b, minlength=dataset.NUM_HIST_BINS) for b in bits])
-    loss_fn = metrics.QmapCrossTrackLoss(targets_df, hist, 10, 8, group_min=4, form=form)
+    loss_fn = metrics.QmapCrossTrackLoss(
+        targets_df, hist, 10, 8, group_min=4, form=form
+    )
     return loss_fn, torch.from_numpy(y.astype(np.float64))
 
 
@@ -209,8 +218,16 @@ def test_qmap_loss_finite_and_specific(targets_df):
 def test_qmap_loss_groups_weigh_equally(form):
     """Group B is group A at 10x scale: the same error costs the same in either."""
     df = pd.DataFrame(
-        [(f"{g}{i}", f"{d}:{g}{i}", k) for k, (g, d, i) in enumerate(
-            [(g, d, i) for g, d in [("a", "RNA"), ("b", "CHIP:K4")] for i in range(3)])],
+        [
+            (f"{g}{i}", f"{d}:{g}{i}", k)
+            for k, (g, d, i) in enumerate(
+                [
+                    (g, d, i)
+                    for g, d in [("a", "RNA"), ("b", "CHIP:K4")]
+                    for i in range(3)
+                ]
+            )
+        ],
         columns=["identifier", "description", "strand_pair"],
     )
     rng = np.random.default_rng(0)
@@ -285,7 +302,9 @@ def test_qmap_proj_direction_only(targets_df):
     loss_fn, zp, zy = _mapped(targets_df, "proj")
     b = zy - zy.mean(0, keepdim=True)
     zero = torch.zeros(4, dtype=b.dtype)
-    torch.testing.assert_close(loss_fn.per_track(2.5 * b + 7, zy), zero, atol=1e-12, rtol=0)
+    torch.testing.assert_close(
+        loss_fn.per_track(2.5 * b + 7, zy), zero, atol=1e-12, rtol=0
+    )
     assert (loss_fn.per_track(-b, zy) > 0).all()
     mse, _, _ = _mapped(targets_df, "mse")
     assert (mse.per_track(2.5 * b + 7, zy) > 0).all()
@@ -297,7 +316,9 @@ def test_qmap_mn_bin_scale(targets_df):
     loss_fn.eps.zero_()
     f = torch.from_numpy(np.random.default_rng(1).uniform(0.5, 4, (1, 2, 16)))
     zero = torch.tensor(0.0, dtype=zy.dtype)
-    torch.testing.assert_close(loss_fn.per_track(zy * f, zy).sum(), zero, atol=1e-12, rtol=0)
+    torch.testing.assert_close(
+        loss_fn.per_track(zy * f, zy).sum(), zero, atol=1e-12, rtol=0
+    )
     assert loss_fn.per_track(zp, zy).sum() > 0
 
 

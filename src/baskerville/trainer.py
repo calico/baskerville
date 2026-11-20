@@ -207,7 +207,9 @@ class Trainer:
             if split_step < 0:
                 raise ValueError("split_step must be >= 0")
             if split_step and "total_weight" in self.params:
-                raise ValueError("split_step sets the window-total weight; drop total_weight")
+                raise ValueError(
+                    "split_step sets the window-total weight; drop total_weight"
+                )
         self.is_mlm = self.loss == "mlm"
         if self.loss != "mlm":
             self.loss_fn = parse_loss(
