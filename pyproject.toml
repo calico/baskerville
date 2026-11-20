@@ -40,7 +40,6 @@ dependencies = [
     "statsmodels~=0.14",
     # Limit torch to tested versions.
     "torch>=2.11,<2.14",
-    "torchmetrics==1.6.1",
     "tqdm>=4.67,<5",
     "zarr>=3.0,<4",
 ]

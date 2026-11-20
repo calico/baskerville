@@ -148,7 +148,18 @@ Training and calibration fit their quantile maps to the selected training shards
 
 Each epoch, `log.txt` gets a summary line per dataset (`loss`, `r`, `r2`, `spec`), and `metrics.tsv` gets every metric as a long table with columns `epoch, split, dataset, group, metric, value`. Dataset-level rows have `group` = `all`.
 
-Train `loss` and gene metrics cover every batch, but train coverage `r`, `r2` and `spec` are computed on every `train.train_metrics_every`th batch of each dataset (default 10; 1 scores every batch). At thousands of tracks, scoring every batch costs ~9% of training time.
+Train `loss` and gene metrics cover every batch, but train coverage `r`, `r2` and `spec` are computed on every `train.train_metrics_every`th batch of each dataset (default 10; 1 scores every batch). At thousands of tracks, scoring every batch costs several percent of training time.
+
+To compute per-track Pearson R and R² in Python, update one accumulator for each batch. For gene metrics, pass the `(batch, positions)` presence mask as the third argument.
+
+```python
+from baskerville.metrics import TrackMetrics
+
+scores = TrackMetrics(num_tracks)
+for preds, targets in batches:  # (batch, tracks, positions)
+    scores.update(preds, targets)
+r, r2 = scores.compute()  # per-track CPU tensors
+```
 
 Tracks are grouped by the targets `group` column (else the `description` prefix). Each group with at least `train.spec_group_min` tracks (default 20, after merging strand pairs) gets:
 
