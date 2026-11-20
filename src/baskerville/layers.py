@@ -386,6 +386,43 @@ class AttentionEnformer(nn.Module):
         return self.out_proj(out)
 
 
+class DepthwiseConv1d(nn.Conv1d):
+    """Depthwise "same" Conv1d; compiled, a shifted sum that inductor fuses.
+
+    PyTorch's depthwise conv kernel runs at a few percent of memory bandwidth; the
+    K-tap shifted sum compiles to one fused kernel per pass. Eager uses F.conv1d.
+    Parameters match nn.Conv1d, so checkpoints load either way.
+    """
+
+    def __init__(self, channels: int, kernel_size: int, bias: bool = True, **kwargs):
+        super().__init__(
+            channels,
+            channels,
+            kernel_size,
+            padding="same",
+            groups=channels,
+            bias=bias,
+            **kwargs,
+        )
+
+    def forward(self, x: Tensor) -> Tensor:
+        if not torch.compiler.is_compiling():
+            return super().forward(x)
+        k = self.kernel_size[0]
+        left = (k - 1) // 2
+        xp = F.pad(x, (left, k - 1 - left)).float()
+        w = self.weight[:, 0, :, None].float()
+        L = x.shape[-1]
+        y = sum(w[:, i] * xp[..., i : i + L] for i in range(k))
+        if self.bias is not None:
+            y = y + self.bias[:, None].float()
+        dev = x.device.type
+        dtype = (
+            torch.get_autocast_dtype(dev) if torch.is_autocast_enabled(dev) else x.dtype
+        )
+        return y.to(dtype)
+
+
 class Hydra(nn.Module):
     """
     Copyright (c) 2024, Sukjun Hwang, Aakash Lahoti, Ratish Puduppully, Tri Dao, Albert Gu.
@@ -441,14 +478,8 @@ class Hydra(nn.Module):
         self.in_proj = nn.Linear(self.d_model, d_in_proj, bias=bias, **factory_kwargs)
 
         conv_dim = self.d_inner + 2 * (2 * self.ngroups * self.d_state)
-        self.conv1d = nn.Conv1d(
-            in_channels=conv_dim,
-            out_channels=conv_dim,
-            bias=conv_bias,
-            kernel_size=d_conv,
-            groups=conv_dim,
-            padding=d_conv // 2,
-            **factory_kwargs,
+        self.conv1d = DepthwiseConv1d(
+            conv_dim, d_conv, bias=conv_bias, **factory_kwargs
         )
         if self.conv_init is not None:
             nn.init.uniform_(self.conv1d.weight, -self.conv_init, self.conv_init)
