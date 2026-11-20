@@ -297,20 +297,19 @@ class Trainer:
         self.qmap_weight = per_dataset(
             self.params.get("qmap_weight", 0), self.num_datasets, "qmap_weight"
         )
-        self.qmap_form = self.params.get("qmap_form", "mse")
-        self.qmap_fns = None
-        if any(w > 0 for w in self.qmap_weight):
-            self.qmap_fns = [
-                metrics.QmapCrossTrackLoss(
-                    data.targets_df,
-                    data.target_hist,
-                    self.weight_range,
-                    self.weight_exp,
-                    self.spec_group_min,
-                    form=self.qmap_form,
-                ).to(self.device)
-                for data in self.train_data
-            ]
+        self.qmap_fns = [
+            metrics.QmapCrossTrackLoss(
+                data.targets_df,
+                data.split_target_hist(),
+                self.weight_range,
+                self.weight_exp,
+                self.spec_group_min,
+                form=self.params.get("qmap_form", "mse"),
+            ).to(self.device)
+            if weight > 0
+            else None
+            for data, weight in zip(self.train_data, self.qmap_weight)
+        ]
 
         # MLM parameters (only loaded when loss == "mlm")
         if self.loss == "mlm":
@@ -396,7 +395,7 @@ class Trainer:
 
         if yh.has_coverage and y is not None:
             cov_loss = self.loss_fn(yh.coverage, y, self.target_weights[di])
-            if self.qmap_fns is not None and self.qmap_weight[di] > 0:
+            if self.qmap_fns[di] is not None:
                 cov_loss = cov_loss + self.qmap_weight[di] * self.qmap_fns[di](
                     yh.coverage, y
                 )
@@ -1189,10 +1188,10 @@ class Trainer:
             # transient memory. Static shapes: one specialization per dataset/batch shape.
             if not self.is_mlm:
                 self.loss_fn = torch.compile(self.loss_fn, dynamic=False)
-                if self.qmap_fns is not None:
-                    self.qmap_fns = [
-                        torch.compile(fn, dynamic=False) for fn in self.qmap_fns
-                    ]
+                self.qmap_fns = [
+                    torch.compile(fn, dynamic=False) if fn is not None else None
+                    for fn in self.qmap_fns
+                ]
 
         # Eager handle for eval forwards: schedule-free optimizer.eval() weight swaps
         # and BatchNorm running-stat recompute don't propagate through the compiled

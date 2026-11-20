@@ -268,7 +268,12 @@ class QmapCrossTrackLoss(nn.Module):
         var, avg = np.concatenate(var), np.concatenate(avg)
         scale = {"mse": var, "dot": var, "proj": np.sqrt(var), "mn": avg}[form]
         size = np.bincount(np.concatenate(gid))
-        weight = np.where(scale > 0, 1 / (len(size) * size[np.concatenate(gid)] * scale), 0)
+        weight = np.divide(
+            1,
+            len(size) * size[np.concatenate(gid)] * scale,
+            out=np.zeros_like(scale),
+            where=scale > 0,
+        )
         gid = torch.from_numpy(np.concatenate(gid))
         member = nn.functional.one_hot(gid).double()
         self.register_buffer("rep", torch.from_numpy(np.concatenate(rep)))
@@ -278,7 +283,9 @@ class QmapCrossTrackLoss(nn.Module):
         self.register_buffer("xk", torch.from_numpy(np.concatenate(xk)).float())
         self.register_buffer("qk", torch.from_numpy(np.concatenate(qk)).float())
         self.register_buffer("track_weight", torch.from_numpy(weight).float())
-        self.register_buffer("eps", torch.from_numpy(1e-3 * avg).float().view(-1, 1, 1))
+        self.register_buffer(
+            "eps", torch.from_numpy(1e-3 * avg).float().clamp_min(1e-20).view(-1, 1, 1)
+        )
         self.register_buffer("position_weights", None)
 
     def _mapped(self, x):
@@ -577,13 +584,13 @@ class PoissonLoss(_Loss):
 
 
 def position_weights(seq_len, weight_range, weight_exp, device=None):
-    """(1, 1, L) flat-topped position weights, 1 at the center, 1/weight_range at the edges."""
-    pos_start = -(seq_len / 2 - 0.5)
-    pos_end = seq_len / 2 + 0.5
-    sigma = -pos_start / (np.log(weight_range)) ** (1 / weight_exp)
+    """Symmetric position weights of shape (1, 1, L), normalized to peak at one."""
+    if seq_len == 1 or weight_range == 1:
+        return torch.ones((1, 1, seq_len), dtype=torch.float32, device=device)
 
-    positions = torch.arange(pos_start, pos_end, dtype=torch.float32, device=device)
-    weights = torch.exp(-((positions / sigma) ** weight_exp))
+    center = (seq_len - 1) / 2
+    distance = (torch.arange(seq_len, dtype=torch.float32, device=device) - center).abs()
+    weights = torch.exp(-math.log(weight_range) * (distance / center) ** weight_exp)
     return (weights / weights.max()).view(1, 1, -1)
 
 
@@ -676,6 +683,8 @@ def split_profile(sizes: list, split_exp: float, split_knee: int, split_step: fl
 
 def tree_factors(seq_len: int) -> list:
     """Pooling factor per tree level: halve while even, then one m-way split of the rest."""
+    if seq_len < 1:
+        raise ValueError("tree length must be positive")
     factors = []
     while seq_len % 2 == 0:
         factors.append(2)
@@ -726,11 +735,11 @@ class PoissonTreeLoss(PoissonMultinomialLoss):
         c = split_profile(sizes, self.split_exp, self.split_knee, self.split_step)
         t = self.total_weight
         if self.split_step:
-            t = split_profile([2 * sizes[-1]], 0, self.split_knee, self.split_step)[0]
-        coefs = [c[0]] + [b - a for a, b in zip(c, c[1:])] + [t - c[-1]]
+            t = split_profile([2 * seq_len], 0, self.split_knee, self.split_step)[0]
         loss = 0
-        for level, coef in enumerate(coefs):
-            if coef != 0:
+        for level, (a, b) in enumerate(itertools.pairwise([0, *c, t])):
+            coef = b - a
+            if level == 0 or coef != 0:
                 loss = loss + coef * self._poisson(y_true, y_pred).sum(dim=-1)
             if level < len(factors):
                 y_true = y_true.unflatten(-1, (-1, factors[level])).sum(dim=-1)

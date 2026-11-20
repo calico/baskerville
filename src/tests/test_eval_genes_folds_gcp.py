@@ -135,7 +135,10 @@ def _patch_gcp(monkeypatch, num_folds):
     monkeypatch.setattr(
         hegf.stage_cache,
         "stage_file",
-        lambda p, t, **k: ("sha", f"/workspace/cache/{t}/x"),
+        lambda p, t, **k: (
+            "sha",
+            f"/workspace/cache/{t}/{p if t == 'targets' else 'x'}",
+        ),
     )
     monkeypatch.setattr(
         hegf.stage_cache,
@@ -416,3 +419,13 @@ def test_gcp_output_dir_keyed_on_options(tmp_path, monkeypatch):
     assert _gcp_output_dir(tmp_path, monkeypatch, rc=True) != base
     assert _gcp_output_dir(tmp_path, monkeypatch, valid=True) != base
     assert _gcp_output_dir(tmp_path, monkeypatch, targets_file="t.txt") != base
+
+
+def test_gcp_output_dir_tracks_table_per_head(tmp_path, monkeypatch):
+    def run_id(tables):
+        return _gcp_output_dir(
+            tmp_path, monkeypatch, data_dirs=["a", "b", "c"], targets_file=tables
+        )
+
+    assert run_id("A,A,B") != run_id("A,B,B")
+    assert run_id("A") == run_id("A,A,A")

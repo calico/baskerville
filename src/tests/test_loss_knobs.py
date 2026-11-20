@@ -304,3 +304,46 @@ def test_qmap_mn_bin_scale(targets_df):
 def test_qmap_form_checked(targets_df):
     with pytest.raises(ValueError, match="qmap form"):
         _qmap_loss(targets_df, form="cos")
+
+
+def test_position_weights_are_symmetric():
+    w = metrics.position_weights(5, 10, 1).flatten()
+    torch.testing.assert_close(w, w.flip(0))
+    torch.testing.assert_close(w[[0, 2]], torch.tensor([0.1, 1.0]))
+
+
+@pytest.mark.parametrize("step, total", [(0, 0.3), (0.2, 0.8), (1, 0)])
+def test_single_bin_tree(step, total):
+    yp, y = _yy((2, 3, 1))
+    tree = metrics.PoissonTreeLoss(total_weight=0.3, split_step=step, weight_range=10)
+    loss = tree(yp, y)
+    ref = total * tree._poisson(y, yp).mean()
+    torch.testing.assert_close(loss, ref)
+    torch.testing.assert_close(
+        torch.autograd.grad(loss, yp)[0], torch.autograd.grad(ref, yp)[0]
+    )
+
+
+def test_qmap_mn_zero_group(targets_df):
+    hist = np.zeros((len(targets_df), dataset.NUM_HIST_BINS), dtype=np.int64)
+    hist[:, 0] = 16
+    fn = metrics.QmapCrossTrackLoss(targets_df, hist, group_min=4, form="mn")
+    pred = torch.ones(1, len(targets_df), 16, requires_grad=True)
+    loss = fn(pred, torch.zeros_like(pred))
+    assert loss.item() == 0
+    assert torch.autograd.grad(loss, pred)[0].eq(0).all()
+
+
+def test_zero_weight_dataset_needs_no_qmap(tmp_path, data_me_dir):
+    from baskerville.trainer import Trainer
+
+    enabled = dataset.SeqDataset(data_me_dir, "train")
+    enabled.targets_df["group"] = "CHIP"
+    enabled.target_hist = None  # the loss only needs the training shards
+    disabled = dataset.SeqDataset(data_me_dir, "train")
+    params = dict(
+        batch_size=2, learning_rate=0.01, qmap_weight=[0.1, 0], spec_group_min=2
+    )
+    trainer = Trainer(params, [enabled, disabled], [], tmp_path)
+    assert isinstance(trainer.qmap_fns[0], metrics.QmapCrossTrackLoss)
+    assert trainer.qmap_fns[1] is None

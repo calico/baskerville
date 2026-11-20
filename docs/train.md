@@ -121,17 +121,11 @@ The loss is a weighted mean over tracks, so only the ratios matter: scaling ever
 
 ### Positional split weights
 
-`"loss": "poisson_tree"` is position-weighted Poisson decomposed over the binary tree of positional splits: the window total, then each 2^k-bin block divided into halves, k = 1 … log2(L). Each level of splits gets its own weight:
+`"loss": "poisson_tree"` weights the window total and each level of positional splits. It pools adjacent pairs while the number of blocks is even, then combines any remaining blocks at the root. A 24-bin window has parent block sizes 2, 4, 8, and 24. A one-bin window has only the total.
 
-```
-c_k = min(1, (2^k / split_knee)^−split_exp)
-```
-
-- `split_exp` (default 0): the weight falls by 2^−split_exp per doubling of block size. 0 weights every level 1, which is `poisson_mn` up to a constant.
-- `split_knee` (bins, a power of two; default 1): blocks up to this size keep weight 1.
-- `total_weight`: the weight on the window total, set apart from the curve.
-
-The sequence length must be a power of two. Only ratios between weights matter.
+- `split_knee` is a block size in bins (a power of two, default 1). Splits up to the knee have weight 1.
+- Beyond the knee, each doubling multiplies the split weight by `2^(−split_exp)`. The default exponent of 0 gives all splits equal weight. `total_weight` sets the window-total weight independently.
+- A positive `split_step` selects a linear decline instead. Each doubling beyond the knee subtracts `split_step`, with a floor of zero. The total uses the same curve at twice the window length. Omit `total_weight` in this mode.
 
 ### Cross-track specificity term
 
@@ -148,7 +142,7 @@ The term's scale depends on the form and the track set, so set λ by its push: t
 hound_qmap_calibrate [--form proj] [--fold 0] params.json model_best.pth data_dir [data_dir ...]
 ```
 
-It reads the main loss, `qmap_form`, and `spec_group_min` from `params.json`'s `train` section.
+Training and calibration fit their quantile maps to the selected training shards. Each new shard stores its counts in `shard_target_hist`. Older shards are counted from their targets when qmap is enabled. Calibration uses the training crop and requires a finite, positive median gradient ratio.
 
 ### Validation metrics and early stopping
 

@@ -135,11 +135,17 @@ def main(argv=None):
     for di, data_dir in enumerate(args.data_dirs):
         fold = args.fold if dataset.discover_num_folds(data_dir) is not None else None
         data = dataset.SeqDataset(
-            data_dir, "train", mode="eval", fold=fold, cross=args.cross
+            data_dir,
+            "train",
+            mode="eval",
+            fold=fold,
+            cross=args.cross,
+            extra_crop_bp=t.get("extra_crop_bp"),
+            extra_crop_bins=t.get("extra_crop_bins"),
         )
         qmap_fn = metrics.QmapCrossTrackLoss(
             data.targets_df,
-            data.target_hist,
+            data.split_target_hist(),
             t.get("weight_range", 1),
             t.get("weight_exp", 1),
             t.get("spec_group_min", 20),
@@ -155,10 +161,17 @@ def main(argv=None):
         r = gradient_ratios(
             model, data, di, base_fn, qmap_fn, args.batches, args.batch_size, tw
         )
-        lam = args.push / np.median(r)
+        median = np.median(r)
+        if not np.isfinite(median) or median <= 0:
+            parser.error(
+                f"{data_dir}: median qmap/base gradient ratio must be finite and positive (got {median})"
+            )
+        lam = args.push / median
+        if not np.isfinite(lam):
+            parser.error(f"{data_dir}: calibrated qmap_weight must be finite")
         q25, q75 = np.quantile(r, [0.25, 0.75])
         print(
-            f"{data_dir}: R median {np.median(r):.4g} (IQR {q25:.4g}-{q75:.4g}), "
+            f"{data_dir}: R median {median:.4g} (IQR {q25:.4g}-{q75:.4g}), "
             f"lambda {lam:.4g}"
         )
         lambdas.append(float(f"{lam:.4g}"))

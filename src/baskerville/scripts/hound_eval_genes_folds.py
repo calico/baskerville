@@ -292,8 +292,9 @@ def eval_genes_folds(args):
             )
             # options too (and --valid, which changes the split written to the
             # same evalg/ dir), so changed options start fresh instead of resuming
-            # one distinct targets file hashes as before
-            targets_key = ",".join(dict.fromkeys(container_targets))
+            targets_key = container_targets[0]
+            if len(set(container_targets)) > 1:
+                targets_key = ",".join(container_targets)
             opts = evalg_options(args, targets_key) + f" valid={args.valid}"
             run_id = stage_cache.build_run_id(
                 models_key,
