@@ -361,3 +361,32 @@ def test_scalar_qmap_weight_skips_datasets_without_coverage(tmp_path, data_me_di
     trainer = Trainer(params, [coverage, gene_only], [], tmp_path)
     assert isinstance(trainer.qmap_fns[0], metrics.QmapCrossTrackLoss)
     assert trainer.qmap_fns[1] is None
+
+
+def test_tree_loss_follows_length_changes():
+    """One loss serves datasets of different lengths."""
+    loss_fn = metrics.PoissonTreeLoss(weight_range=10, weight_exp=8)
+    for length in (16, 32, 16):
+        y = torch.ones(1, 2, length)
+        loss_fn(y, y)
+        assert loss_fn.weights_sum == metrics.position_weights(length, 10, 8).sum()
+
+
+@pytest.mark.parametrize(
+    "loss,knobs,error",
+    [
+        ("poisson_tree", dict(split_step=-0.1), ">= 0"),
+        ("poisson_tree", dict(split_step=0.1, total_weight=0.2), "drop total_weight"),
+        ("poisson_mn", dict(split_step=0.1, total_weight=0.2), None),
+    ],
+)
+def test_split_step_checks_only_tree_loss(tmp_path, data_me_dir, loss, knobs, error):
+    from baskerville.trainer import Trainer
+
+    data = dataset.SeqDataset(data_me_dir, "train")
+    params = dict(batch_size=2, learning_rate=0.01, loss=loss, **knobs)
+    if error is None:
+        Trainer(params, [data], [], tmp_path)
+    else:
+        with pytest.raises(ValueError, match=error):
+            Trainer(params, [data], [], tmp_path)

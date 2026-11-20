@@ -31,9 +31,21 @@ trunk output h of a trained model, over random train batches; lambda = push / me
 
 
 def gradient_ratios(
-    model, data, di, base_fn, qmap_fn, batches, batch_size, target_weights=None, seed=0
+    model,
+    data,
+    di,
+    base_fn,
+    qmap_fn,
+    batches,
+    batch_size,
+    target_weights=None,
+    seed=0,
+    model_di=None,
 ):
-    """Per batch, R for dataset di's head; model is a SeqNN on its device."""
+    """Per batch, R for dataset di's head; model is a SeqNN on its device.
+
+    model_di is the trunk normalization index, as in training (params model_di).
+    """
     net = model.model
     head = net.heads_cov[di]
     device = next(net.parameters()).device
@@ -53,7 +65,7 @@ def gradient_ratios(
                 torch.no_grad(),
                 torch.autocast(device.type, dtype=model.mix_dtype, enabled=autocast),
             ):
-                net(x, di)
+                net(x, di, di=model_di)
             h = captured["h"].float().requires_grad_()
             yh = head(h).float()
             if net.output_slice is not None:
@@ -159,7 +171,8 @@ def main(argv=None):
         )
 
         r = gradient_ratios(
-            model, data, di, base_fn, qmap_fn, args.batches, args.batch_size, tw
+            model, data, di, base_fn, qmap_fn, args.batches, args.batch_size, tw,
+            model_di=t.get("model_di"),
         )
         median = np.median(r)
         if not np.isfinite(median) or median <= 0:
@@ -167,8 +180,6 @@ def main(argv=None):
                 f"{data_dir}: median qmap/base gradient ratio must be finite and positive (got {median})"
             )
         lam = args.push / median
-        if not np.isfinite(lam):
-            parser.error(f"{data_dir}: calibrated qmap_weight must be finite")
         q25, q75 = np.quantile(r, [0.25, 0.75])
         print(
             f"{data_dir}: R median {median:.4g} (IQR {q25:.4g}-{q75:.4g}), "

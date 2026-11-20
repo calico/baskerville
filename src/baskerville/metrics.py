@@ -620,8 +620,8 @@ class PoissonMultinomialLoss(_Loss):
         return yp - yt * torch.log(yp + self.epsilon)
 
     def _setup_position_weights(self, seq_len, device):
-        """Construct position weight vectors from sequence length."""
-        if self.position_weights is None:
+        """Construct position weights, again whenever the length changes."""
+        if self.position_weights is None or self.position_weights.shape[-1] != seq_len:
             weights = position_weights(
                 seq_len, self.weight_range, self.weight_exp, device
             )

@@ -24,11 +24,11 @@ def test_qmap_calibrate(tmp_path, data_me_dir, static_model_dir, capsys, monkeyp
     params["train"].update(extra_crop_bp=32, extra_crop_bins=1)
     measure = hound_qmap_calibrate.gradient_ratios
 
-    def measure_crop(model, data, *args):
+    def measure_crop(model, data, *args, **kwargs):
         item = data[0]
         assert item.sequence.shape[-1] == 16384 - 64
         assert item.coverage_targets.shape[-1] == data.target_length == 512 - 2
-        return measure(model, data, *args)
+        return measure(model, data, *args, **kwargs)
 
     monkeypatch.setattr(hound_qmap_calibrate, "gradient_ratios", measure_crop)
     params_file = tmp_path / "params.json"
@@ -57,7 +57,7 @@ def test_qmap_calibrate(tmp_path, data_me_dir, static_model_dir, capsys, monkeyp
 
     for median in (0, np.nan, np.inf):
         monkeypatch.setattr(
-            hound_qmap_calibrate, "gradient_ratios", lambda *args: np.array([median])
+            hound_qmap_calibrate, "gradient_ratios", lambda *a, **k: np.array([median])
         )
         with pytest.raises(SystemExit):
             hound_qmap_calibrate.main(
