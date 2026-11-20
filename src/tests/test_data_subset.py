@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 import zarr
 
+from baskerville import dataset
 from baskerville.scripts.utils.hound_data_subset_targets import (
     subset_targets_dataset,
 )
@@ -89,6 +90,8 @@ def test_data_subset(mock_data_dir, tmp_path):
 
     subset_dir = tmp_path / "subset"
 
+    dataset.write_target_hist(mock_data_dir, processes=1)
+
     # Create subset using the actual script function
     subset_targets_dataset(
         og_data_dir=mock_data_dir,
@@ -132,3 +135,7 @@ def test_data_subset(mock_data_dir, tmp_path):
         # Subset targets should match original targets [0, 2]
         expected_targets = zarr_orig["target"][:, target_indices, :]
         assert np.array_equal(expected_targets, zarr_subset["target"][:])
+        for name in ("target_hist", "shard_target_hist"):
+            np.testing.assert_array_equal(
+                zarr_subset[name][:], zarr_orig[name].oindex[target_indices, :]
+            )

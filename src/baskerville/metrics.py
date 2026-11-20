@@ -1,4 +1,7 @@
 import copy
+import itertools
+import math
+import operator
 
 import numpy as np
 import torch
@@ -155,6 +158,189 @@ def qmap_tables(hists):
         block_sum = np.diff(np.interp(bounds, ref_pos, ref_sum))
         tables[t] = np.interp(values, values[nz], block_sum / np.diff(bounds))
     return tables
+
+
+def qmap_knots(hists, num_knots: int = 256, tables=None):
+    """Piecewise-linear knots approximating each track's qmap_tables map.
+
+    x knots are present values at quantile levels 1 − 10^(−s), s evenly spaced
+    over [0, 8], plus the last present value: dense in the upper tail, where
+    evenly spaced quantiles would leave a track's peaks a few segments. q knots
+    are the table values there, unaltered, so flat
+    stretches of the reference stay flat. A constant track gets two knots with
+    equal q. Tracks with fewer knots are padded past the last one with q held.
+
+    Args:
+        tables: qmap_tables(hists), if already computed.
+
+    Returns:
+        (xk, qk) np.ndarray (T, num_knots) float64.
+    """
+    hists = np.asarray(hists)
+    tables = qmap_tables(hists) if tables is None else tables
+    values = np.arange(dataset.NUM_HIST_BINS, dtype=np.uint16).view(np.float16)
+    values = values.astype(np.float64)
+    levels = np.append(1 - 10 ** -np.linspace(0, 8, num_knots - 1), 1)
+    xk, qk = np.empty((len(hists), num_knots)), np.empty((len(hists), num_knots))
+    for t, h in enumerate(hists):
+        nz = np.flatnonzero(h)
+        cdf = np.cumsum(h[nz]) / h[nz].sum()
+        idx = np.searchsorted(cdf, levels)
+        idx = nz[np.unique(np.minimum(idx, len(nz) - 1))]
+        x, q = values[idx], tables[t, idx].astype(np.float64)
+        if len(x) == 1:
+            x, q = np.array([x[0], x[0] + 1]), np.array([q[0], q[0]])
+        pad = np.arange(1, num_knots - len(x) + 1)
+        xk[t] = np.concatenate([x, x[-1] + pad])
+        qk[t] = np.concatenate([q, np.full(len(pad), q[-1])])
+    return xk, qk
+
+
+def qmap_apply(x, xk, qk):
+    """Map x (T, N) through per-track knots (T, K); clamped outside the knots."""
+    x = torch.clamp(x, xk[:, :1], xk[:, -1:]).contiguous()
+    i1 = torch.searchsorted(xk, x).clamp(1, xk.shape[1] - 1)
+    i0 = i1 - 1
+    x0, x1 = xk.gather(1, i0), xk.gather(1, i1)
+    q0, q1 = qk.gather(1, i0), qk.gather(1, i1)
+    return q0 + (q1 - q0) / (x1 - x0) * (x - x0)
+
+
+class QmapCrossTrackLoss(nn.Module):
+    """Cross-track specificity loss in differentiable quantile-mapped space.
+
+    For each group of SpecPearsonCorrCoef (strand sums, >= group_min tracks),
+    map preds and targets through qmap_knots. With a, b the group-centered
+    mapped pred and target (the group mean at each position subtracted), the
+    per-track loss over the batch's positions (position-weighted) is, by form:
+
+    - mse: mean of (a - b)^2.
+    - dot: mean of (a - b)^2 - a^2, i.e. mse without the penalty on a's own
+      magnitude; the gradient is -2b.
+    - proj: (|b| - a.b / |a|) / sqrt(n), i.e. |b|(1 - cos(a, b)); a's direction
+      only. |a| is floored at 0.1 |b|, below which proj acts like dot.
+    - mn: the multinomial across the group's tracks at each position, on
+      uncentered mapped values: sum_t (z_t + e) log(q_t / p_t), with q, p the
+      target and pred shares of the group sum, e 1e-3 of the group's mean
+      mapped value. Zero at pred = target; weighted by the group's target sum.
+
+    Groups weigh equally: each group's loss is divided by its mapped variance
+    (mse, dot), SD (proj) or mean (mn), from the table values under each
+    track's histogram, averaged over the group. Inputs past a track's observed
+    values clamp, as in qmap_tables, so they carry no gradient.
+
+    Args:
+        targets_df: targets table aligned with the output tracks.
+        target_hist: per-track histograms of the stored targets.
+        weight_range, weight_exp: position weights, as in PoissonMultinomialLoss.
+        form: mse, dot, proj or mn.
+    """
+
+    FORMS = ("mse", "dot", "proj", "mn")
+
+    def __init__(
+        self,
+        targets_df,
+        target_hist,
+        weight_range=1,
+        weight_exp=4,
+        group_min: int = 20,
+        num_knots: int = 256,
+        form: str = "mse",
+    ):
+        super().__init__()
+        if form not in self.FORMS:
+            raise ValueError(f"qmap form {form!r} is not one of {self.FORMS}")
+        self.form = form
+        self.weight_range, self.weight_exp = weight_range, weight_exp
+        rep_pos, pair_pos = dataset.strand_collapse(targets_df)
+        groups = dataset.target_groups(targets_df)[rep_pos]
+        hist = np.asarray(target_hist)
+        rep, pair, gid, xk, qk, var, avg = [], [], [], [], [], [], []
+        self.group_names = names = []
+        for g in sorted(set(groups)):
+            gi = groups == g
+            if gi.sum() >= group_min:
+                h = hist[rep_pos[gi]].astype(np.float64)
+                tables = qmap_tables(hist[rep_pos[gi]]).astype(np.float64)
+                x, q = qmap_knots(hist[rep_pos[gi]], num_knots, tables)
+                mean = (h * tables).sum(1, keepdims=True) / h.sum(1, keepdims=True)
+                v = ((h * (tables - mean) ** 2).sum(1) / h.sum(1)).mean()
+                rep.append(rep_pos[gi]), pair.append(pair_pos[gi]), names.append(g)
+                gid.append(np.full(gi.sum(), len(xk))), xk.append(x), qk.append(q)
+                var.append(np.full(gi.sum(), v))
+                avg.append(np.full(gi.sum(), mean.mean()))
+        if not rep:
+            raise ValueError(f"no target group has >= {group_min} tracks")
+        # per-track weight 1 / (groups · group size · group mapped scale)
+        var, avg = np.concatenate(var), np.concatenate(avg)
+        scale = {"mse": var, "dot": var, "proj": np.sqrt(var), "mn": avg}[form]
+        size = np.bincount(np.concatenate(gid))
+        weight = np.divide(
+            1,
+            len(size) * size[np.concatenate(gid)] * scale,
+            out=np.zeros_like(scale),
+            where=scale > 0,
+        )
+        gid = torch.from_numpy(np.concatenate(gid))
+        member = nn.functional.one_hot(gid).double()
+        self.register_buffer("rep", torch.from_numpy(np.concatenate(rep)))
+        self.register_buffer("pair", torch.from_numpy(np.concatenate(pair)))
+        self.register_buffer("gid", gid)
+        self.register_buffer("mean_op", (member / member.sum(0)).float())  # (Tq, G)
+        self.register_buffer("xk", torch.from_numpy(np.concatenate(xk)).float())
+        self.register_buffer("qk", torch.from_numpy(np.concatenate(qk)).float())
+        self.register_buffer("track_weight", torch.from_numpy(weight).float())
+        self.register_buffer(
+            "eps", torch.from_numpy(1e-3 * avg).float().clamp_min(1e-20).view(-1, 1, 1)
+        )
+        self.register_buffer("position_weights", None)
+
+    def _mapped(self, x):
+        """(B, T, L) -> (Tq, B, L) qmap values of strand sums."""
+        s = (x[:, self.rep] + x[:, self.pair]).transpose(0, 1)
+        return qmap_apply(s.flatten(1), self.xk, self.qk).view(s.shape)
+
+    def _group_mean(self, z):
+        """(Tq, B, L) -> (Tq, B, L) each track's group mean at each position."""
+        return torch.einsum("tg,tbl->gbl", self.mean_op, z)[self.gid]
+
+    def per_track(self, zp, zy):
+        """(Tq,) per-track loss of mapped preds zp and targets zy, (Tq, B, L)."""
+        w = self.position_weights.view(1, 1, -1)
+        n = zp.shape[1] * w.sum()
+
+        def wsum(x):
+            return (w * x).sum((1, 2))
+
+        if self.form == "mn":
+            e = self.eps
+            log_q = torch.log((zy + e) / (self._group_mean(zy) + e))
+            log_p = torch.log((zp + e) / (self._group_mean(zp) + e))
+            return wsum((zy + e) * (log_q - log_p)) / n
+        a, b = zp - self._group_mean(zp), zy - self._group_mean(zy)
+        if self.form == "mse":
+            return wsum((a - b).pow(2)) / n
+        if self.form == "dot":
+            return wsum((a - b).pow(2) - a.pow(2)) / n
+        bb = wsum(b.pow(2))
+        aa = wsum(a.pow(2)).clamp_min((0.01 * bb).clamp_min(1e-20))
+        return (bb.sqrt() - wsum(a * b) / aa.sqrt()) / n.sqrt()
+
+    def forward(self, y_pred, y_true):
+        if self.position_weights is None:
+            self.register_buffer(
+                "position_weights",
+                position_weights(
+                    y_true.shape[-1], self.weight_range, self.weight_exp, y_true.device
+                ),
+            )
+        # fp32 throughout: the group mean is a matmul, which autocast would run in bf16
+        with torch.autocast(y_true.device.type, enabled=False):
+            with torch.no_grad():
+                zy = self._mapped(y_true.float())
+            zp = self._mapped(y_pred.float())
+            return (self.track_weight * self.per_track(zp, zy)).sum()
 
 
 class SpecPearsonCorrCoef:
@@ -408,6 +594,19 @@ class PoissonLoss(_Loss):
         return weighted_reduce(loss, target_weights, self.reduction)
 
 
+def position_weights(seq_len, weight_range, weight_exp, device=None):
+    """Symmetric position weights of shape (1, 1, L), normalized to peak at one."""
+    if seq_len == 1 or weight_range == 1:
+        return torch.ones((1, 1, seq_len), dtype=torch.float32, device=device)
+
+    center = (seq_len - 1) / 2
+    distance = (
+        torch.arange(seq_len, dtype=torch.float32, device=device) - center
+    ).abs()
+    weights = torch.exp(-math.log(weight_range) * (distance / center) ** weight_exp)
+    return (weights / weights.max()).view(1, 1, -1)
+
+
 class PoissonMultinomialLoss(_Loss):
     """Poisson decomposition with multinomial specificity term."""
 
@@ -434,17 +633,11 @@ class PoissonMultinomialLoss(_Loss):
         return yp - yt * torch.log(yp + self.epsilon)
 
     def _setup_position_weights(self, seq_len, device):
-        """Construct position weight vectors from sequence length."""
-        if self.position_weights is None:
-            pos_start = -(seq_len / 2 - 0.5)
-            pos_end = seq_len / 2 + 0.5
-            sigma = -pos_start / (np.log(self.weight_range)) ** (1 / self.weight_exp)
-
-            positions = torch.arange(
-                pos_start, pos_end, dtype=torch.float32, device=device
+        """Construct position weights, again whenever the length changes."""
+        if self.position_weights is None or self.position_weights.shape[-1] != seq_len:
+            weights = position_weights(
+                seq_len, self.weight_range, self.weight_exp, device
             )
-            weights = torch.exp(-((positions / sigma) ** self.weight_exp))
-            weights = (weights / weights.max()).view(1, 1, -1)
             self.register_buffer("position_weights", weights)
             self.register_buffer("weights_sum", weights.sum())
 
@@ -487,6 +680,91 @@ class PoissonMultinomialLoss(_Loss):
             loss = loss_raw
 
         return weighted_reduce(loss, target_weights, self.reduction)
+
+
+def split_profile(
+    sizes: list, split_exp: float, split_knee: int, split_step: float = 0
+) -> list:
+    """Split weights, one per tree level; sizes holds each level's parent block size in bins.
+
+    Splits weigh 1 up to blocks of split_knee bins. Past the knee, weights fall by
+    2^−split_exp per doubling of block size (power law), or, if split_step > 0, by
+    split_step per doubling (linear in log size, floored at 0).
+    """
+    if split_step:
+        return [
+            max(0.0, 1 - split_step * max(0.0, math.log2(s / split_knee)))
+            for s in sizes
+        ]
+    return [min(1.0, (s / split_knee) ** -split_exp) for s in sizes]
+
+
+def tree_factors(seq_len: int) -> list:
+    """Pooling factor per tree level: halve while even, then one m-way split of the rest."""
+    if seq_len < 1:
+        raise ValueError("tree length must be positive")
+    factors = []
+    while seq_len % 2 == 0:
+        factors.append(2)
+        seq_len //= 2
+    return factors + ([seq_len] if seq_len > 1 else [])
+
+
+class PoissonTreeLoss(PoissonMultinomialLoss):
+    """Position-weighted Poisson over the binary tree of positional splits, weighted per level.
+
+    loss = [t·P(window total) + Σ_k c_k·B_k] / Σw, where B_k is the multinomial NLL of
+    the level-k splits and c_k = split_profile(...). A length 2^K'·m splits blocks into
+    halves K' times, then the window into m blocks (tree_factors). Computed as
+    Σ_ℓ a_ℓ·P_ℓ, P_ℓ the Poisson NLL sum-pooled to level ℓ's blocks:
+    a_0 = c_1, a_ℓ = c_{ℓ+1} − c_ℓ, a_K = t − c_K. split_exp 0 gives
+    PoissonMultinomialLoss(total_weight) up to a constant. split_step > 0 makes the
+    profile linear in log block size and sets t to its next step (one more doubling),
+    so every pooling past the knee gets the same coefficient −split_step; total_weight
+    is then unused.
+    """
+
+    def __init__(
+        self,
+        total_weight: float = 1,
+        split_exp: float = 0,
+        split_knee: int = 1,
+        weight_range: float = 1,
+        weight_exp: int = 4,
+        epsilon: float = 1e-9,
+        reduction: str = "mean",
+        split_step: float = 0,
+    ):
+        super().__init__(
+            total_weight, weight_range, weight_exp, epsilon, reduction=reduction
+        )
+        if split_knee < 1 or split_knee & (split_knee - 1):
+            raise ValueError("split_knee must be a power of two (bins)")
+        self.split_exp = split_exp
+        self.split_knee = split_knee
+        self.split_step = split_step
+
+    def forward(self, y_pred, y_true, target_weights=None):
+        seq_len = y_true.shape[-1]
+        factors = tree_factors(seq_len)
+        self._setup_position_weights(seq_len, y_true.device)
+        y_true = y_true * self.position_weights
+        y_pred = y_pred * self.position_weights
+
+        sizes = list(itertools.accumulate(factors, operator.mul))
+        c = split_profile(sizes, self.split_exp, self.split_knee, self.split_step)
+        t = self.total_weight
+        if self.split_step:
+            t = split_profile([2 * seq_len], 0, self.split_knee, self.split_step)[0]
+        loss = 0
+        for level, (a, b) in enumerate(itertools.pairwise([0, *c, t])):
+            coef = b - a
+            if level == 0 or coef != 0:
+                loss = loss + coef * self._poisson(y_true, y_pred).sum(dim=-1)
+            if level < len(factors):
+                y_true = y_true.unflatten(-1, (-1, factors[level])).sum(dim=-1)
+                y_pred = y_pred.unflatten(-1, (-1, factors[level])).sum(dim=-1)
+        return weighted_reduce(loss / self.weights_sum, target_weights, self.reduction)
 
 
 class DatasetMetrics:

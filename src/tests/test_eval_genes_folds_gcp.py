@@ -135,7 +135,10 @@ def _patch_gcp(monkeypatch, num_folds):
     monkeypatch.setattr(
         hegf.stage_cache,
         "stage_file",
-        lambda p, t, **k: ("sha", f"/workspace/cache/{t}/x"),
+        lambda p, t, **k: (
+            "sha",
+            f"/workspace/cache/{t}/{p if t == 'targets' else 'x'}",
+        ),
     )
     monkeypatch.setattr(
         hegf.stage_cache,
@@ -284,6 +287,46 @@ def test_local_backend_builds_command(tmp_path, monkeypatch):
     assert cmd.rstrip().endswith(os.path.abspath(args.genes_gtf))  # gtf positional last
 
 
+def test_one_gtf_per_data_dir(tmp_path, monkeypatch):
+    """-g a.gtf,b.gtf pairs each data dir (and head) with its own GTF."""
+    out_dir = _make_models_dir(tmp_path, num_folds=2, test_fold=0, valid_fold=1)
+    data_dirs = []
+    for name in ["hg38", "mm10"]:
+        (tmp_path / name).mkdir()
+        with open(tmp_path / name / "statistics.json", "w") as f:
+            json.dump({"fold0": {}, "fold1": {}}, f)
+        data_dirs.append(str(tmp_path / name))
+
+    captured = []
+    monkeypatch.setattr(hegf.utils, "exec_par", lambda jobs, **k: captured.extend(jobs))
+    args = MockArgs(
+        out_dir=out_dir,
+        data_dirs=data_dirs,
+        genes_gtf="h.gtf,m.gtf",
+        backend="slurm",
+        local=True,
+        gcp_data_dir=None,
+    )
+    hegf.eval_genes_folds(args)
+
+    f0 = [c for c in captured if "/f0c0/" in c]
+    assert " --head 0" in f0[0] and f0[0].rstrip().endswith(os.path.abspath("h.gtf"))
+    assert " --head 1" in f0[1] and f0[1].rstrip().endswith(os.path.abspath("m.gtf"))
+
+    args.genes_gtf = "h.gtf,m.gtf,x.gtf"
+    with pytest.raises(ValueError):
+        hegf.eval_genes_folds(args)
+
+    # -t likewise: one targets table per data dir
+    captured.clear()
+    args.genes_gtf = "h.gtf,m.gtf"
+    args.targets_file = "h.txt,m.txt"
+    hegf.eval_genes_folds(args)
+    f0 = [c for c in captured if "/f0c0/" in c]
+    assert f" -t {os.path.abspath('h.txt')} " in f0[0]
+    assert f" -t {os.path.abspath('m.txt')} " in f0[1]
+
+
 def test_gcp_requires_data_dir(tmp_path, monkeypatch):
     out_dir = _make_models_dir(tmp_path, num_folds=2, test_fold=0, valid_fold=1)
     _patch_gcp(monkeypatch, num_folds=2)
@@ -375,3 +418,14 @@ def test_gcp_output_dir_keyed_on_options(tmp_path, monkeypatch):
     assert _gcp_output_dir(tmp_path, monkeypatch) == base
     assert _gcp_output_dir(tmp_path, monkeypatch, rc=True) != base
     assert _gcp_output_dir(tmp_path, monkeypatch, valid=True) != base
+    assert _gcp_output_dir(tmp_path, monkeypatch, targets_file="t.txt") != base
+
+
+def test_gcp_output_dir_tracks_table_per_head(tmp_path, monkeypatch):
+    def run_id(tables):
+        return _gcp_output_dir(
+            tmp_path, monkeypatch, data_dirs=["a", "b", "c"], targets_file=tables
+        )
+
+    assert run_id("A,A,B") != run_id("A,B,B")
+    assert run_id("A") == run_id("A,A,A")

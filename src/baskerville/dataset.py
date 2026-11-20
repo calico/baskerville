@@ -164,7 +164,7 @@ class SeqDataset(Dataset):
         # update sequence statistics based on optional cropping
         if self.extra_crop_bp is not None:
             self.seq_length -= 2 * self.extra_crop_bp
-        elif self.extra_crop_bins is not None:
+        if self.extra_crop_bins is not None:
             self.target_length -= 2 * self.extra_crop_bins
 
         # read targets (conditional on coverage data)
@@ -215,6 +215,19 @@ class SeqDataset(Dataset):
                 self.num_gene_targets = len(self.targets_gene_df)
             else:
                 self.num_gene_targets = 0
+
+    def split_target_hist(self):
+        """Sum the stored strand-summed target counts of this split's shards."""
+        hist = np.zeros((self.num_targets, NUM_HIST_BINS), dtype=np.int64)
+        for path in self.zarr_files:
+            root = zarr.open_group(path, mode="r")
+            if "shard_target_hist" not in root:
+                raise ValueError(
+                    f"{path} lacks shard_target_hist; run "
+                    f"dataset.write_target_hist('{self.data_dir}')"
+                )
+            hist += root["shard_target_hist"][:]
+        return hist
 
     def _open_zarr(self):
         """Open zarr stores (called lazily so each DataLoader worker gets its own handles)."""
@@ -888,47 +901,33 @@ def _target_block_hist(args):
 
 
 def write_target_hist(data_dir, processes=16, block_seqs=256):
-    """Store exact per-track histograms of the stored targets in each zarr.
+    """Write per-shard counts for training and whole-dataset counts for specificity.
 
-    Counts are over every position of every sequence in all examples/*.zarr,
-    of the fp16 value y_t + y_pair(t) (strand_pair from targets.txt; unstranded
-    tracks are their own pair, so 2 * y_t), clamped to 65504 and binned by fp16
-    bit pattern. Counts are written to each zarr as ``target_hist``
-    (num_targets, NUM_HIST_BINS) int64,
-    from which SpecPearsonCorrCoef builds its quantile maps.
-
-    Args:
-        data_dir: dataset directory with targets.txt and examples/*.zarr.
-        processes: parallel readers.
-        block_seqs: sequences per read task.
-
-    Returns:
-        np.ndarray of per-track histograms.
+    Each track counts its fp16 strand sum, clamped to 65504. Returns the
+    whole-dataset histogram (tracks, NUM_HIST_BINS).
     """
     targets_df = pd.read_csv(f"{data_dir}/targets.txt", sep="\t", index_col=0)
     pair = strand_pair_indices(targets_df)
-    zarr_files = natsorted(glob.glob(f"{data_dir}/examples/*.zarr"))
+    paths = natsorted(glob.glob(f"{data_dir}/examples/*.zarr"))
     tasks = []
-    for zarr_file in zarr_files:
-        num_seqs = zarr.open(zarr_file, mode="r")["target"].shape[0]
+    for path in paths:
+        num_seqs = zarr.open(path, mode="r")["target"].shape[0]
         for start in range(0, num_seqs, block_seqs):
-            tasks.append((zarr_file, start, min(start + block_seqs, num_seqs), pair))
+            tasks.append((path, start, min(start + block_seqs, num_seqs), pair))
 
-    hist = 0
+    shard_hists = {p: np.zeros((len(pair), NUM_HIST_BINS), np.int64) for p in paths}
     with multiprocessing.get_context("spawn").Pool(processes) as pool:
-        for block_hist in pool.imap_unordered(_target_block_hist, tasks):
-            hist = hist + block_hist.astype(np.int64)
+        for task, block in zip(tasks, pool.imap(_target_block_hist, tasks)):
+            shard_hists[task[0]] += block
 
-    for zarr_file in zarr_files:
-        root = zarr.open_group(zarr_file, mode="r+")
-        root.create_array(
-            "target_hist",
-            shape=hist.shape,
-            dtype="int64",
-            chunks=(1, NUM_HIST_BINS),
-            overwrite=True,
-        )[:] = hist
-    return hist
+    total = sum(shard_hists.values())
+    for path, hist in shard_hists.items():
+        root = zarr.open_group(path, mode="r+")
+        for name, data in (("shard_target_hist", hist), ("target_hist", total)):
+            root.create_array(
+                name, data=data, chunks=(1, NUM_HIST_BINS), overwrite=True
+            )
+    return total
 
 
 def targets_prep_strand(targets_df):

@@ -202,6 +202,14 @@ class Trainer:
         self.weight_range = self.params.get("weight_range", 1)
         self.weight_exp = self.params.get("weight_exp", 1)
         self.loss = self.params.get("loss", "poisson").lower()
+        if self.loss == "poisson_tree":
+            split_step = self.params.get("split_step", 0)
+            if split_step < 0:
+                raise ValueError("split_step must be >= 0")
+            if split_step and "total_weight" in self.params:
+                raise ValueError(
+                    "split_step sets the window-total weight; drop total_weight"
+                )
         self.is_mlm = self.loss == "mlm"
         if self.loss != "mlm":
             self.loss_fn = parse_loss(
@@ -210,6 +218,9 @@ class Trainer:
                 self.total_weight,
                 self.weight_range,
                 self.weight_exp,
+                self.params.get("split_exp", 0),
+                self.params.get("split_knee", 1),
+                self.params.get("split_step", 0),
             )
 
         # gene expression loss
@@ -286,6 +297,25 @@ class Trainer:
         self.spec_group_min = self.params.get("spec_group_min", 20)
         # coverage r, r2, spec on every Nth batch per dataset; loss, gene metrics always
         self.train_metrics_every = self.params.get("train_metrics_every", 10)
+
+        # cross-track term in qmap space, one per dataset (its groups and tables);
+        # qmap_weight is one λ or a list with one per dataset; qmap_form its form
+        self.qmap_weight = per_dataset(
+            self.params.get("qmap_weight", 0), self.num_datasets, "qmap_weight"
+        )
+        self.qmap_fns = [
+            metrics.QmapCrossTrackLoss(
+                data.targets_df,
+                data.split_target_hist(),
+                self.weight_range,
+                self.weight_exp,
+                self.spec_group_min,
+                form=self.params.get("qmap_form", "mse"),
+            ).to(self.device)
+            if weight > 0 and data.has_coverage
+            else None
+            for data, weight in zip(self.train_data, self.qmap_weight)
+        ]
 
         # MLM parameters (only loaded when loss == "mlm")
         if self.loss == "mlm":
@@ -371,6 +401,10 @@ class Trainer:
 
         if yh.has_coverage and y is not None:
             cov_loss = self.loss_fn(yh.coverage, y, self.target_weights[di])
+            if self.qmap_fns[di] is not None:
+                cov_loss = cov_loss + self.qmap_weight[di] * self.qmap_fns[di](
+                    yh.coverage, y
+                )
             loss = loss + cov_loss * species_weight
 
         if yh.has_gene and yg is not None:
@@ -1160,6 +1194,10 @@ class Trainer:
             # transient memory. Static shapes: one specialization per dataset/batch shape.
             if not self.is_mlm:
                 self.loss_fn = torch.compile(self.loss_fn, dynamic=False)
+                self.qmap_fns = [
+                    torch.compile(fn, dynamic=False) if fn is not None else None
+                    for fn in self.qmap_fns
+                ]
 
         # Eager handle for eval forwards: schedule-free optimizer.eval() weight swaps
         # and BatchNorm running-stat recompute don't propagate through the compiled
@@ -1376,12 +1414,24 @@ def _module_has_running_stats(module) -> bool:
     )
 
 
+def per_dataset(value, num_datasets: int, name: str) -> list:
+    """A scalar broadcast to every dataset, or a list with one value per dataset."""
+    if not isinstance(value, (list, tuple)):
+        return [value] * num_datasets
+    if len(value) != num_datasets:
+        raise ValueError(f"{name} needs one value per dataset ({num_datasets})")
+    return list(value)
+
+
 def parse_loss(
     loss_label,
     spec_weight: float = 1,
     total_weight: float = 1,
     weight_range: float = 1,
     weight_exp: int = 1,
+    split_exp: float = 0,
+    split_knee: int = 1,
+    split_step: float = 0,
 ):
     """Parse loss function from label, strategy, and fitting method.
 
@@ -1391,6 +1441,10 @@ def parse_loss(
         total_weight (float): Total weight for PoissionMultinomial.
         weight_range (float): Weight range for PoissionMultinomial.
         weight_exp (int): Weight exponent for PoissionMultinomial.
+        split_exp (float): Split-weight decline per block doubling for PoissonTree.
+        split_knee (int): Block size (bins) where PoissonTree's split weights start to fall.
+        split_step (float): If > 0, PoissonTree's linear split-weight decline per doubling;
+            the window-total weight continues the line.
 
     Returns:
       loss_fn: Torch loss
@@ -1400,6 +1454,15 @@ def parse_loss(
     elif loss_label == "poisson_mn":
         loss_fn = metrics.PoissonMultinomialLoss(
             total_weight=total_weight, weight_range=weight_range, weight_exp=weight_exp
+        )
+    elif loss_label == "poisson_tree":
+        loss_fn = metrics.PoissonTreeLoss(
+            total_weight=total_weight,
+            split_exp=split_exp,
+            split_knee=split_knee,
+            weight_range=weight_range,
+            weight_exp=weight_exp,
+            split_step=split_step,
         )
     else:
         raise ValueError(f"Loss function {loss_label} not recognized")

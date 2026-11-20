@@ -342,6 +342,15 @@ def test_write_target_hist(tmp_path):
     for fold in range(2):
         stored = zarr.open(str(tmp_path / f"examples/fold{fold}.zarr"), mode="r")
         np.testing.assert_array_equal(stored["target_hist"][:], expected)
+        local = _hist_reference(values[fold], np.array([1, 0, 2]))
+        np.testing.assert_array_equal(stored["shard_target_hist"][:], local)
+
+    # A legacy shard has only the pooled table; training refuses it.
+    path = tmp_path / "examples/fold0.zarr"
+    del zarr.open_group(path, mode="r+")["shard_target_hist"]
+    split = SimpleNamespace(num_targets=3, zarr_files=[path], data_dir=str(tmp_path))
+    with pytest.raises(ValueError, match="write_target_hist"):
+        dataset.SeqDataset.split_target_hist(split)
 
 
 def test_write_target_hist_rejects_negative(tmp_path):
@@ -360,3 +369,14 @@ def test_hound_data_writes_hist(data_me_dir):
     expected = _hist_reference(np.concatenate([r["target"][:] for r in roots]), pair)
     for r in roots:
         np.testing.assert_array_equal(r["target_hist"][:], expected)
+        np.testing.assert_array_equal(
+            r["shard_target_hist"][:], _hist_reference(r["target"][:], pair)
+        )
+
+    train = dataset.SeqDataset(data_me_dir, "train")
+    training_targets = np.concatenate(
+        [zarr.open(p, mode="r")["target"][:] for p in train.zarr_files]
+    )
+    np.testing.assert_array_equal(
+        train.split_target_hist(), _hist_reference(training_targets, pair)
+    )

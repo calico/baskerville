@@ -109,21 +109,17 @@ def subset_zarr_for_fold(
 
     # ** keep the kept tracks' histograms (of strand sums, so pairs must stay) **
     old_root = zarr.open_group(f"{og_data_dir}/examples/fold{fi}.zarr", mode="r")
-    if "target_hist" in old_root:
+    hist_names = ("target_hist", "shard_target_hist")
+    if any(name in old_root for name in hist_names):
         old_targets = pd.read_csv(f"{og_data_dir}/targets.txt", sep="\t", index_col=0)
         pair = dataset.strand_pair_indices(old_targets)
         if not np.isin(pair[old_indices], old_indices).all():
             raise ValueError(
                 "old_indices split a strand pair; target_hist would be wrong"
             )
-        hist = old_root["target_hist"].oindex[old_indices, :]
-        fold_zarr_root.create_array(
-            "target_hist",
-            shape=hist.shape,
-            dtype=hist.dtype,
-            chunks=(1, hist.shape[1]),
-            overwrite=True,
-        )[:] = hist
+    for name in hist_names:
+        if name in fold_zarr_root:
+            del fold_zarr_root[name]
 
     # --- CREATE DATALOADER ---
     dataset_obj = IndexedSeqDataset(og_data_dir, split_label=f"fold{fi}", mode="eval")
@@ -158,6 +154,11 @@ def subset_zarr_for_fold(
         # break at 100 if we're working with test mode
         if test_mode and z >= 100:
             break
+
+    for name in hist_names:
+        if name in old_root and (name == "target_hist" or z == fold_seqs):
+            hist = old_root[name].oindex[old_indices, :]
+            fold_zarr_root.create_array(name, data=hist, chunks=(1, hist.shape[1]))
 
 
 def main():

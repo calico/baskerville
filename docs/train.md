@@ -119,6 +119,31 @@ H3K9me3 tracks get 0.1 here and every other ChIP track 0.2, each multiplying wha
 
 The loss is a weighted mean over tracks, so only the ratios matter: scaling every weight by a constant leaves training unchanged, and `global_clipnorm` keeps its meaning across weightings. The resolved weights are printed at startup, with a warning for any rule whose selector matched nothing. The `mlm` loss scores nucleotides rather than tracks and rejects both keys.
 
+### Positional split weights
+
+`"loss": "poisson_tree"` weights the window total and each level of positional splits. It pools adjacent pairs while the number of blocks is even, then combines any remaining blocks at the root. A 24-bin window has parent block sizes 2, 4, 8, and 24. A one-bin window has only the total.
+
+- `split_knee` is a block size in bins (a power of two, default 1). Splits up to the knee have weight 1.
+- Beyond the knee, each doubling multiplies the split weight by `2^(−split_exp)`. The default exponent of 0 gives all splits equal weight. `total_weight` sets the window-total weight independently.
+- A positive `split_step` selects a linear decline instead. Each doubling beyond the knee subtracts `split_step`, with a floor of zero. The total uses the same curve at twice the window length. Omit `total_weight` in this mode.
+
+### Cross-track specificity term
+
+`qmap_weight` (λ; one value, or a list with one per dataset; default 0) adds a term on the spec metric's groups, computed on quantile-mapped strand sums. With a, b the group-centered mapped prediction and target, `qmap_form` picks the term:
+
+- `mse` (default): (a − b)².
+- `dot`: (a − b)² − a², whose gradient −2b pushes toward the target's deviation and leaves magnitude to the main loss.
+- `proj`: |b|(1 − cos(a, b)) per track over the batch, which rewards direction only.
+- `mn`: a multinomial across the group's tracks at each position, on uncentered mapped values.
+
+The term's scale depends on the form and the track set, so set λ by its push: the ratio of its gradient at the trunk output to the main loss's. `hound_qmap_calibrate` measures that ratio R on train batches of a model trained without the term, and prints λ = push / median R per dataset (`--push`, default 0.1) as a params snippet:
+
+```
+hound_qmap_calibrate [--form proj] [--fold 0] params.json model_best.pth data_dir [data_dir ...]
+```
+
+Training and calibration fit their quantile maps to the selected training shards. These read each shard's `shard_target_hist`, which `hound_data` writes; for an older dataset, add it with the `write_target_hist` command above. Calibration uses the training crop and requires a finite, positive median gradient ratio.
+
 ### Validation metrics and early stopping
 
 Each epoch, `log.txt` gets a summary line per dataset (`loss`, `r`, `r2`, `spec`), and `metrics.tsv` gets every metric as a long table with columns `epoch, split, dataset, group, metric, value`. Dataset-level rows have `group` = `all`.
