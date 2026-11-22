@@ -7,6 +7,7 @@ built job commands are captured for assertions.
 
 import json
 import os
+from pathlib import Path
 
 import pytest
 
@@ -21,7 +22,7 @@ class MockArgs:
         # eval options
         self.genes_gtf = None
         self.targets_file = None
-        self.span = self.save_span = False
+        self.span = False
         self.pseudo_qtl = None
         self.seq_step = 1
         self.aggregate_genes = False
@@ -401,7 +402,6 @@ def test_combined_run_resumes_only_after_both_reports(tmp_path, monkeypatch):
             fold_subset=1,
             genes_gtf="genes.gtf",
             span=True,
-            save_span=True,
             seq_step=2,
             pseudo_qtl=0.125,
         )
@@ -414,7 +414,6 @@ def test_combined_run_resumes_only_after_both_reports(tmp_path, monkeypatch):
         "--seq_step 2",
         "--pseudo_qtl 0.125",
         "--span",
-        "--save_span",
     ):
         assert flag in cmd
     assert jobs[0].kwargs["queue"] == "l4-large"
@@ -450,3 +449,25 @@ def test_combined_run_stages_per_dataset_annotations_and_keys(tmp_path, monkeypa
     assert run("human.gtf,mouse.gtf") == key
     assert run("human.gtf,updated.gtf") != key
     assert run("human.gtf,mouse.gtf", pseudo_qtl=0.1) != key
+
+
+def test_local_rerun_on_changed_command_or_restart(tmp_path, monkeypatch):
+    out = _make_models_dir(tmp_path, num_folds=2, test_fold=0, valid_fold=1)
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "statistics.json").write_text(json.dumps({"fold0": {}, "fold1": {}}))
+    jobs = _patch_gcp(monkeypatch, num_folds=2)
+
+    def run(**kwargs):
+        jobs.clear()
+        options = dict(out_dir=out, backend="slurm", data_dirs=[str(data)])
+        hef.eval_folds(MockArgs(fold_subset=1, test_only=True, **options | kwargs))
+        return [job.cmd for job in jobs]
+
+    (cmd,) = run()
+    fold = Path(out, "f0c0/eval/fold0")
+    assert (fold / "cmd.txt").read_text() == cmd
+    (fold / "acc.txt").write_text("done")
+    assert run() == []
+    assert run(restart=True) == [cmd]
+    assert run(rc=True) and "--rc" in (fold / "cmd.txt").read_text()

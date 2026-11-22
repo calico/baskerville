@@ -614,6 +614,7 @@ class TestSeqNNEval:
         tracks["assay"] = ["RNA", "ATAC", "rna"]
         tracks["strand_pair"] = [2, 1, 0]
         tracks["sum_stat"] = "sum"
+        tracks["clip_soft"] = [0.0, 1e9, 1e9]  # strand-specific untransform
         tracks.to_csv(data / "targets.txt", sep="\t")
         starts = [64, 32000, 0, 64000]
         (data / "sequences.bed").write_text(
@@ -661,7 +662,6 @@ class TestSeqNNEval:
                 "-g",
                 str(gtf),
                 "--save",
-                "--save_span",
                 "--step",
                 "2",
                 "--seq_step",
@@ -679,17 +679,24 @@ class TestSeqNNEval:
 
         for name in ("preds", "targets"):
             pd.testing.assert_frame_equal(
-                table(base / f"gene_{name}.tsv.gz"),
+                table(base / f"gene_head_{name}.tsv.gz"),
                 table(combined / f"gene_head_{name}.tsv.gz"),
             )
-        # Check raw strand-specific profiles against the original, uncropped target bins.
-        for gene, track, first, second in (
-            ("plus", 2, slice(1, 4), slice(2, 6)),
-            ("minus", 0, slice(3, 5), slice(5, 7)),
+        # Check strand-specific gene summaries against the original, uncropped target bins.
+        targets, variance = (
+            table(combined / f"gene_{name}.tsv.gz") for name in ("targets", "var")
+        )
+        assert targets.columns.tolist() == ["RNA+"]
+        width = SeqDataset(str(data), split_label="test").pool_width
+        untransform = SeqNN(params).untransform_fn
+        for gene, track, first, second, length in (
+            ("plus", 2, slice(1, 4), slice(2, 6), 92),
+            ("minus", 0, slice(3, 5), slice(5, 7), 36),
         ):
-            expected = np.r_[
+            bins = np.r_[
                 root["target"][0, track, first], root["target"][2, track, second]
-            ]
-            path = f"gene_within/{gene[-1]}/targets/{gene}_targets.npy"
-            np.testing.assert_array_equal(np.load(combined / path)[0], expected)
-            assert table(combined / "gene_targets.tsv.gz").columns.tolist() == ["RNA+"]
+            ].astype(np.float32)
+            bins = untransform(bins[None], tracks.iloc[[track]])[0].astype(float)
+            expected = np.log2(bins.mean() * length / width + 1)
+            assert targets.loc[gene, "RNA+"] == pytest.approx(expected, abs=5e-4)
+            assert variance.loc[gene, "RNA+"] == pytest.approx(bins.var(), abs=5e-4)

@@ -186,6 +186,6 @@ hound_eval -o eval_out --rc params.json train_out/model_best.pth data_me
 
 `eval_out/acc.txt` contains the coverage accuracy metrics for each track.
 
-Add `--genes_gtf genes.gtf` to score gene expression from the same coverage predictions. The targets table selects tracks with its binary `gene` column, or by `assay` (RNA, RNA3, CAGE). Include both members of each strand pair. GTF scoring uses full-resolution exon bins. Use `--span` for whole genes, `--save_span` to write per-gene profiles, and `--seq_step N` to score genes on every Nth window.
+Add `--genes_gtf genes.gtf` to score gene expression from the same coverage predictions. The targets table selects tracks with its binary `gene` column, or by `assay` (RNA, RNA3, CAGE). Include both members of each strand pair. GTF scoring uses full-resolution exon bins. Use `--span` for whole genes and `--seq_step N` to score genes on every Nth window.
 
-The GTF reports include `task_metrics.tsv`, `gene_metrics.tsv`, and the `gene_*.tsv.gz` matrices alongside `acc.txt`. With a native gene head, combined `--save` writes its expression matrices as `gene_head_preds.tsv.gz` and `gene_head_targets.tsv.gz`.
+The GTF reports include `task_metrics.tsv`, `gene_metrics.tsv`, and the `gene_*.tsv.gz` matrices alongside `acc.txt`. With a native gene head, `--save` writes its expression matrices as `gene_head_preds.tsv.gz` and `gene_head_targets.tsv.gz`.

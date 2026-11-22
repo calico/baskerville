@@ -50,7 +50,6 @@ class GeneCoverage:
 
     def __init__(self, data, model, targets, args):
         self.out_dir = Path(args.out_dir)
-        self.save_span = args.save_span
         self.pseudo_qtl = args.pseudo_qtl
         self.untransform = model.untransform_fn
         gene_tracks = dataset.gene_targets(targets)
@@ -59,6 +58,7 @@ class GeneCoverage:
         rep, pair = dataset.strand_collapse(gene_tracks)
         positions = targets.index.get_indexer(gene_tracks.index)
         self.tracks = {"+": positions[rep], "-": positions[pair]}
+        self.transforms = {"+": gene_tracks.iloc[rep], "-": gene_tracks.iloc[pair]}
         self.metadata = gene_tracks.iloc[rep].copy()
         if "group" not in self.metadata:
             self.metadata["group"] = self.metadata.description.str.split(":").str[0]
@@ -68,7 +68,10 @@ class GeneCoverage:
             sep="\t",
             names=["Chromosome", "Start", "End", "split"],
         )
-        seqs = seqs[seqs.split == data.split_label].reset_index(drop=True)
+        # Rows in dataset order: shard by shard, each matching its BED split label.
+        shards = [Path(path).stem for path in data.zarr_files]
+        seqs = pd.concat([seqs[seqs.split == shard] for shard in shards])
+        seqs = seqs.reset_index(drop=True)
         if len(seqs) != len(data):
             raise ValueError(
                 "Split BED row count differs from the number of dataset examples"
@@ -143,7 +146,7 @@ class GeneCoverage:
 
                 def select(values):
                     selected = values[i, tracks, bins].float().cpu().numpy()
-                    return self.untransform(selected, self.metadata)
+                    return self.untransform(selected, self.transforms[strand])
 
                 p, y = select(preds), select(targets)
                 offsets = np.r_[0, used.cumsum()]
@@ -156,21 +159,6 @@ class GeneCoverage:
         n = preds.shape[1]
         previous = self.counts[g]
         count = previous + n
-        if self.save_span:
-            folder = self.out_dir / "gene_within" / gene.split(".")[0][-1]
-            for label, values in (("preds", preds), ("targets", targets)):
-                path = folder / label / f"{gene}_{label}.npy"
-                if not previous:
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                profile = np.lib.format.open_memmap(
-                    path,
-                    mode="r+" if previous else "w+",
-                    dtype="float16",
-                    shape=(len(values), int(self.sizes[g])),
-                )
-                profile[:, previous:count] = values
-                del profile
-
         # Merge block moments into the running ones (Chan et al.); exact when previous=0.
         values = np.stack((preds, targets, np.log2(preds + 1), np.log2(targets + 1)))
         means = values.mean(axis=-1, dtype=np.float64)

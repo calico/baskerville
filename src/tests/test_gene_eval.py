@@ -53,8 +53,10 @@ def test_gene_summaries_match_concatenated_bins(tmp_path, span):
     from baskerville.dataset import untransform_preds
     from baskerville.gene_eval import GeneCoverage
 
-    # Two disjoint exons in the same bin, partial coverage, shuffled BED rows.
-    (tmp_path / "sequences.bed").write_text("chr1\t8\t24\ttest\nchr1\t0\t16\ttest\n")
+    # Two disjoint exons in the same bin, partial coverage; rows follow shard order.
+    (tmp_path / "sequences.bed").write_text(
+        "chr1\t0\t16\tfold1\nchr1\t40\t56\ttest\nchr1\t8\t24\tfold0\n"
+    )
     gtf = tmp_path / "genes.gtf"
     gtf.write_text(
         'chr1\tt\texon\t1\t1\t.\t+\t.\tgene_id "g";\n'
@@ -69,7 +71,8 @@ def test_gene_summaries_match_concatenated_bins(tmp_path, span):
 
     data = Data(
         data_dir=tmp_path,
-        split_label="test",
+        split_label="*",
+        zarr_files=[str(tmp_path / f"fold{i}.zarr") for i in range(2)],
         target_length=4,
         pool_width=4,
         data_crop_bp=0,
@@ -93,7 +96,6 @@ def test_gene_summaries_match_concatenated_bins(tmp_path, span):
         out_dir=tmp_path,
         genes_gtf=str(gtf),
         span=span,
-        save_span=True,
         pseudo_qtl=0.5,
         seq_step=1,
     )
@@ -117,11 +119,6 @@ def test_gene_summaries_match_concatenated_bins(tmp_path, span):
         target.var(1),
     ]
     np.testing.assert_allclose([v[0] for v in scorer.summaries()], expected, rtol=1e-6)
-    for name, expected_profile in (("preds", pred), ("targets", target)):
-        profile = tmp_path / f"gene_within/g/{name}/g_{name}.npy"
-        np.testing.assert_array_equal(
-            np.load(profile), expected_profile.astype("float16")
-        )
     scorer.finish()
     table = pd.read_csv(tmp_path / "gene_targets.tsv.gz", sep="\t", index_col=0)
     np.testing.assert_allclose(

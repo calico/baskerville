@@ -288,9 +288,8 @@ def main(argv=None):
                 # save gene expression matrix as compressed TSV
                 if args.save:
                     gene_columns = list(targets_gene_df.identifier)
-                    prefix = "gene_head" if scorer else "gene"
                     for key in ("preds", "targets"):
-                        name = f"{prefix}_{key}"
+                        name = f"gene_head_{key}"
                         df = pd.DataFrame(
                             gm[key], index=gm["ids"], columns=gene_columns
                         )

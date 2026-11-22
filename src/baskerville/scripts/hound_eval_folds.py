@@ -18,6 +18,7 @@ import argparse
 import hashlib
 import json
 import os
+from pathlib import Path
 from shlex import quote
 
 from baskerville import utils
@@ -190,7 +191,7 @@ def main():
         "--restart",
         default=False,
         action="store_true",
-        help="Restart evaluation [Default: %(default)s]",
+        help="Rerun folds that already have results [Default: %(default)s]",
     )
     parser.add_argument("params_file", help="JSON file with model parameters")
     parser.add_argument(
@@ -443,7 +444,6 @@ def eval_folds(args):
 
                     rel = f"{fold_cross}/{eval_sub}/fold{ei}"
 
-                    # check if done (GCS for gcp, local otherwise)
                     if gcp_backend:
                         eval_fold_dir = f"/workspace/out/{rel}"
                         output = f"{args.gcp_output_dir}/{rel}"
@@ -451,11 +451,6 @@ def eval_folds(args):
                     else:
                         eval_fold_dir = output = f"{it_dir}/{eval_sub}/fold{ei}"
                         exists = os.path.isfile
-                    if exists(f"{output}/acc.txt") and (
-                        not gtfs[di] or exists(f"{output}/gene_metrics.tsv")
-                    ):
-                        print(f"{output} already evaluated.")
-                        continue
 
                     # hound evaluate
                     cmd = cmd_base
@@ -470,6 +465,20 @@ def eval_folds(args):
                     cmd += f" {params_file}"
                     cmd += f" {model_file}"
                     cmd += f" {data_dirs[di]}"
+
+                    # GCP outputs are keyed by options; local ones record their command.
+                    done = exists(f"{output}/acc.txt") and (
+                        not gtfs[di] or exists(f"{output}/gene_metrics.tsv")
+                    )
+                    if not gcp_backend:
+                        marker = Path(eval_fold_dir, "cmd.txt")
+                        done &= not marker.exists() or marker.read_text() == cmd
+                    if done and not args.restart:
+                        print(f"{output} already evaluated.")
+                        continue
+                    if not gcp_backend:
+                        marker.parent.mkdir(parents=True, exist_ok=True)
+                        marker.write_text(cmd)
 
                     if args.span:
                         job_mem = 90000

@@ -4,9 +4,6 @@
 def add_gene_options(parser):
     parser.add_argument("--span", action="store_true", help="Score whole gene spans")
     parser.add_argument(
-        "--save_span", action="store_true", help="Write per-gene bin profiles"
-    )
-    parser.add_argument(
         "--seq_step", type=int, default=1, help="Score genes on every Nth dataset row"
     )
     parser.add_argument(
@@ -20,7 +17,7 @@ def check_gene_options(parser, args):
     if args.pseudo_qtl is not None and not 0 <= args.pseudo_qtl <= 1:
         parser.error("--pseudo_qtl must be between 0 and 1")
     if not args.genes_gtf and (
-        args.span or args.save_span or args.seq_step != 1 or args.pseudo_qtl is not None
+        args.span or args.seq_step != 1 or args.pseudo_qtl is not None
     ):
         parser.error("GTF scoring options require --genes_gtf")
 
@@ -31,8 +28,6 @@ def gene_options(args):
         opts += f" --pseudo_qtl {args.pseudo_qtl}"
     if args.span:
         opts += " --span"
-    if args.save_span:
-        opts += " --save_span"
     return opts
 
 
