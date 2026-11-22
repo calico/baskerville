@@ -14,6 +14,17 @@ def add_gene_options(parser):
     )
 
 
+def check_gene_options(parser, args):
+    if args.seq_step < 1:
+        parser.error("--seq_step must be positive")
+    if args.pseudo_qtl is not None and not 0 <= args.pseudo_qtl <= 1:
+        parser.error("--pseudo_qtl must be between 0 and 1")
+    if not args.genes_gtf and (
+        args.span or args.save_span or args.seq_step != 1 or args.pseudo_qtl is not None
+    ):
+        parser.error("GTF scoring options require --genes_gtf")
+
+
 def gene_options(args):
     opts = f" --seq_step {args.seq_step}"
     if args.pseudo_qtl is not None:

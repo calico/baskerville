@@ -125,7 +125,6 @@ class SeqDataset(Dataset):
       targets_file (str): Targets table.
       extra_crop_bp (int): Optional input cropping in basepairs.
       extra_crop_bins (int): Optional output cropping in bins.
-      load_target_hist (bool): Load coverage histograms for specificity metrics.
     """
 
     def __init__(
@@ -139,7 +138,6 @@ class SeqDataset(Dataset):
         skip_genes: bool = False,
         fold: int | None = None,
         cross: int = 0,
-        load_target_hist: bool = True,
     ):
         super().__init__()
         self.data_dir = data_dir
@@ -191,7 +189,7 @@ class SeqDataset(Dataset):
 
         # per-track histograms of the stored targets (write_target_hist)
         self.target_hist = None
-        if load_target_hist and self.has_coverage and "target_hist" in zarr_data[0]:
+        if self.has_coverage and "target_hist" in zarr_data[0]:
             self.target_hist = zarr_data[0]["target_hist"][:]
 
         # count sequences

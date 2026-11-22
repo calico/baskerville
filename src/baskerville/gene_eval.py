@@ -22,7 +22,6 @@ import pyranges as pr
 from qnorm import quantile_normalize
 from scipy.stats import pearsonr
 from sklearn.metrics import explained_variance_score
-import torch
 
 from baskerville import dataset
 from baskerville.gene import Transcriptome, interval_output_slice
@@ -113,11 +112,15 @@ class GeneCoverage:
             raise ValueError("No GTF intervals overlap the selected evaluation windows")
         self.ids = sorted(sizes)
         self.index = {gene: i for i, gene in enumerate(self.ids)}
-        self.sizes = sizes
-        self.length_bins = lengths / width
-        self.counts = defaultdict(int)
-        self.active = {}
-        self.results = None
+        self.sizes = np.array([sizes[gene] for gene in self.ids])
+        self.length_bins = (lengths[self.ids] / width).to_numpy()
+
+        # Centered moments of (preds, targets, log2 preds, log2 targets) per gene/track.
+        shape = (len(self.ids), len(self.metadata))
+        self.counts = np.zeros(len(self.ids), dtype=int)
+        self.means = np.zeros((4, *shape))
+        self.squares = np.zeros((4, *shape))
+        self.cross = np.zeros(shape)
 
     def update(self, row, preds, targets):
         """Consume full-resolution (batch, tracks, bins) tensors before subsampling."""
@@ -139,8 +142,8 @@ class GeneCoverage:
                 tracks = self.tracks[strand][:, None]
 
                 def select(values):
-                    selected = values[i, tracks, bins].to(torch.float16).cpu().numpy()
-                    return self.untransform(selected.astype(np.float32), self.metadata)
+                    selected = values[i, tracks, bins].float().cpu().numpy()
+                    return self.untransform(selected, self.metadata)
 
                 p, y = select(preds), select(targets)
                 offsets = np.r_[0, used.cumsum()]
@@ -149,10 +152,10 @@ class GeneCoverage:
                     self._add(gene, p[:, sl], y[:, sl])
 
     def _add(self, gene, preds, targets):
+        g = self.index[gene]
         n = preds.shape[1]
-        previous = self.counts[gene]
+        previous = self.counts[g]
         count = previous + n
-        total = self.sizes[gene]
         if self.save_span:
             folder = self.out_dir / "gene_within" / gene.split(".")[0][-1]
             for label, values in (("preds", preds), ("targets", targets)):
@@ -163,46 +166,41 @@ class GeneCoverage:
                     path,
                     mode="r+" if previous else "w+",
                     dtype="float16",
-                    shape=(len(values), total),
+                    shape=(len(values), int(self.sizes[g])),
                 )
                 profile[:, previous:count] = values
                 del profile
 
-        # Merge centered moments for linear means/variances and log-space Pearson.
+        # Merge block moments into the running ones (Chan et al.); exact when previous=0.
         values = np.stack((preds, targets, np.log2(preds + 1), np.log2(targets + 1)))
         means = values.mean(axis=-1, dtype=np.float64)
         centered = values - means[..., None]
-        squares = np.einsum("itb,itb->it", centered, centered)
-        cross = np.einsum("tb,tb->t", centered[2], centered[3])
-        if previous:
-            old_means, old_squares, old_cross = self.active[gene]
-            delta = means - old_means
-            weight = n / count
-            squares += old_squares + delta**2 * (previous * weight)
-            cross += old_cross + delta[2] * delta[3] * (previous * weight)
-            means = old_means + delta * weight
-        self.counts[gene] = count
-        if count < total:
-            self.active[gene] = means, squares, cross
-            return
-        self.active.pop(gene, None)
-        if self.results is None:
-            self.results = np.empty(
-                (4, len(self.ids), len(self.metadata)), dtype=preds.dtype
-            )
-        out = self.results[:, self.index[gene]]
-        out[:2] = means[:2] * self.length_bins[gene]
-        out[3] = squares[1] / count
-        denom = np.sqrt(squares[2] * squares[3])
-        valid = (squares[0] / count > 1e-6) & (out[3] > 1e-6) & (denom > 0)
-        out[2].fill(np.nan)
-        np.divide(cross, denom, out=out[2], where=valid)
+        delta = means - self.means[:, g]
+        shrink = previous * n / count
+        self.squares[:, g] += np.einsum("itb,itb->it", centered, centered)
+        self.squares[:, g] += delta**2 * shrink
+        self.cross[g] += np.einsum("tb,tb->t", centered[2], centered[3])
+        self.cross[g] += delta[2] * delta[3] * shrink
+        self.means[:, g] += delta * (n / count)
+        self.counts[g] = count
+
+    def summaries(self):
+        """Gene expression, within-gene log Pearson R and target variance."""
+        n = self.counts[:, None]
+        length = self.length_bins[:, None]
+        preds, targets = self.means[0] * length, self.means[1] * length
+        variance = self.squares[1] / n
+        denom = np.sqrt(self.squares[2] * self.squares[3])
+        valid = (self.squares[0] / n > 1e-6) & (variance > 1e-6) & (denom > 0)
+        within = np.full_like(denom, np.nan)
+        np.divide(self.cross, denom, out=within, where=valid)
+        return preds, targets, within, variance
 
     def finish(self):
-        if self.counts != self.sizes:
+        if not np.array_equal(self.counts, self.sizes):
             raise ValueError("Missing coverage for planned GTF intervals")
         _write_reports(
-            self.out_dir, self.pseudo_qtl, self.metadata, self.ids, *self.results
+            self.out_dir, self.pseudo_qtl, self.metadata, self.ids, *self.summaries()
         )
 
 

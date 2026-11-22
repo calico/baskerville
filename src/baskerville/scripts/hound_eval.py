@@ -28,8 +28,7 @@ import zarr
 
 from baskerville import dataset
 from baskerville import seqnn
-from baskerville.helpers.eval_options import add_gene_options
-from baskerville.types import BatchData
+from baskerville.helpers.eval_options import add_gene_options, check_gene_options
 from baskerville.hardware import check_mixed_precision
 
 """
@@ -39,7 +38,7 @@ Evaluate the accuracy of a trained model on held-out sequences.
 """
 
 
-def main(argv=None, *, genes_only=False):
+def main(argv=None):
     parser = argparse.ArgumentParser(description="Evaluate a trained model.")
     parser.add_argument(
         "-di",
@@ -53,7 +52,7 @@ def main(argv=None, *, genes_only=False):
     parser.add_argument(
         "-o",
         "--out_dir",
-        default="evalg_out" if genes_only else "eval_out",
+        default="eval_out",
         help="Output directory for evaluation statistics [Default: %(default)s]",
     )
     parser.add_argument(
@@ -79,56 +78,45 @@ def main(argv=None, *, genes_only=False):
         help="File specifying target indexes and labels in table format",
     )
 
-    if not genes_only:
-        parser.add_argument(
-            "--aggregate_genes",
-            action="store_true",
-            help="Aggregate predictions per unique gene across sequences",
-        )
-        parser.add_argument(
-            "--rank",
-            default=False,
-            action="store_true",
-            help="Compute Spearman rank correlation [Default: %(default)s]",
-        )
-        parser.add_argument(
-            "--save",
-            default=False,
-            action="store_true",
-            help="Save targets and predictions numpy arrays [Default: %(default)s]",
-        )
-        parser.add_argument(
-            "--step",
-            default=1,
-            type=int,
-            help="Step across positions [Default: %(default)s]",
-        )
-        parser.add_argument(
-            "-tg",
-            "--targets_gene_file",
-            default=None,
-            help="Gene targets file [Default: {data_dir}/targets_gene.txt]",
-        )
+    parser.add_argument(
+        "--aggregate_genes",
+        action="store_true",
+        help="Aggregate predictions per unique gene across sequences",
+    )
+    parser.add_argument(
+        "--rank",
+        default=False,
+        action="store_true",
+        help="Compute Spearman rank correlation [Default: %(default)s]",
+    )
+    parser.add_argument(
+        "--save",
+        default=False,
+        action="store_true",
+        help="Save targets and predictions numpy arrays [Default: %(default)s]",
+    )
+    parser.add_argument(
+        "--step",
+        default=1,
+        type=int,
+        help="Step across positions [Default: %(default)s]",
+    )
+    parser.add_argument(
+        "-tg",
+        "--targets_gene_file",
+        default=None,
+        help="Gene targets file [Default: {data_dir}/targets_gene.txt]",
+    )
 
     parser.add_argument("params_file", help="JSON file with model parameters")
     parser.add_argument("model_file", help="Trained model file.")
     parser.add_argument("data_dir", help="Train/valid/test data directory")
-    if genes_only:
-        parser.add_argument("genes_gtf", help="GTF file with gene annotations")
-    else:
-        parser.add_argument(
-            "-g", "--genes_gtf", help="Also evaluate coverage on these genes"
-        )
+    parser.add_argument(
+        "-g", "--genes_gtf", help="Also evaluate coverage on these genes"
+    )
     add_gene_options(parser)
     args = parser.parse_args(argv)
-    if args.seq_step < 1:
-        parser.error("--seq_step must be positive")
-    if args.pseudo_qtl is not None and not 0 <= args.pseudo_qtl <= 1:
-        parser.error("--pseudo_qtl must be between 0 and 1")
-    if not args.genes_gtf and (
-        args.span or args.save_span or args.seq_step != 1 or args.pseudo_qtl is not None
-    ):
-        parser.error("GTF scoring options require --genes_gtf")
+    check_gene_options(parser, args)
 
     os.makedirs(args.out_dir, exist_ok=True)
 
@@ -151,14 +139,11 @@ def main(argv=None, *, genes_only=False):
         targets_file=args.targets_file,
         extra_crop_bp=params_train.get("extra_crop_bp"),
         extra_crop_bins=params_train.get("extra_crop_bins"),
-        skip_genes=genes_only or not params_model.get("heads_gene"),
-        load_target_hist=not genes_only,
+        skip_genes=not params_model.get("heads_gene"),
     )
     targets_df = eval_data.targets_df
     if args.genes_gtf and not eval_data.has_coverage:
         parser.error("GTF evaluation requires coverage targets")
-    if genes_only:
-        targets_df = dataset.gene_targets(targets_df)
     output_slice = None
     if eval_data.has_coverage:
         if "strand_pair" in targets_df or args.genes_gtf:
@@ -192,32 +177,6 @@ def main(argv=None, *, genes_only=False):
         if not seqnn_model.output_depth(args.di):
             parser.error("GTF evaluation requires a coverage head")
         scorer = GeneCoverage(eval_data, seqnn_model, targets_df, args)
-    if genes_only:
-        rows = sorted(scorer.overlaps)
-        loader = torch.utils.data.DataLoader(
-            eval_data,
-            sampler=rows,
-            batch_size=batch_size,
-            num_workers=2,
-            collate_fn=BatchData.collate,
-        )
-        seqnn_model.model.eval()
-        with torch.no_grad():
-            for start, batch in enumerate(tqdm(loader, desc="Gene coverage")):
-                predictions = seqnn_model(
-                    batch.sequence.to(seqnn_model.device).float(), args.di
-                ).coverage
-                targets = batch.coverage_targets
-                if output_slice is not None:
-                    targets = targets[:, output_slice]
-                for i in range(len(targets)):
-                    scorer.update(
-                        rows[start * batch_size + i],
-                        predictions[i : i + 1],
-                        targets[i : i + 1],
-                    )
-        scorer.finish()
-        return
 
     # determine if we need to save values
     return_values = args.save or args.rank or args.aggregate_genes

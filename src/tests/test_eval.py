@@ -605,7 +605,7 @@ class TestSeqNNEval:
 
     @pytest.mark.skipif(shutil.which("bedtools") is None, reason="requires bedtools")
     def test_combined_gtf_cli(self, combined_dataset, tmp_path, monkeypatch):
-        from baskerville.scripts import hound_eval, hound_eval_genes
+        from baskerville.scripts import hound_eval
         from baskerville.seqnn import SeqNNMod
 
         data = Path(combined_dataset)
@@ -651,14 +651,7 @@ class TestSeqNNEval:
             return forward(self, x, *args, **kwargs)
 
         monkeypatch.setattr(SeqNNMod, "forward", counted)
-        # Use the in-process loader so reads of skipped rows are observable.
-        loader = torch.utils.data.DataLoader
-
-        def local_loader(*args, **kwargs):
-            return loader(*args, **(kwargs | {"num_workers": 0}))
-
-        monkeypatch.setattr(torch.utils.data, "DataLoader", local_loader)
-        base, combined, genes = (tmp_path / n for n in ("base", "combined", "genes"))
+        base, combined = tmp_path / "base", tmp_path / "combined"
         hound_eval.main(args + ["--save", "--step", "2", "-o", str(base)])
         baseline_calls = calls.copy()
         calls.clear()
@@ -688,25 +681,6 @@ class TestSeqNNEval:
             pd.testing.assert_frame_equal(
                 table(base / f"gene_{name}.tsv.gz"),
                 table(combined / f"gene_head_{name}.tsv.gz"),
-            )
-        reads = []
-        get = SeqDataset.__getitem__
-
-        def read(self, row):
-            reads.append(row)
-            return get(self, row)
-
-        monkeypatch.setattr(SeqDataset, "__getitem__", read)
-        calls.clear()
-        hound_eval_genes.main(
-            args + [str(gtf), "--save_span", "--seq_step", "2", "-o", str(genes)]
-        )
-        assert reads == [0, 2]
-        assert calls == [2] * 4
-        assert not (genes / "preds_targets.zarr").exists()
-        for file in genes.glob("*.tsv*"):
-            pd.testing.assert_frame_equal(
-                table(file), table(combined / file.name), atol=1e-5, rtol=1e-5
             )
         # Check raw strand-specific profiles against the original, uncropped target bins.
         for gene, track, first, second in (

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from baskerville.scripts import hound_eval_genes
+from baskerville.scripts import hound_eval
 
 TESTS_DIR = Path(__file__).parent
 DATA_DIR = TESTS_DIR / "data"
@@ -14,23 +14,25 @@ DATA_DIR = TESTS_DIR / "data"
     shutil.which("bedtools") is None,
     reason="bedtools binary not installed (required by pybedtools .intersect())",
 )
-def test_hound_eval_genes_smoke(model_cov_with_gene_data_dir, data_gene_dir):
-    """Smoke test for hound_eval_genes using yeast test data."""
+def test_hound_eval_gtf_smoke(model_cov_with_gene_data_dir, data_gene_dir):
+    """Smoke test for hound_eval -g using yeast test data."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         cmd = [
             f"{model_cov_with_gene_data_dir}/params.json",
             f"{model_cov_with_gene_data_dir}/model_best.pth",
             data_gene_dir,
+            "-g",
             str(DATA_DIR / "sc3_genes.gtf"),
             "-o",
             tmp_dir,
             "--split",
             "test",
         ]
-        hound_eval_genes.main(cmd)
+        hound_eval.main(cmd)
 
         # Check expected output files exist
         out_path = Path(tmp_dir)
+        assert (out_path / "acc.txt").exists()
         assert (out_path / "genes.bed").exists()
         assert (out_path / "task_metrics.tsv").exists()
         assert (out_path / "gene_metrics.tsv").exists()
@@ -101,7 +103,7 @@ def test_gene_summaries_match_concatenated_bins(tmp_path, span):
 
     def reference(v):
         pieces = [v[0, :, :2], v[1]] if span else [v[0, :, :2], v[1, :, :1], v[1]]
-        return untransform_preds(torch.cat(pieces, dim=-1).half().float().numpy(), meta)
+        return untransform_preds(torch.cat(pieces, dim=-1).numpy(), meta)
 
     for row in (0, 1):
         scorer.update(row, p[row : row + 1], y[row : row + 1])
@@ -114,7 +116,7 @@ def test_gene_summaries_match_concatenated_bins(tmp_path, span):
         [pearsonr(np.log2(pred[0] + 1), np.log2(target[0] + 1)).statistic, np.nan],
         target.var(1),
     ]
-    np.testing.assert_allclose(scorer.results[:, 0], expected, rtol=1e-6)
+    np.testing.assert_allclose([v[0] for v in scorer.summaries()], expected, rtol=1e-6)
     for name, expected_profile in (("preds", pred), ("targets", target)):
         profile = tmp_path / f"gene_within/g/{name}/g_{name}.npy"
         np.testing.assert_array_equal(
