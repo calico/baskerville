@@ -20,6 +20,7 @@ import json
 import os
 
 from baskerville import utils
+from baskerville.helpers.eval_options import add_gene_options, gene_options, per_dataset
 
 try:
     import slurmrunner
@@ -72,6 +73,7 @@ def main():
         description="Measure gene-level accuracy for model replicates on cross folds."
     )
 
+    add_gene_options(parser)
     # eval options
     parser.add_argument(
         "-g",
@@ -86,40 +88,16 @@ def main():
         help="Training output directory [Default: %(default)s]",
     )
     parser.add_argument(
-        "--pseudo_qtl",
-        default=None,
-        type=float,
-        help="Quantile of coverage to add as pseudo counts to genes [Default: %(default)s]",
-    )
-    parser.add_argument(
         "--rc",
         default=False,
         action="store_true",
         help="Average forward and reverse complement predictions [Default: %(default)s]",
     )
     parser.add_argument(
-        "--save_span",
-        default=False,
-        action="store_true",
-        help="Store predicted/measured gene span coverage profiles [Default: %(default)s]",
-    )
-    parser.add_argument(
-        "--seq_step",
-        default=1,
-        type=int,
-        help="Compute only every seq_step sequence [Default: %(default)s]",
-    )
-    parser.add_argument(
         "--shifts",
         default="0",
         type=str,
         help="Ensemble prediction shifts [Default: %(default)s]",
-    )
-    parser.add_argument(
-        "--span",
-        default=False,
-        action="store_true",
-        help="Aggregate entire gene span [Default: %(default)s]",
     )
     parser.add_argument(
         "-t",
@@ -209,23 +187,16 @@ def eval_genes_folds(args):
     # bare names resolved against the in-container mount. Must run before
     # make_runner() so the rewritten paths bake into the gcprunner.Job kwargs.
     gcp_backend = getattr(args, "backend", None) == "gcp"
-    genes_gtfs = args.genes_gtf.split(",")
-    if len(genes_gtfs) == 1:
-        genes_gtfs *= len(args.data_dirs)
-    if len(genes_gtfs) != len(args.data_dirs):
-        raise ValueError("--genes_gtf needs one GTF, or one per data dir")
-    targets_files = (args.targets_file or "").split(",")
-    if len(targets_files) == 1:
-        targets_files *= len(args.data_dirs)
-    if len(targets_files) != len(args.data_dirs):
-        raise ValueError("--targets_file needs one file, or one per data dir")
+    genes_gtfs = per_dataset(args.genes_gtf, args.data_dirs, "--genes_gtf")
+    targets_files = per_dataset(args.targets_file, args.data_dirs, "--targets_file")
+
     container_params = None
-    container_models_dir = None  # staged-models mode (local tree → cache)
+    container_models_dir = None
     container_data_dirs = None
     container_targets = None
     container_gtf = None
     data_names = None
-    gcs_models_dir = None  # marker mode (weights read straight from GCS)
+    gcs_models_dir = None
     if gcp_backend:
         # If the local -o dir carries a gcp_run.json marker, the models were
         # trained on GCP and their weights live in GCS (the train mirror
@@ -552,17 +523,11 @@ def eval_genes_folds(args):
 
 def evalg_options(args, targets_file):
     """hound_eval_genes flags that change its output (not paths/splits)."""
-    opts = f" --seq_step {args.seq_step}"
-    if args.pseudo_qtl is not None:
-        opts += f" --pseudo_qtl {args.pseudo_qtl:.2f}"
+    opts = gene_options(args)
     if args.rc:
         opts += " --rc"
-    if args.save_span:
-        opts += " --save_span"
     if args.shifts:
         opts += f" --shifts {args.shifts}"
-    if args.span:
-        opts += " --span"
     if targets_file:
         opts += f" -t {targets_file}"
     return opts

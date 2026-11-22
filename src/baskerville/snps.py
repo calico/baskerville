@@ -13,6 +13,11 @@ from tqdm import tqdm
 import torch
 
 from baskerville import dataset
+from baskerville.dataset import (
+    GENE_ASSAYS as GENE_ASSAYS,
+    gene_track_mask,
+    gene_targets,
+)
 from baskerville.gene import (
     Transcriptome,
     find_overlapping_genes,
@@ -20,8 +25,6 @@ from baskerville.gene import (
 )
 from baskerville import seqnn
 from baskerville.vcf import VCF, SNPCluster
-
-GENE_ASSAYS = {"RNA", "RNA3", "CAGE"}
 
 MIX_DTYPES = {
     "float32": torch.float32,
@@ -40,35 +43,6 @@ def parse_mix_dtype(name: str) -> torch.dtype:
             file=sys.stderr,
         )
     return MIX_DTYPES[name]
-
-
-def gene_track_mask(targets_df) -> np.ndarray:
-    """Boolean mask over targets selecting gene-appropriate tracks.
-
-    Uses the ``gene`` column if present (truthy = include); otherwise falls
-    back to matching ``assay`` (case-insensitively) against :data:`GENE_ASSAYS`.
-    Raises ``ValueError`` if neither column is present.
-    """
-    if "gene" in targets_df.columns:
-        return targets_df["gene"].astype(bool).values
-    if "assay" in targets_df.columns:
-        return targets_df["assay"].str.upper().isin(GENE_ASSAYS).values
-    raise ValueError(
-        "Targets file must have a 'gene' or 'assay' column to compute "
-        "covgene/ stats. Add a binary 'gene' column to opt tracks in/out, "
-        f"or an 'assay' column (gene assays: {sorted(GENE_ASSAYS)})."
-    )
-
-
-def gene_targets(targets_df):
-    """Subset targets to gene tracks; strand pairs must be both in or both out."""
-    mask = gene_track_mask(targets_df)
-    if "strand_pair" in targets_df.columns:
-        if (mask != mask[dataset.strand_pair_indices(targets_df)]).any():
-            raise ValueError(
-                "gene tracks must include both strands of each strand pair"
-            )
-    return targets_df[mask]
 
 
 def partition_snp_stats(snp_stats):

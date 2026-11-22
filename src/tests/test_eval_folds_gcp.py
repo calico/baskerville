@@ -19,6 +19,11 @@ class MockArgs:
 
     def __init__(self, **kwargs):
         # eval options
+        self.genes_gtf = None
+        self.targets_file = None
+        self.span = self.save_span = False
+        self.pseudo_qtl = None
+        self.seq_step = 1
         self.aggregate_genes = False
         self.out_dir = "models"
         self.rank_corr = False
@@ -382,3 +387,66 @@ def test_gcp_output_dir_keyed_on_options(tmp_path, monkeypatch):
     assert _gcp_output_dir(tmp_path, monkeypatch) == base
     assert _gcp_output_dir(tmp_path, monkeypatch, rc=True) != base
     assert _gcp_output_dir(tmp_path, monkeypatch, shifts="0,1") != base
+
+
+def test_combined_run_resumes_only_after_both_reports(tmp_path, monkeypatch):
+    out = _make_models_dir(tmp_path, num_folds=2, test_fold=0, valid_fold=1)
+    jobs = _patch_gcp(monkeypatch, num_folds=2)
+    monkeypatch.setattr(
+        hef, "gcs_file_exist", lambda p: p.endswith("acc.txt") or "fold1/" in p
+    )
+    hef.eval_folds(
+        MockArgs(
+            out_dir=out,
+            fold_subset=1,
+            genes_gtf="genes.gtf",
+            span=True,
+            save_span=True,
+            seq_step=2,
+            pseudo_qtl=0.125,
+        )
+    )
+    assert len(jobs) == 1
+    cmd = jobs[0].cmd
+    for flag in (
+        "--split fold0",
+        "--genes_gtf /workspace/cache/gtf/x",
+        "--seq_step 2",
+        "--pseudo_qtl 0.125",
+        "--span",
+        "--save_span",
+    ):
+        assert flag in cmd
+    assert jobs[0].kwargs["queue"] == "l4-large"
+
+
+def test_combined_run_stages_per_dataset_annotations_and_keys(tmp_path, monkeypatch):
+    out = _make_models_dir(tmp_path, num_folds=2, test_fold=0, valid_fold=1)
+    jobs = _patch_gcp(monkeypatch, num_folds=2)
+    monkeypatch.setattr(
+        hef.stage_cache,
+        "stage_file",
+        lambda path, kind: (path, f"/workspace/cache/{kind}/{path}"),
+    )
+
+    def run(gtfs, **kwargs):
+        jobs.clear()
+        hef.eval_folds(
+            MockArgs(
+                out_dir=out,
+                data_dirs=["/data/hg38", "/data/mm10"],
+                fold_subset=1,
+                test_only=True,
+                genes_gtf=gtfs,
+                **kwargs,
+            )
+        )
+        return jobs[0].kwargs["output_dir_gcs"]
+
+    key = run("human.gtf,mouse.gtf")
+    assert len(jobs) == 2
+    assert "--genes_gtf /workspace/cache/gtf/human.gtf" in jobs[0].cmd
+    assert "--genes_gtf /workspace/cache/gtf/mouse.gtf" in jobs[1].cmd
+    assert run("human.gtf,mouse.gtf") == key
+    assert run("human.gtf,updated.gtf") != key
+    assert run("human.gtf,mouse.gtf", pseudo_qtl=0.1) != key
