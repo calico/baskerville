@@ -470,4 +470,8 @@ def test_local_rerun_on_changed_command_or_restart(tmp_path, monkeypatch):
     (fold / "acc.txt").write_text("done")
     assert run() == []
     assert run(restart=True) == [cmd]
-    assert run(rc=True) and "--rc" in (fold / "cmd.txt").read_text()
+    (rc_cmd,) = run(rc=True)
+    assert (fold / "cmd.txt").read_text() == rc_cmd
+    # The old reports are removed, so a failed rerun is scheduled again.
+    assert not (fold / "acc.txt").exists()
+    assert run(rc=True) == [rc_cmd]

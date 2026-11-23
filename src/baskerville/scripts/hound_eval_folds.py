@@ -477,6 +477,9 @@ def eval_folds(args):
                         print(f"{output} already evaluated.")
                         continue
                     if not gcp_backend:
+                        # Remove stale reports so a failed rerun can't look complete.
+                        for name in ("acc.txt", "covgene_metrics.tsv"):
+                            Path(eval_fold_dir, name).unlink(missing_ok=True)
                         marker.parent.mkdir(parents=True, exist_ok=True)
                         marker.write_text(cmd)
 

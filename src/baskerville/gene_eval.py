@@ -24,7 +24,7 @@ from scipy.stats import pearsonr
 from sklearn.metrics import explained_variance_score
 
 from baskerville import dataset
-from baskerville.gene import Transcriptome, interval_output_slice
+from baskerville.gene import Transcriptome
 
 
 def _gene_intervals(gtf, bed_path, span):
@@ -66,10 +66,14 @@ class GeneCoverage:
             Path(data.data_dir) / "sequences.bed",
             sep="\t",
             names=["Chromosome", "Start", "End", "split"],
+            dtype={"Chromosome": str},
         )
-        # Rows in dataset order: shard by shard, each matching its BED split label.
+        # Rows in dataset order, shard by shard. Numbered shards (train2.zarr,
+        # train3.zarr) share one BED label, whose rows are stored in shard order.
+        labels = set(seqs.split)
         shards = [Path(path).stem for path in data.zarr_files]
-        seqs = pd.concat([seqs[seqs.split == shard] for shard in shards])
+        shards = [s if s in labels else s.rstrip("0123456789") for s in shards]
+        seqs = pd.concat([seqs[seqs.split == s] for s in dict.fromkeys(shards)])
         seqs = seqs.reset_index(drop=True)
         if len(seqs) != len(data):
             raise ValueError(
@@ -97,7 +101,8 @@ class GeneCoverage:
             .sum()
         )
         selected = seqs.iloc[:: args.seq_step]
-        # Weight each bin by 1/k, k = windows covering its center, so each base counts once.
+        # Weight each bin by the mean 1/k over its exon bases, k = windows covering
+        # the base, so each base counts once across overlapping windows.
         cover = {
             chrom: (np.sort(w.Start.to_numpy()), np.sort(w.End.to_numpy()))
             for chrom, w in selected.groupby("Chromosome")
@@ -109,28 +114,22 @@ class GeneCoverage:
             ["Row", "Name", "Strand"], observed=True
         ):
             window = hit.iloc[0]
-            bins = np.unique(
+            bases = np.unique(
                 np.concatenate(
                     [
-                        np.arange(
-                            *interval_output_slice(
-                                start,
-                                end,
-                                window.Start,
-                                self.length * width,
-                                width,
-                                majority_overlap=False,
-                            )
-                        )
+                        np.arange(max(start, window.Start), min(end, window.End))
                         for start, end in zip(hit.Start_b, hit.End_b)
                     ]
                 )
             )
             starts, ends = cover[window.Chromosome]
-            centers = window.Start + (bins + 0.5) * width
-            k = np.searchsorted(starts, centers, "right")
-            k -= np.searchsorted(ends, centers, "right")
-            self.overlaps[row].append((gene, strand, bins, 1 / k))
+            k = np.searchsorted(starts, bases, "right")
+            k -= np.searchsorted(ends, bases, "right")
+            bins, index, n = np.unique(
+                (bases - window.Start) // width, return_inverse=True, return_counts=True
+            )
+            weights = np.bincount(index, 1 / k) / n
+            self.overlaps[row].append((gene, strand, bins, weights))
             sizes[gene] += len(bins)
         if not sizes:
             raise ValueError("No GTF intervals overlap the selected evaluation windows")
