@@ -483,9 +483,7 @@ def eval_folds(args):
                         marker.parent.mkdir(parents=True, exist_ok=True)
                         marker.write_text(cmd)
 
-                    if args.span:
-                        job_mem = 90000
-                    elif args.save or args.aggregate_genes:
+                    if args.save or args.aggregate_genes:
                         job_mem = 60000
                     else:
                         job_mem = 30000
@@ -510,9 +508,7 @@ def eval_folds(args):
                             name=name,
                             out_file=out_file,
                             err_file=err_file,
-                            queue="l4-large"
-                            if gcp_backend and args.span
-                            else args.queue,
+                            queue=args.queue,
                             cpu=num_cpu,
                             gpu=num_gpu,
                             # On GCP, mem is the VM's hard memoryMib, not a soft

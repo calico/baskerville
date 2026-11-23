@@ -416,7 +416,7 @@ def test_combined_run_resumes_only_after_both_reports(tmp_path, monkeypatch):
         "--span",
     ):
         assert flag in cmd
-    assert jobs[0].kwargs["queue"] == "l4-large"
+    assert jobs[0].kwargs["queue"] == "l4"
 
 
 def test_combined_run_stages_per_dataset_annotations_and_keys(tmp_path, monkeypatch):
