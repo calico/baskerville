@@ -689,6 +689,19 @@ class TestSeqNNEval:
         assert targets.columns.tolist() == ["RNA+"]
         width = SeqDataset(str(data), split_label="test").pool_width
         untransform = SeqNN(params).untransform_fn
+        # Scored rows 0 and 2 start at 64 and 0 bp and overlap; each scores
+        # stored bins [1, n - 1). Weight bins by 1/(scored windows covering center).
+        n = root["target"].shape[-1]
+        scored = {row: starts[row] for row in (0, 2)}
+
+        def weights(row, index):
+            center = scored[row] + (np.arange(n)[index] + 0.5) * width
+            k = sum(
+                (s + width <= center) & (center < s + (n - 1) * width)
+                for s in scored.values()
+            )
+            return 1 / k
+
         for gene, track, first, second, length in (
             ("plus", 2, slice(1, 4), slice(2, 6), 92),
             ("minus", 0, slice(3, 5), slice(5, 7), 36),
@@ -697,6 +710,9 @@ class TestSeqNNEval:
                 root["target"][0, track, first], root["target"][2, track, second]
             ].astype(np.float32)
             bins = untransform(bins[None], tracks.iloc[[track]])[0].astype(float)
-            expected = np.log2(bins.mean() * length / width + 1)
+            w = np.r_[weights(0, first), weights(2, second)]
+            mean = np.average(bins, weights=w)
+            expected = np.log2(mean * length / width + 1)
             assert targets.loc[gene, "RNA+"] == pytest.approx(expected, abs=5e-4)
-            assert variance.loc[gene, "RNA+"] == pytest.approx(bins.var(), abs=5e-4)
+            var = np.average((bins - mean) ** 2, weights=w)
+            assert variance.loc[gene, "RNA+"] == pytest.approx(var, abs=5e-4)

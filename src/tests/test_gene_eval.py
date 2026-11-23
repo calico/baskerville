@@ -42,18 +42,17 @@ def test_hound_eval_gtf_smoke(model_cov_with_gene_data_dir, data_gene_dir):
 
 @pytest.mark.skipif(shutil.which("bedtools") is None, reason="requires bedtools")
 @pytest.mark.parametrize("span", [False, True])
-def test_gene_summaries_match_concatenated_bins(tmp_path, span):
+def test_gene_summaries_weight_bins_by_window_coverage(tmp_path, span):
     from types import SimpleNamespace
 
     import numpy as np
     import pandas as pd
-    from scipy.stats import pearsonr
     import torch
 
     from baskerville.dataset import untransform_preds
     from baskerville.gene_eval import GeneCoverage
 
-    # Two disjoint exons in the same bin, partial coverage; rows follow shard order.
+    # Overlapping windows; two exons share a bin; rows follow shard order.
     (tmp_path / "sequences.bed").write_text(
         "chr1\t0\t16\tfold1\nchr1\t40\t56\ttest\nchr1\t8\t24\tfold0\n"
     )
@@ -104,24 +103,34 @@ def test_gene_summaries_match_concatenated_bins(tmp_path, span):
     p = torch.tensor([[[1.01, 2, 3, 4], [1, 1, 1, 1]], [[4, 2, 1, 3], [1, 1, 1, 1]]])
     y = torch.tensor([[[3.02, 1, 2, 1], [1, 1, 1, 1]], [[3, 1, 3, 5], [1, 1, 1, 1]]])
 
+    # Gene bins: window 8-24 bins 0-1 and window 0-16 bins 0-3, once each,
+    # weighted by 1/(windows covering the bin center).
+    weights = np.array([0.5, 0.5, 1, 1, 0.5, 0.5])
+
     def reference(v):
-        pieces = [v[0, :, :2], v[1]] if span else [v[0, :, :2], v[1, :, :1], v[1]]
+        pieces = [v[0, :, :2], v[1]]
         return untransform_preds(torch.cat(pieces, dim=-1).numpy(), meta)
+
+    def moments(a, b):
+        a, b = a - np.average(a, weights=weights), b - np.average(b, weights=weights)
+        return [np.average(x * z, weights=weights) for x, z in ((a, a), (b, b), (a, b))]
 
     for row in (0, 1):
         scorer.update(row, p[row : row + 1], y[row : row + 1])
     pred, target = reference(p), reference(y)
     assert scorer.ids == ["g"]
     length = (15 if span else 14) / 4
+    var_p, var_y, cov = moments(np.log2(pred[0] + 1), np.log2(target[0] + 1))
+    target_mean = np.average(target, axis=1, weights=weights)
     expected = [
-        pred.mean(1) * length,
-        target.mean(1) * length,
-        [pearsonr(np.log2(pred[0] + 1), np.log2(target[0] + 1)).statistic, np.nan],
-        target.var(1),
+        np.average(pred, axis=1, weights=weights) * length,
+        target_mean * length,
+        [cov / np.sqrt(var_p * var_y), np.nan],
+        [moments(target[i], target[i])[0] for i in range(2)],
     ]
     np.testing.assert_allclose([v[0] for v in scorer.summaries()], expected, rtol=1e-6)
     scorer.finish()
     table = pd.read_csv(tmp_path / "covgene_targets.tsv.gz", sep="\t", index_col=0)
     np.testing.assert_allclose(
-        table.iloc[0], np.log2(2 * target.mean(1) * length + 1), atol=0.0005
+        table.iloc[0], np.log2(2 * target_mean * length + 1), atol=0.0005
     )

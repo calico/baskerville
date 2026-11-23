@@ -96,20 +96,42 @@ class GeneCoverage:
             .groupby(intervals.Name, observed=True)
             .sum()
         )
+        selected = seqs.iloc[:: args.seq_step]
+        # Weight each bin by 1/k, k = windows covering its center, so each base counts once.
+        cover = {
+            chrom: (np.sort(w.Start.to_numpy()), np.sort(w.End.to_numpy()))
+            for chrom, w in selected.groupby("Chromosome")
+        }
+        hits = pr.PyRanges(selected).join(genes, apply_strand_suffix=False).df
         self.overlaps = defaultdict(list)
         sizes = defaultdict(int)
-        selected = pr.PyRanges(seqs.iloc[:: args.seq_step])
-        for hit in selected.join(genes, apply_strand_suffix=False).df.itertuples():
-            start, stop = interval_output_slice(
-                hit.Start_b,
-                hit.End_b,
-                hit.Start,
-                hit.End - hit.Start,
-                width,
-                majority_overlap=False,
+        for (row, gene, strand), hit in hits.groupby(
+            ["Row", "Name", "Strand"], observed=True
+        ):
+            window = hit.iloc[0]
+            bins = np.unique(
+                np.concatenate(
+                    [
+                        np.arange(
+                            *interval_output_slice(
+                                start,
+                                end,
+                                window.Start,
+                                self.length * width,
+                                width,
+                                majority_overlap=False,
+                            )
+                        )
+                        for start, end in zip(hit.Start_b, hit.End_b)
+                    ]
+                )
             )
-            self.overlaps[hit.Row].append((hit.Name, hit.Strand, start, stop))
-            sizes[hit.Name] += stop - start
+            starts, ends = cover[window.Chromosome]
+            centers = window.Start + (bins + 0.5) * width
+            k = np.searchsorted(starts, centers, "right")
+            k -= np.searchsorted(ends, centers, "right")
+            self.overlaps[row].append((gene, strand, bins, 1 / k))
+            sizes[gene] += len(bins)
         if not sizes:
             raise ValueError("No GTF intervals overlap the selected evaluation windows")
         self.ids = sorted(sizes)
@@ -117,9 +139,10 @@ class GeneCoverage:
         self.sizes = np.array([sizes[gene] for gene in self.ids])
         self.length_bins = (lengths[self.ids] / width).to_numpy()
 
-        # Centered moments of (preds, targets, log2 preds, log2 targets) per gene/track.
+        # Weighted centered moments of (preds, targets, log2 preds, log2 targets).
         shape = (len(self.ids), len(self.metadata))
         self.counts = np.zeros(len(self.ids), dtype=int)
+        self.weights = np.zeros(len(self.ids))
         self.means = np.zeros((4, *shape))
         self.squares = np.zeros((4, *shape))
         self.cross = np.zeros(shape)
@@ -137,10 +160,7 @@ class GeneCoverage:
                 if not parts:
                     continue
                 # Transfer and untransform each participating track/bin once per strand.
-                used = np.zeros(self.length, dtype=bool)
-                for _, _, start, stop in parts:
-                    used[start:stop] = True
-                bins = np.flatnonzero(used)
+                bins = np.unique(np.concatenate([p[2] for p in parts]))
                 tracks = self.tracks[strand][:, None]
 
                 def select(values):
@@ -148,32 +168,32 @@ class GeneCoverage:
                     return self.untransform(selected, self.transforms[strand])
 
                 p, y = select(preds), select(targets)
-                offsets = np.r_[0, used.cumsum()]
-                for gene, _, start, stop in parts:
-                    sl = slice(offsets[start], offsets[stop])
-                    self._add(gene, p[:, sl], y[:, sl])
+                for gene, _, gene_bins, weights in parts:
+                    cols = np.searchsorted(bins, gene_bins)
+                    self._add(gene, p[:, cols], y[:, cols], weights)
 
-    def _add(self, gene, preds, targets):
+    def _add(self, gene, preds, targets, weights):
         g = self.index[gene]
-        n = preds.shape[1]
-        previous = self.counts[g]
-        count = previous + n
-        # Merge block moments into the running ones (Chan et al.); exact when previous=0.
+        total = weights.sum()
+        previous = self.weights[g]
+        combined = previous + total
+        # Merge weighted block moments into the running ones (Chan et al.).
         values = np.stack((preds, targets, np.log2(preds + 1), np.log2(targets + 1)))
-        means = values.mean(axis=-1, dtype=np.float64)
+        means = values @ weights / total
         centered = values - means[..., None]
         delta = means - self.means[:, g]
-        shrink = previous * n / count
-        self.squares[:, g] += np.einsum("itb,itb->it", centered, centered)
-        self.squares[:, g] += delta**2 * shrink
-        self.cross[g] += np.einsum("tb,tb->t", centered[2], centered[3])
-        self.cross[g] += delta[2] * delta[3] * shrink
-        self.means[:, g] += delta * (n / count)
-        self.counts[g] = count
+        shrink = previous * total / combined
+        self.squares[:, g] += centered**2 @ weights + delta**2 * shrink
+        self.cross[g] += (
+            centered[2] * centered[3] @ weights + delta[2] * delta[3] * shrink
+        )
+        self.means[:, g] += delta * (total / combined)
+        self.weights[g] = combined
+        self.counts[g] += len(weights)
 
     def summaries(self):
         """Gene expression, within-gene log Pearson R and target variance."""
-        n = self.counts[:, None]
+        n = self.weights[:, None]
         length = self.length_bins[:, None]
         preds, targets = self.means[0] * length, self.means[1] * length
         variance = self.squares[1] / n
