@@ -13,11 +13,7 @@ from tqdm import tqdm
 import torch
 
 from baskerville import dataset
-from baskerville.dataset import (
-    GENE_ASSAYS as GENE_ASSAYS,
-    gene_track_mask,
-    gene_targets,
-)
+from baskerville.dataset import gene_track_mask, gene_targets
 from baskerville.gene import (
     Transcriptome,
     find_overlapping_genes,
