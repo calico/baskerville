@@ -1,12 +1,9 @@
-"""Shared helpers for cross-fold evaluation scripts.
+"""Shared helpers for cross-fold evaluation (``hound_eval_folds``, ``hound_train_folds --eval``).
 
-Both ``hound_eval_folds`` and ``hound_eval_genes_folds`` need the same logic to
-(a) read the authoritative fold assignment a replicate was trained with,
+They (a) read the authoritative fold assignment a replicate was trained with,
 (b) decide whether a replicate's weights exist (locally or in GCS marker mode),
 (c) resolve the ``model_best.pth`` path to pass to the eval command, and (d)
-link ``test`` to the held-out fold's eval dir. They're collected here so the
-fold scripts (including ``hound_train_folds --eval``) share one
-implementation.
+link ``test`` to the held-out fold's eval dir.
 """
 
 from __future__ import annotations

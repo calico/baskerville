@@ -193,7 +193,7 @@ def main(argv=None):
 
     # covgene/ only: predict gene tracks only
     if score_genes and covgene_stats and not cov_stats:
-        targets_df = snps.gene_targets(targets_df)
+        targets_df = dataset.gene_targets(targets_df)
 
     # handle strand pairs
     if "strand_pair" in targets_df.columns:
@@ -244,7 +244,7 @@ def main(argv=None):
     # gene-track masks for covgene/ slicing
     if score_genes and covgene_stats:
         gene_mask = torch.tensor(
-            snps.gene_track_mask(targets_df),
+            dataset.gene_track_mask(targets_df),
             dtype=torch.bool,
             device=seqnn_model.device,
         )
@@ -267,7 +267,7 @@ def main(argv=None):
             )
         else:
             plus_mask = minus_mask = gene_mask
-        gene_mask_strand = snps.gene_track_mask(targets_strand_df)
+        gene_mask_strand = dataset.gene_track_mask(targets_strand_df)
     else:
         plus_mask = minus_mask = None
         gene_mask_strand = None

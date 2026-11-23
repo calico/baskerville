@@ -18,9 +18,16 @@ import argparse
 import hashlib
 import json
 import os
-import pdb
+from pathlib import Path
+from shlex import quote
 
 from baskerville import utils
+from baskerville.helpers.eval_options import (
+    add_gene_options,
+    check_gene_options,
+    gene_options,
+    per_dataset,
+)
 
 try:
     import slurmrunner
@@ -64,6 +71,17 @@ def main():
         description="Evaluate baskerville model replicates on cross folds using given parameters and data."
     )
 
+    add_gene_options(parser)
+    parser.add_argument(
+        "-g",
+        "--genes_gtf",
+        help="Gene annotations, one GTF or one per dataset (comma-separated)",
+    )
+    parser.add_argument(
+        "-t",
+        "--targets_file",
+        help="Coverage targets table, one or one per dataset (comma-separated)",
+    )
     # eval options
     parser.add_argument(
         "--aggregate_genes",
@@ -173,7 +191,7 @@ def main():
         "--restart",
         default=False,
         action="store_true",
-        help="Restart evaluation [Default: %(default)s]",
+        help="Rerun folds that already have results [Default: %(default)s]",
     )
     parser.add_argument("params_file", help="JSON file with model parameters")
     parser.add_argument(
@@ -182,7 +200,8 @@ def main():
     add_argparse_group(parser)
     args = parser.parse_args()
 
-    # modularize for use in other scripts / tests
+    check_gene_options(parser, args)
+
     eval_folds(args)
 
 
@@ -209,6 +228,14 @@ def eval_folds(args):
     container_targets_gene = None
     data_names = None
     gcs_models_dir = None  # marker mode (weights read straight from GCS)
+    gtfs = per_dataset(args.genes_gtf, args.data_dirs, "--genes_gtf")
+    target_files = per_dataset(args.targets_file, args.data_dirs, "--targets_file")
+
+    def input_paths(paths, kind):
+        if gcp_backend:
+            return [stage_cache.stage_file(p, kind)[1] if p else None for p in paths]
+        return [os.path.abspath(p) if p else None for p in paths]
+
     if gcp_backend:
         # If the local -o dir carries a gcp_run.json marker, the models were
         # trained on GCP and their weights live in GCS (the train mirror
@@ -247,6 +274,8 @@ def eval_folds(args):
         params_sha, container_params = stage_cache.stage_file(
             args.params_file, "params"
         )
+        gtfs = input_paths(gtfs, "gtf")
+        target_files = input_paths(target_files, "targets")
         models_sha = None
         if gcs_models_dir is None:
             models_sha, container_models_dir = stage_cache.stage_dir(
@@ -269,7 +298,10 @@ def eval_folds(args):
             )
             # output-changing options too, so changing them starts fresh instead of
             # resuming
-            opts_sha = stage_cache.hash_text(eval_options(args, container_targets_gene))
+            options = eval_options(args, container_targets_gene)
+            if args.genes_gtf or args.targets_file:
+                options += json.dumps(list(zip(data_names, gtfs, target_files)))
+            opts_sha = stage_cache.hash_text(options)
             run_id = stage_cache.build_run_id(
                 models_key, params_sha, data_uri_sha, opts_sha, deterministic=True
             )
@@ -289,6 +321,8 @@ def eval_folds(args):
         params_file = container_params
         data_dirs = container_data_dirs
     else:
+        gtfs = input_paths(gtfs, "gtf")
+        target_files = input_paths(target_files, "targets")
         params_file = os.path.abspath(args.params_file)
         data_dirs = [os.path.abspath(data_dir) for data_dir in args.data_dirs]
     targets_gene = container_targets_gene if gcp_backend else args.targets_gene_file
@@ -410,18 +444,13 @@ def eval_folds(args):
 
                     rel = f"{fold_cross}/{eval_sub}/fold{ei}"
 
-                    # check if done (GCS for gcp, local otherwise)
                     if gcp_backend:
-                        acc_loc = f"{args.gcp_output_dir}/{rel}/acc.txt"
-                        already_done = gcs_file_exist(acc_loc)
                         eval_fold_dir = f"/workspace/out/{rel}"
+                        output = f"{args.gcp_output_dir}/{rel}"
+                        exists = gcs_file_exist
                     else:
-                        eval_fold_dir = f"{it_dir}/{eval_sub}/fold{ei}"
-                        acc_loc = f"{eval_fold_dir}/acc.txt"
-                        already_done = os.path.isfile(acc_loc)
-                    if already_done:
-                        print(f"{acc_loc} already generated.")
-                        continue
+                        eval_fold_dir = output = f"{it_dir}/{eval_sub}/fold{ei}"
+                        exists = os.path.isfile
 
                     # hound evaluate
                     cmd = cmd_base
@@ -429,9 +458,30 @@ def eval_folds(args):
                     cmd += f" -o {eval_fold_dir}"
                     cmd += f" --split fold{ei}"
                     cmd += eval_options(args, targets_gene)
+                    if gtfs[di]:
+                        cmd += f" --genes_gtf {quote(gtfs[di])}"
+                    if target_files[di]:
+                        cmd += f" -t {quote(target_files[di])}"
                     cmd += f" {params_file}"
                     cmd += f" {model_file}"
                     cmd += f" {data_dirs[di]}"
+
+                    # GCP outputs are keyed by options; local ones record their command.
+                    done = exists(f"{output}/acc.txt") and (
+                        not gtfs[di] or exists(f"{output}/covgene_metrics.tsv")
+                    )
+                    if not gcp_backend:
+                        marker = Path(eval_fold_dir, "cmd.txt")
+                        done &= not marker.exists() or marker.read_text() == cmd
+                    if done and not args.restart:
+                        print(f"{output} already evaluated.")
+                        continue
+                    if not gcp_backend:
+                        # Remove stale reports so a failed rerun can't look complete.
+                        for name in ("acc.txt", "covgene_metrics.tsv"):
+                            Path(eval_fold_dir, name).unlink(missing_ok=True)
+                        marker.parent.mkdir(parents=True, exist_ok=True)
+                        marker.write_text(cmd)
 
                     if args.save or args.aggregate_genes:
                         job_mem = 60000
@@ -522,7 +572,7 @@ def eval_folds(args):
 
 def eval_options(args, targets_gene):
     """hound_eval flags that change its output (not per-job paths/splits)."""
-    opts = ""
+    opts = gene_options(args) if args.genes_gtf else ""
     if args.rank_corr:
         opts += " --rank"
     if args.rc:

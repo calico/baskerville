@@ -28,6 +28,7 @@ import zarr
 
 from baskerville import dataset
 from baskerville import seqnn
+from baskerville.helpers.eval_options import add_gene_options, check_gene_options
 from baskerville.hardware import check_mixed_precision
 
 """
@@ -37,16 +38,12 @@ Evaluate the accuracy of a trained model on held-out sequences.
 """
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description="Evaluate a trained model.")
-    parser.add_argument(
-        "--aggregate_genes",
-        action="store_true",
-        help="Aggregate predictions per unique gene across sequences",
-    )
     parser.add_argument(
         "-di",
         "--dataset",
+        "--head",
         dest="di",
         default=0,
         type=int,
@@ -59,22 +56,10 @@ def main():
         help="Output directory for evaluation statistics [Default: %(default)s]",
     )
     parser.add_argument(
-        "--rank",
-        default=False,
-        action="store_true",
-        help="Compute Spearman rank correlation [Default: %(default)s]",
-    )
-    parser.add_argument(
         "--rc",
         default=False,
         action="store_true",
         help="Average the fwd and rc predictions [Default: %(default)s]",
-    )
-    parser.add_argument(
-        "--save",
-        default=False,
-        action="store_true",
-        help="Save targets and predictions numpy arrays [Default: %(default)s]",
     )
     parser.add_argument(
         "--shifts",
@@ -87,16 +72,34 @@ def main():
         help="Dataset split label for eg TFR pattern [Default: %(default)s]",
     )
     parser.add_argument(
-        "--step",
-        default=1,
-        type=int,
-        help="Step across positions [Default: %(default)s]",
-    )
-    parser.add_argument(
         "-t",
         "--targets_file",
         default=None,
         help="File specifying target indexes and labels in table format",
+    )
+
+    parser.add_argument(
+        "--aggregate_genes",
+        action="store_true",
+        help="Aggregate predictions per unique gene across sequences",
+    )
+    parser.add_argument(
+        "--rank",
+        default=False,
+        action="store_true",
+        help="Compute Spearman rank correlation [Default: %(default)s]",
+    )
+    parser.add_argument(
+        "--save",
+        default=False,
+        action="store_true",
+        help="Save targets and predictions numpy arrays [Default: %(default)s]",
+    )
+    parser.add_argument(
+        "--step",
+        default=1,
+        type=int,
+        help="Step across positions [Default: %(default)s]",
     )
     parser.add_argument(
         "-tg",
@@ -108,7 +111,12 @@ def main():
     parser.add_argument("params_file", help="JSON file with model parameters")
     parser.add_argument("model_file", help="Trained model file.")
     parser.add_argument("data_dir", help="Train/valid/test data directory")
-    args = parser.parse_args()
+    parser.add_argument(
+        "-g", "--genes_gtf", help="Also evaluate coverage on these genes"
+    )
+    add_gene_options(parser)
+    args = parser.parse_args(argv)
+    check_gene_options(parser, args)
 
     os.makedirs(args.out_dir, exist_ok=True)
 
@@ -118,34 +126,31 @@ def main():
     #######################################################
     # inputs
 
-    # read targets (optional for gene-only datasets)
-    if args.targets_file is None:
-        args.targets_file = f"{args.data_dir}/targets.txt"
-    if os.path.exists(args.targets_file):
-        targets_df = pd.read_csv(args.targets_file, index_col=0, sep="\t")
-    else:
-        targets_df = None
-
     # read model parameters
     with open(args.params_file) as params_open:
         params = json.load(params_open)
     params_model = params["model"]
     params_train = params.get("train", {})
 
-    # set strand pairs (using new indexing)
-    if targets_df is not None and "strand_pair" in targets_df.columns:
-        params_model["strand_pair"] = dataset.strand_pair_indices(targets_df)
-
-    # construct eval data
     eval_data = dataset.SeqDataset(
         args.data_dir,
         split_label=args.split,
         mode="eval",
-        targets_file=args.targets_file if targets_df is not None else None,
+        targets_file=args.targets_file,
+        extra_crop_bp=params_train.get("extra_crop_bp"),
+        extra_crop_bins=params_train.get("extra_crop_bins"),
+        skip_genes=not params_model.get("heads_gene"),
     )
-
-    # initialize model
-    seqnn_model = seqnn.SeqNN(params_model)
+    targets_df = eval_data.targets_df
+    if args.genes_gtf and not eval_data.has_coverage:
+        parser.error("GTF evaluation requires coverage targets")
+    output_slice = None
+    if eval_data.has_coverage:
+        if "strand_pair" in targets_df or args.genes_gtf:
+            params_model["strand_pair"] = dataset.strand_pair_indices(targets_df)
+        if not np.array_equal(targets_df.index, np.arange(eval_data.num_targets)):
+            output_slice = targets_df.index.to_numpy(copy=True)
+    seqnn_model = seqnn.SeqNN(params_model, output_slice=output_slice)
     seqnn_model.restore(args.model_file)
     seqnn_model.ensemble_rc = args.rc
     seqnn_model.ensemble_shifts = args.shifts
@@ -164,6 +169,15 @@ def main():
     #######################################################
     # evaluate
 
+    batch_size = params_train.get("batch_size", 1)
+    scorer = None
+    if args.genes_gtf:
+        from baskerville.gene_eval import GeneCoverage
+
+        if not seqnn_model.output_depth(args.di):
+            parser.error("GTF evaluation requires a coverage head")
+        scorer = GeneCoverage(eval_data, seqnn_model, targets_df, args)
+
     # determine if we need to save values
     return_values = args.save or args.rank or args.aggregate_genes
     zarr_path = (
@@ -174,7 +188,8 @@ def main():
     results = seqnn_model.eval(
         eval_data,
         hi=args.di,
-        batch_size=params_train.get("batch_size", 1),
+        batch_size=batch_size,
+        coverage_callback=scorer.update if scorer else None,
         return_values=return_values,
         step=args.step,
         zarr_store=zarr_path,
@@ -261,10 +276,9 @@ def main():
             gene_presence_arr = gene_results["masks"]
 
             # load gene IDs from split-specific zarr
-            split_zarr_path = f"{args.data_dir}/examples/{args.split}.zarr"
-            split_zarr = zarr.open_group(split_zarr_path, mode="r")
-            try:
-                gene_ids = split_zarr["gene_ids"][:]
+            shards = [zarr.open_group(path, mode="r") for path in eval_data.zarr_files]
+            if all("gene_ids" in shard for shard in shards):
+                gene_ids = np.concatenate([shard["gene_ids"][:] for shard in shards])
 
                 # form gene expression matrix
                 gm = form_gene_matrix(
@@ -274,10 +288,8 @@ def main():
                 # save gene expression matrix as compressed TSV
                 if args.save:
                     gene_columns = list(targets_gene_df.identifier)
-                    for name, key in [
-                        ("gene_preds", "preds"),
-                        ("gene_targets", "targets"),
-                    ]:
+                    for key in ("preds", "targets"):
+                        name = f"gene_{key}"
                         df = pd.DataFrame(
                             gm[key], index=gm["ids"], columns=gene_columns
                         )
@@ -303,7 +315,7 @@ def main():
                     float_format="%.5f",
                 )
                 print(f"Gene aggregated PearsonR: {gene_agg['pearsonr'].mean():.5f}")
-            except Exception:
+            else:
                 print("Warning: gene_ids not found, skipping gene aggregation.")
                 print("Re-run hound_data to generate gene_ids in split zarr files.")
 
@@ -313,6 +325,9 @@ def main():
     if return_values and not args.save:
         if zarr_path is not None and os.path.exists(zarr_path):
             shutil.rmtree(zarr_path)
+
+    if scorer:
+        scorer.finish()
 
 
 def form_gene_matrix(gene_preds, gene_targets, gene_presence, gene_ids):

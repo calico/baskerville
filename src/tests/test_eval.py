@@ -4,6 +4,7 @@ Tests for SeqNN.eval() method - evaluation with metrics computation.
 
 import json
 from functools import partial
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -601,3 +602,117 @@ class TestSeqNNEval:
             assert "targets" in root
             assert "gene_preds" not in root
             assert "gene_targets" not in root
+
+    @pytest.mark.skipif(shutil.which("bedtools") is None, reason="requires bedtools")
+    def test_combined_gtf_cli(self, combined_dataset, tmp_path, monkeypatch):
+        from baskerville.scripts import hound_eval
+        from baskerville.seqnn import SeqNNMod
+
+        data = Path(combined_dataset)
+        tracks = pd.read_csv(data / "targets.txt", sep="\t", index_col=0)
+        tracks["identifier"] = ["RNA-", "ATAC", "RNA+"]
+        tracks["assay"] = ["RNA", "ATAC", "rna"]
+        tracks["strand_pair"] = [2, 1, 0]
+        tracks["sum_stat"] = "sum"
+        tracks["clip_soft"] = [0.0, 1e9, 1e9]  # strand-specific untransform
+        tracks.to_csv(data / "targets.txt", sep="\t")
+        starts = [64, 32000, 0, 64000]
+        (data / "sequences.bed").write_text(
+            "".join(f"chr1\t{s}\t{s + self.seq_length}\ttest\n" for s in starts)
+        )
+        gtf = tmp_path / "genes.gtf"
+        gtf.write_text(
+            'chr1\tt\texon\t70\t161\t.\t+\t.\tgene_id "plus";\n'
+            'chr1\tt\texon\t175\t210\t.\t-\t.\tgene_id "minus";\n'
+        )
+        root = zarr.open_group(data / "examples/test.zarr", mode="a")
+        root.create_array("gene_ids", data=np.tile(["a", "b", "c"], (self.num_seqs, 1)))
+        params = self._create_model_def(has_gene=True)
+        model = tmp_path / "model.pth"
+        torch.save(SeqNN(params).model.state_dict(), model)
+        param_file = tmp_path / "params.json"
+        param_file.write_text(
+            json.dumps(
+                {
+                    "model": params,
+                    "train": {
+                        "batch_size": 3,
+                        "extra_crop_bp": 32,
+                        "extra_crop_bins": 1,
+                    },
+                }
+            )
+        )
+        args = [str(param_file), str(model), str(data), "--rc", "--shifts", "0,1"]
+        calls = []
+        forward = SeqNNMod.forward
+
+        def counted(self, x, *args, **kwargs):
+            calls.append(len(x))
+            return forward(self, x, *args, **kwargs)
+
+        monkeypatch.setattr(SeqNNMod, "forward", counted)
+        base, combined = tmp_path / "base", tmp_path / "combined"
+        hound_eval.main(args + ["--save", "--step", "2", "-o", str(base)])
+        baseline_calls = calls.copy()
+        calls.clear()
+        hound_eval.main(
+            args
+            + [
+                "-g",
+                str(gtf),
+                "--save",
+                "--step",
+                "2",
+                "--seq_step",
+                "2",
+                "-o",
+                str(combined),
+            ]
+        )
+        assert calls == baseline_calls == [3] * 4 + [1] * 4
+        for name in ("acc.txt", "acc_gene.txt", "acc_gene_agg.txt"):
+            assert (base / name).read_bytes() == (combined / name).read_bytes()
+
+        def table(path):
+            return pd.read_csv(path, sep="\t", index_col=0)
+
+        for name in ("preds", "targets"):
+            pd.testing.assert_frame_equal(
+                table(base / f"gene_{name}.tsv.gz"),
+                table(combined / f"gene_{name}.tsv.gz"),
+            )
+        # Check strand-specific gene summaries against the original, uncropped target bins.
+        targets, variance = (
+            table(combined / f"covgene_{name}.tsv.gz") for name in ("targets", "var")
+        )
+        assert targets.columns.tolist() == ["RNA+"]
+        width = SeqDataset(str(data), split_label="test").pool_width
+        untransform = SeqNN(params).untransform_fn
+        # Scored rows 0 and 2 start at 64 and 0 bp and overlap; each scores
+        # stored bins [1, n - 1). Weight bins by 1/(scored windows covering center).
+        n = root["target"].shape[-1]
+        scored = {row: starts[row] for row in (0, 2)}
+
+        def weights(row, index):
+            center = scored[row] + (np.arange(n)[index] + 0.5) * width
+            k = sum(
+                (s + width <= center) & (center < s + (n - 1) * width)
+                for s in scored.values()
+            )
+            return 1 / k
+
+        for gene, track, first, second, length in (
+            ("plus", 2, slice(1, 4), slice(2, 6), 92),
+            ("minus", 0, slice(3, 5), slice(5, 7), 36),
+        ):
+            bins = np.r_[
+                root["target"][0, track, first], root["target"][2, track, second]
+            ].astype(np.float32)
+            bins = untransform(bins[None], tracks.iloc[[track]])[0].astype(float)
+            w = np.r_[weights(0, first), weights(2, second)]
+            mean = np.average(bins, weights=w)
+            expected = np.log2(mean * length / width + 1)
+            assert targets.loc[gene, "RNA+"] == pytest.approx(expected, abs=5e-4)
+            var = np.average((bins - mean) ** 2, weights=w)
+            assert variance.loc[gene, "RNA+"] == pytest.approx(var, abs=5e-4)

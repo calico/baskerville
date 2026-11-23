@@ -269,12 +269,13 @@ class SeqDataset(Dataset):
         # optionally crop (only if crop amount > 0)
         if self.extra_crop_bp is not None and self.extra_crop_bp > 0:
             seq_indexes = seq_indexes[..., self.extra_crop_bp : -self.extra_crop_bp]
-        if (
-            self.has_coverage
-            and self.extra_crop_bins is not None
-            and self.extra_crop_bins > 0
-        ):
-            targets = targets[..., self.extra_crop_bins : -self.extra_crop_bins]
+        if self.extra_crop_bins is not None and self.extra_crop_bins > 0:
+            bins = slice(self.extra_crop_bins, -self.extra_crop_bins)
+            if self.has_coverage:
+                targets = targets[..., bins]
+            if self.has_genes:
+                gene_out_mask = gene_out_mask[..., bins]
+                gene_presence = gene_presence & gene_out_mask.any(axis=-1)
 
         # targets to torch
         if self.has_coverage:
@@ -784,6 +785,38 @@ def mutate_sequence(seq_indexes, snp_rate, del_rate, max_del_bp=10):
 
             # Compensate by inserting the deleted sequence at the right end
             seq_indexes[-del_size:] = deleted_nucs
+
+
+GENE_ASSAYS = {"RNA", "RNA3", "CAGE"}
+
+
+def gene_track_mask(targets_df) -> np.ndarray:
+    """Boolean mask over targets selecting gene-appropriate tracks.
+
+    Uses the ``gene`` column if present (truthy = include); otherwise falls
+    back to matching ``assay`` (case-insensitively) against :data:`GENE_ASSAYS`.
+    Raises ``ValueError`` if neither column is present.
+    """
+    if "gene" in targets_df.columns:
+        return targets_df["gene"].astype(bool).values
+    if "assay" in targets_df.columns:
+        return targets_df["assay"].str.upper().isin(GENE_ASSAYS).values
+    raise ValueError(
+        "Targets file must have a 'gene' or 'assay' column to compute "
+        "gene scores. Add a binary 'gene' column to opt tracks in/out, "
+        f"or an 'assay' column (gene assays: {sorted(GENE_ASSAYS)})."
+    )
+
+
+def gene_targets(targets_df):
+    """Subset targets to gene tracks; strand pairs must be both in or both out."""
+    mask = gene_track_mask(targets_df)
+    if "strand_pair" in targets_df.columns:
+        if (mask != mask[strand_pair_indices(targets_df)]).any():
+            raise ValueError(
+                "gene tracks must include both strands of each strand pair"
+            )
+    return targets_df[mask]
 
 
 def strand_pair_indices(targets_df):

@@ -249,6 +249,9 @@ This evaluates each model on all folds, providing comprehensive performance metr
 # Enable reverse complement ensembling
 hound_eval_folds --backend local --rc -o train_folds params.json data_folds
 
+# Evaluate coverage and GTF-based gene expression on the held-out test fold
+hound_eval_folds --backend local --test --genes_gtf genes.gtf -o train_folds params.json data_folds
+
 # Save predictions and targets for detailed analysis
 hound_eval_folds --backend local --save -o train_folds params.json data_folds
 

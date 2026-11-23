@@ -221,6 +221,7 @@ class SeqNN:
         zarr_store: str | None = None,
         target_chunk: int | None = 128,
         seq_chunk: int | None = None,
+        coverage_callback=None,
     ):
         """Evaluate model on data.
 
@@ -233,6 +234,8 @@ class SeqNN:
             zarr_store: Optional zarr store path for predictions.
             target_chunk: zarr chunk size along the target axis
             seq_chunk: zarr chunk size along the seq axis for the coverage store
+            coverage_callback: Optional function (first row, predictions, targets)
+                called with full-resolution, ensembled predictions and CPU targets.
 
         Returns:
             dict with keys:
@@ -370,15 +373,15 @@ class SeqNN:
                 # extract coverage targets
                 y = None
                 if has_coverage and batch_data.coverage_targets is not None:
-                    y = batch_data.coverage_targets
+                    cpu_targets = batch_data.coverage_targets
                     if self.output_slice is not None:
-                        y = y[:, self.output_slice, :]
+                        cpu_targets = cpu_targets[:, self.output_slice, :]
                     if return_values:
-                        y_np = y.detach().numpy()
+                        y_np = cpu_targets.detach().numpy()
                         if step != 1:
                             y_np = y_np[:, :, ::step]
                         w_targets.add(si, y_np)
-                    y = y.to(self.device).float()
+                    y = cpu_targets.to(self.device).float()
 
                 # extract gene data
                 yg = batch_gene_presence = batch_gene_out_mask = None
@@ -401,6 +404,8 @@ class SeqNN:
 
                 # update coverage metrics
                 if has_coverage and y is not None:
+                    if coverage_callback is not None:
+                        coverage_callback(si, yh.coverage, cpu_targets)
                     coverage_metrics.update(yh.coverage, y)
                     if eval_metric_spec is not None:
                         eval_metric_spec.update(yh.coverage, y)

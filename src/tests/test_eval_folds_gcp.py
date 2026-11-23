@@ -7,6 +7,7 @@ built job commands are captured for assertions.
 
 import json
 import os
+from pathlib import Path
 
 import pytest
 
@@ -19,6 +20,11 @@ class MockArgs:
 
     def __init__(self, **kwargs):
         # eval options
+        self.genes_gtf = None
+        self.targets_file = None
+        self.span = False
+        self.pseudo_qtl = None
+        self.seq_step = 1
         self.aggregate_genes = False
         self.out_dir = "models"
         self.rank_corr = False
@@ -382,3 +388,90 @@ def test_gcp_output_dir_keyed_on_options(tmp_path, monkeypatch):
     assert _gcp_output_dir(tmp_path, monkeypatch) == base
     assert _gcp_output_dir(tmp_path, monkeypatch, rc=True) != base
     assert _gcp_output_dir(tmp_path, monkeypatch, shifts="0,1") != base
+
+
+def test_combined_run_resumes_only_after_both_reports(tmp_path, monkeypatch):
+    out = _make_models_dir(tmp_path, num_folds=2, test_fold=0, valid_fold=1)
+    jobs = _patch_gcp(monkeypatch, num_folds=2)
+    monkeypatch.setattr(
+        hef, "gcs_file_exist", lambda p: p.endswith("acc.txt") or "fold1/" in p
+    )
+    hef.eval_folds(
+        MockArgs(
+            out_dir=out,
+            fold_subset=1,
+            genes_gtf="genes.gtf",
+            span=True,
+            seq_step=2,
+            pseudo_qtl=0.125,
+        )
+    )
+    assert len(jobs) == 1
+    cmd = jobs[0].cmd
+    for flag in (
+        "--split fold0",
+        "--genes_gtf /workspace/cache/gtf/x",
+        "--seq_step 2",
+        "--pseudo_qtl 0.125",
+        "--span",
+    ):
+        assert flag in cmd
+    assert jobs[0].kwargs["queue"] == "l4"
+
+
+def test_combined_run_stages_per_dataset_annotations_and_keys(tmp_path, monkeypatch):
+    out = _make_models_dir(tmp_path, num_folds=2, test_fold=0, valid_fold=1)
+    jobs = _patch_gcp(monkeypatch, num_folds=2)
+    monkeypatch.setattr(
+        hef.stage_cache,
+        "stage_file",
+        lambda path, kind: (path, f"/workspace/cache/{kind}/{path}"),
+    )
+
+    def run(gtfs, **kwargs):
+        jobs.clear()
+        hef.eval_folds(
+            MockArgs(
+                out_dir=out,
+                data_dirs=["/data/hg38", "/data/mm10"],
+                fold_subset=1,
+                test_only=True,
+                genes_gtf=gtfs,
+                **kwargs,
+            )
+        )
+        return jobs[0].kwargs["output_dir_gcs"]
+
+    key = run("human.gtf,mouse.gtf")
+    assert len(jobs) == 2
+    assert "--genes_gtf /workspace/cache/gtf/human.gtf" in jobs[0].cmd
+    assert "--genes_gtf /workspace/cache/gtf/mouse.gtf" in jobs[1].cmd
+    assert run("human.gtf,mouse.gtf") == key
+    assert run("human.gtf,updated.gtf") != key
+    assert run("human.gtf,mouse.gtf", pseudo_qtl=0.1) != key
+
+
+def test_local_rerun_on_changed_command_or_restart(tmp_path, monkeypatch):
+    out = _make_models_dir(tmp_path, num_folds=2, test_fold=0, valid_fold=1)
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "statistics.json").write_text(json.dumps({"fold0": {}, "fold1": {}}))
+    jobs = _patch_gcp(monkeypatch, num_folds=2)
+
+    def run(**kwargs):
+        jobs.clear()
+        options = dict(out_dir=out, backend="slurm", data_dirs=[str(data)])
+        hef.eval_folds(MockArgs(fold_subset=1, test_only=True, **options | kwargs))
+        return [job.cmd for job in jobs]
+
+    (cmd,) = run()
+    fold = Path(out, "f0c0/eval/fold0")
+    assert (fold / "cmd.txt").read_text() == cmd
+    (fold / "acc.txt").write_text("done")
+    assert run() == []
+    assert run(restart=True) == [cmd]
+    (rc_cmd,) = run(rc=True)
+    assert (fold / "cmd.txt").read_text() == rc_cmd
+    # The old reports are removed, so a failed rerun is scheduled again.
+    assert not (fold / "acc.txt").exists()
+    assert run(rc=True) == [rc_cmd]
