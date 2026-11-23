@@ -60,8 +60,7 @@ class GeneCoverage:
         self.tracks = {"+": positions[rep], "-": positions[pair]}
         self.transforms = {"+": gene_tracks.iloc[rep], "-": gene_tracks.iloc[pair]}
         self.metadata = gene_tracks.iloc[rep].copy()
-        if "group" not in self.metadata:
-            self.metadata["group"] = self.metadata.description.str.split(":").str[0]
+        self.metadata["group"] = dataset.target_groups(self.metadata)
 
         seqs = pd.read_csv(
             Path(data.data_dir) / "sequences.bed",

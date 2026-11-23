@@ -88,7 +88,7 @@ def test_gene_summaries_match_concatenated_bins(tmp_path, span):
         {
             "identifier": ["exp", "constant"],
             "gene": [1, 1],
-            "description": ["RNA:a", "RNA:b"],
+            "description": ["RNA a", "RNA b"],
             "sum_stat": ["sum_sqrt", "sum_sqrt"],
         }
     )
@@ -100,6 +100,7 @@ def test_gene_summaries_match_concatenated_bins(tmp_path, span):
         seq_step=1,
     )
     scorer = GeneCoverage(data, model, meta, args)
+    assert scorer.metadata.group.tolist() == ["*", "*"]  # dataset.target_groups
     p = torch.tensor([[[1.01, 2, 3, 4], [1, 1, 1, 1]], [[4, 2, 1, 3], [1, 1, 1, 1]]])
     y = torch.tensor([[[3.02, 1, 2, 1], [1, 1, 1, 1]], [[3, 1, 3, 5], [1, 1, 1, 1]]])
 
