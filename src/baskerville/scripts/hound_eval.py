@@ -289,7 +289,7 @@ def main(argv=None):
                 if args.save:
                     gene_columns = list(targets_gene_df.identifier)
                     for key in ("preds", "targets"):
-                        name = f"gene_head_{key}"
+                        name = f"gene_{key}"
                         df = pd.DataFrame(
                             gm[key], index=gm["ids"], columns=gene_columns
                         )

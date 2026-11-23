@@ -468,7 +468,7 @@ def eval_folds(args):
 
                     # GCP outputs are keyed by options; local ones record their command.
                     done = exists(f"{output}/acc.txt") and (
-                        not gtfs[di] or exists(f"{output}/gene_metrics.tsv")
+                        not gtfs[di] or exists(f"{output}/covgene_metrics.tsv")
                     )
                     if not gcp_backend:
                         marker = Path(eval_fold_dir, "cmd.txt")

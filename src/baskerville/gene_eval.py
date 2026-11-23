@@ -248,17 +248,17 @@ def _write_reports(
     ]
     tasks["description"] = metadata.description
     for name, values in (
-        ("gene_targets", targets),
-        ("gene_preds", preds),
-        ("gene_targets_norm", norm_targets),
-        ("gene_preds_norm", norm_preds),
-        ("gene_within", within),
-        ("gene_var", variance),
+        ("covgene_targets", targets),
+        ("covgene_preds", preds),
+        ("covgene_targets_norm", norm_targets),
+        ("covgene_preds_norm", norm_preds),
+        ("covgene_within", within),
+        ("covgene_var", variance),
     ):
         pd.DataFrame(values, index=gene_ids, columns=metadata.identifier).to_csv(
             out_dir / f"{name}.tsv.gz", sep="\t", float_format="%.3f"
         )
-    tasks.to_csv(out_dir / "task_metrics.tsv", sep="\t")
+    tasks.to_csv(out_dir / "acc_covgene.txt", sep="\t")
     print(f"{len(genes)} genes")
     for label, column in (
         ("Overall PearsonR", "pearsonr"),
@@ -269,6 +269,6 @@ def _write_reports(
     ):
         print(f"{label}: {tasks[column].mean():.4f}")
     # Fold launchers use the final report to recognize completed evaluations.
-    pending = out_dir / "gene_metrics.tsv.tmp"
+    pending = out_dir / "covgene_metrics.tsv.tmp"
     genes.to_csv(pending, sep="\t", float_format="%.4f")
-    pending.replace(out_dir / "gene_metrics.tsv")
+    pending.replace(out_dir / "covgene_metrics.tsv")

@@ -34,10 +34,10 @@ def test_hound_eval_gtf_smoke(model_cov_with_gene_data_dir, data_gene_dir):
         out_path = Path(tmp_dir)
         assert (out_path / "acc.txt").exists()
         assert (out_path / "genes.bed").exists()
-        assert (out_path / "task_metrics.tsv").exists()
-        assert (out_path / "gene_metrics.tsv").exists()
-        assert (out_path / "gene_preds.tsv.gz").exists()
-        assert (out_path / "gene_targets.tsv.gz").exists()
+        assert (out_path / "acc_covgene.txt").exists()
+        assert (out_path / "covgene_metrics.tsv").exists()
+        assert (out_path / "covgene_preds.tsv.gz").exists()
+        assert (out_path / "covgene_targets.tsv.gz").exists()
 
 
 @pytest.mark.skipif(shutil.which("bedtools") is None, reason="requires bedtools")
@@ -120,7 +120,7 @@ def test_gene_summaries_match_concatenated_bins(tmp_path, span):
     ]
     np.testing.assert_allclose([v[0] for v in scorer.summaries()], expected, rtol=1e-6)
     scorer.finish()
-    table = pd.read_csv(tmp_path / "gene_targets.tsv.gz", sep="\t", index_col=0)
+    table = pd.read_csv(tmp_path / "covgene_targets.tsv.gz", sep="\t", index_col=0)
     np.testing.assert_allclose(
         table.iloc[0], np.log2(2 * target.mean(1) * length + 1), atol=0.0005
     )

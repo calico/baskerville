@@ -679,12 +679,12 @@ class TestSeqNNEval:
 
         for name in ("preds", "targets"):
             pd.testing.assert_frame_equal(
-                table(base / f"gene_head_{name}.tsv.gz"),
-                table(combined / f"gene_head_{name}.tsv.gz"),
+                table(base / f"gene_{name}.tsv.gz"),
+                table(combined / f"gene_{name}.tsv.gz"),
             )
         # Check strand-specific gene summaries against the original, uncropped target bins.
         targets, variance = (
-            table(combined / f"gene_{name}.tsv.gz") for name in ("targets", "var")
+            table(combined / f"covgene_{name}.tsv.gz") for name in ("targets", "var")
         )
         assert targets.columns.tolist() == ["RNA+"]
         width = SeqDataset(str(data), split_label="test").pool_width
