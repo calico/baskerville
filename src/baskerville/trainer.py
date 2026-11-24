@@ -1188,6 +1188,9 @@ class Trainer:
         # detect running-stat modules before compile wraps the module
         self._has_running_stats = _module_has_running_stats(self.model)
 
+        # input shapes are fixed per dataset, so cuDNN's one-time algorithm search pays
+        torch.backends.cudnn.benchmark = True
+
         if self.params.get("compile", False):
             self.model = torch.compile(self.model)
             # Compiled, the elementwise loss over B x T x L is ~9x faster with ~1/5 the

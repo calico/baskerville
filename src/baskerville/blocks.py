@@ -232,14 +232,7 @@ class MBConvBlock(nn.Module):
         self.norm = Norm(norm_type, in_dim=channels, num_species=num_species)
         self.act = Activation(act_func)
         self.in_proj = nn.Linear(channels, inner * (2 if gated else 1), bias=False)
-        self.conv = nn.Conv1d(
-            in_channels=inner,
-            out_channels=inner,
-            kernel_size=kernel_size,
-            padding="same",
-            groups=inner,
-            bias=True,
-        )
+        self.conv = DepthwiseConv1d(inner, kernel_size)
         nn.init.kaiming_normal_(self.conv.weight, mode="fan_in", nonlinearity="relu")
         self.out_proj = nn.Linear(inner, channels, bias=False)
         self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
@@ -1076,14 +1069,7 @@ class UnetBorzoiBlock(nn.Module):
                 self.convu.weight, mode="fan_in", nonlinearity="relu"
             )
         self.upsample = nn.Upsample(scale_factor=2, mode="nearest")
-        self.conv_depth = nn.Conv1d(
-            in_channels=channels,
-            out_channels=channels,
-            kernel_size=kernel_size,
-            padding="same",
-            groups=channels,
-            bias=False,
-        )
+        self.conv_depth = DepthwiseConv1d(channels, kernel_size, bias=False)
         nn.init.kaiming_normal_(
             self.conv_depth.weight, mode="fan_in", nonlinearity="relu"
         )
@@ -1293,14 +1279,7 @@ class UnetBlock(nn.Module):
 
         # refine the merged representation with a depthwise-pointwise block
         self.normf = Norm(norm_type, in_dim=channels, num_species=num_species)
-        self.convf_depth = nn.Conv1d(
-            in_channels=channels,
-            out_channels=channels,
-            kernel_size=kernel_size,
-            padding="same",
-            groups=channels,
-            bias=False,
-        )
+        self.convf_depth = DepthwiseConv1d(channels, kernel_size, bias=False)
         nn.init.kaiming_normal_(
             self.convf_depth.weight, mode="fan_in", nonlinearity="relu"
         )
