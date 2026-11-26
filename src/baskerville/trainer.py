@@ -46,6 +46,65 @@ def _emit_progress(desc, epoch, step, total, t0, last_emit):
     return now
 
 
+def _memlog(tag):
+    """Print one host-memory line (GB) to stderr: cgroup anon/shmem/file, this process's
+    RSS anon/shmem, its children's summed RSS, pinned cache held/active, glibc heap
+    arena/mmapped/in-use, and /dev/shm used. Diagnostic only."""
+    try:
+        import ctypes
+
+        G = 2**30
+        out = {}
+        for f in ["/sys/fs/cgroup/memory.stat", "/sys/fs/cgroup/memory/memory.stat"]:
+            if os.path.exists(f):
+                st = dict(l.split() for l in open(f))
+                for k, ks in [("cg_anon", ["anon", "total_rss"]),
+                              ("cg_shmem", ["shmem", "total_shmem"]),
+                              ("cg_file", ["file", "total_cache"])]:
+                    out[k] = next((int(st[x]) / G for x in ks if x in st), -1.0)
+                break
+
+        def status(pid):
+            s = dict(l.split(":", 1) for l in open(f"/proc/{pid}/status"))
+            return {k: int(s[k].split()[0]) * 1024 / G for k in ["RssAnon", "RssShmem"]}
+
+        me = status("self")
+        out["main_anon"], out["main_shmem"] = me["RssAnon"], me["RssShmem"]
+        kids = []
+        for p in os.listdir("/proc"):
+            try:
+                if p.isdigit() and open(f"/proc/{p}/stat").read().rsplit(")", 1)[1].split()[1] == str(os.getpid()):
+                    kids.append(status(p))
+            except OSError:
+                pass
+        out["kids"] = len(kids)
+        out["kids_anon"] = sum(k["RssAnon"] for k in kids)
+        out["kids_shmem"] = sum(k["RssShmem"] for k in kids)
+        if torch.cuda.is_available():
+            h = torch._C._cuda_hostMemoryStats()
+            out["pin_held"] = h["allocated_bytes"]["current"] / G
+            out["pin_active"] = h["active_bytes"]["current"] / G
+            out["pin_blocks"] = h["allocations"]["current"]
+
+        class MallInfo2(ctypes.Structure):
+            _fields_ = [(n, ctypes.c_size_t) for n in [
+                "arena", "ordblks", "smblks", "hblks", "hblkhd",
+                "usmblks", "fsmblks", "uordblks", "fordblks", "keepcost"]]
+
+        libc = ctypes.CDLL("libc.so.6")
+        if hasattr(libc, "mallinfo2"):  # glibc >= 2.33
+            libc.mallinfo2.restype = MallInfo2
+            mi = libc.mallinfo2()
+            out["heap_arena"], out["heap_mmap"], out["heap_used"] = (
+                mi.arena / G, mi.hblkhd / G, mi.uordblks / G)
+        sv = os.statvfs("/dev/shm")
+        out["devshm"] = (sv.f_blocks - sv.f_bfree) * sv.f_frsize / G
+        body = " ".join(f"{k}={v:.2f}" if isinstance(v, float) else f"{k}={v}" for k, v in out.items())
+    except Exception as e:  # never let diagnostics break training
+        body = f"error {e!r}"
+    print(f"[memlog] {tag} {body}", file=sys.stderr, flush=True)
+
+
 STOP_STAT_NAMES = {
     "weighted_r_r2": {"r": 1, "r2": 0.25},
     "loss": {"loss": -1},
@@ -534,6 +593,7 @@ class Trainer:
                 self.optimizer.train()
             t0 = time.time()
             self._train_epoch(ei)
+            _memlog(f"pre-valid epoch {ei}")
 
             # evaluate
             self._eval_prep()
@@ -544,6 +604,7 @@ class Trainer:
                 else:
                     n_eval_datasets = self._validate_cov(ei)
             gc.collect()
+            _memlog(f"post-valid epoch {ei}")
 
             # log, select the best model, checkpoint
             self._log_epoch_header(log_out, ei, t0)
@@ -1273,6 +1334,8 @@ class Trainer:
             self._optimizer_step(loss)
 
             train_batch_i += 1
+            if train_batch_i % 500 == 0:
+                _memlog(f"train epoch {ei} step {train_batch_i}")
             if self.log_progress:
                 last_progress = _emit_progress(
                     "train", ei, train_batch_i, self.tqdm_total, t0, last_progress
