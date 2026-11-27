@@ -6,7 +6,7 @@ import pytest
 import pysam
 import numpy as np
 
-from baskerville.dna import dna_1hot
+from baskerville.dna import dna_1hot, hot1_dna
 from baskerville.vcf import (
     VCF,
     SNP,
@@ -14,6 +14,7 @@ from baskerville.vcf import (
     cap_allele,
     fetch_gnomad_annotation,
     lookup_rsid_indexed,
+    make_alt_1hot,
     parse_snp_input,
     write_snp_vcf,
 )
@@ -586,3 +587,52 @@ class TestWriteSnpVcf:
         finally:
             if os.path.exists(out_path):
                 os.unlink(out_path)
+
+
+class TestMakeAlt1hot:
+    """Test cases for make_alt_1hot across SNVs, MNVs, and simple/complex indels."""
+
+    @pytest.mark.parametrize(
+        "ref_allele,alt_allele,expected",
+        [
+            ("G", "T", "ACTTACGT"),
+            ("GT", "CA", "ACCAACGT"),
+            ("GTA", "G", "ACGCGTNN"),
+            ("GTA", "GC", "ACGCCGTN"),
+            ("GTA", "CC", "ACCCCGTN"),
+            ("G", "GTT", "ACGTTTAC"),
+            ("GT", "GACC", "ACGACCAC"),
+            ("GT", "CCAA", "ACCCAAAC"),
+            ("G", "CA", "ACCATACG"),
+        ],
+    )
+    def test_make_alt_1hot_variants(self, ref_allele, alt_allele, expected):
+        ref_seq = "ACGTACGT"
+        ref_1hot = dna_1hot(ref_seq)
+        alt_1hot = make_alt_1hot(ref_1hot, 2, ref_allele, alt_allele)
+        assert hot1_dna(alt_1hot) == expected
+        assert hot1_dna(ref_1hot) == ref_seq
+
+    def test_snp_cluster_get_1hots_mnv_and_complex_indel(self):
+        genome_open = pysam.Fastafile("src/tests/data/sc3.fa.gz")
+        L, flank, pos = 100, 6, 5000
+        ref_mnv = genome_open.fetch("chrI", pos - 1, pos + 1).upper()
+        alt_mnv = "".join("C" if b == "A" else "A" for b in ref_mnv)
+        ref_delins = genome_open.fetch("chrI", pos - 1, pos + 2).upper()
+        alt_delins = ref_delins[0] + ("T" if ref_delins[2] != "T" else "G")
+
+        for ref_allele, alt_allele in [(ref_mnv, alt_mnv), (ref_delins, alt_delins)]:
+            cluster = SNPCluster()
+            cluster.add_snp(SNP(f"chrI\t{pos}\tv\t{ref_allele}\t{alt_allele}"))
+            cluster.delimit(L)
+            ref_1hot, alt_1hot = cluster.get_1hots(genome_open, flank=flank)
+            ref_str = hot1_dna(ref_1hot.T)
+            alt_str = hot1_dna(alt_1hot.T)
+            idx = pos - 1 - (cluster.start - flank)
+            expected = (ref_str[:idx] + alt_allele + ref_str[idx + len(ref_allele) :])[
+                : len(ref_str)
+            ]
+            if len(expected) < len(ref_str):
+                expected += "N" * (len(ref_str) - len(expected))
+            assert alt_str == expected
+        genome_open.close()

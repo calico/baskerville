@@ -469,32 +469,13 @@ def make_alt_1hot(ref_1hot, snp_seq_pos, ref_allele, alt_allele):
     # copy reference
     alt_1hot = np.copy(ref_1hot)
 
-    if alt_n == ref_n:
-        # SNP
-        dna.hot1_set(alt_1hot, snp_seq_pos, alt_allele)
+    if ref_n > alt_n:
+        dna.hot1_delete(alt_1hot, snp_seq_pos + alt_n, ref_n - alt_n)
+    elif alt_n > ref_n:
+        dna.hot1_insert(alt_1hot, snp_seq_pos + ref_n, alt_allele[ref_n:])
 
-    elif ref_n > alt_n:
-        # deletion
-        delete_len = ref_n - alt_n
-        if ref_allele[0] == alt_allele[0]:
-            dna.hot1_delete(alt_1hot, snp_seq_pos + 1, delete_len)
-        else:
-            print(
-                "WARNING: Deletion first nt does not match: %s %s"
-                % (ref_allele, alt_allele),
-                file=sys.stderr,
-            )
-
-    else:
-        # insertion
-        if ref_allele[0] == alt_allele[0]:
-            dna.hot1_insert(alt_1hot, snp_seq_pos + 1, alt_allele[1:])
-        else:
-            print(
-                "WARNING: Insertion first nt does not match: %s %s"
-                % (ref_allele, alt_allele),
-                file=sys.stderr,
-            )
+    for i, nt in enumerate(alt_allele[: min(ref_n, alt_n)]):
+        dna.hot1_set(alt_1hot, snp_seq_pos + i, nt)
 
     return alt_1hot
 
